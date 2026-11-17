@@ -1,0 +1,820 @@
+{
+  "date": "2026-11-18",
+  "version": "0.17.1",
+  "environment": {
+    "binaries": [
+      {
+        "name": "codex-AIs.exe",
+        "bytes": 6938112,
+        "sha256": "81C70521D92880DDCDDCAE1F1E2B7D53CC00810F10AB7CA38474C0ED600978AC",
+        "version": "0.17.1"
+      },
+      {
+        "name": "kodweb.exe",
+        "bytes": 7659520,
+        "sha256": "9949C3E918B763912820987B3DB565B0A1865BE8BEE22FB38DA387FEDEF5B799",
+        "version": "5.3.2.120 (32 bit)"
+      },
+      {
+        "name": "kodweb64.exe",
+        "bytes": 12899840,
+        "sha256": "C38DC4DDD339DF5461939545CB2F8E8BBC41FBC28379A56B4D843320CFC9301D",
+        "version": "5.3.2.118 (64 bit)"
+      }
+    ],
+    "cpu": {
+      "Name": "INTEL(R) XEON(R) SILVER 4516Y+",
+      "NumberOfCores": 6,
+      "NumberOfLogicalProcessors": 12
+    },
+    "os": {
+      "Caption": "Майкрософт Windows Server 2025 Standard",
+      "Version": "10.0.26100",
+      "TotalVisibleMemorySize": 33553344
+    },
+    "rust_workers": 4,
+    "rust_heavy_workers": 2,
+    "os_cache_cleared": false
+  },
+  "repetitions_per_batch": 1,
+  "same_database_snapshot": true,
+  "settings": {
+    "deleteobj": 1,
+    "fhole": 1,
+    "flong": 0,
+    "fview": 0
+  },
+  "preparation": "Fresh server process; home and selected document attributes; no deletion preview; OS file cache not cleared.",
+  "timing": "Full HTTP response. seq: A, B, C consecutively in one process; p2: independent simultaneous requests for A and B. Sequential pair time is the sum of the A and B HTTP times.",
+  "file_changes_scope": "Entire server run, including startup and untimed warmup; not only timed deletion.",
+  "working_volumes_before": [
+    {
+      "path": "workbase/work.db4",
+      "bytes": 7102753
+    },
+    {
+      "path": "workbase/workpost.db4",
+      "bytes": 1272225
+    }
+  ],
+  "execution_order": [
+    {
+      "engine": "original",
+      "year": 2026,
+      "mode": "seq",
+      "started_utc": "2026-11-17T19:14:44.198079+00:00"
+    },
+    {
+      "engine": "original64",
+      "year": 2026,
+      "mode": "seq",
+      "started_utc": "2026-11-17T19:23:00.011074+00:00"
+    },
+    {
+      "engine": "original",
+      "year": 2026,
+      "mode": "p2",
+      "started_utc": "2026-11-17T19:33:24.268557+00:00"
+    },
+    {
+      "engine": "original64",
+      "year": 2026,
+      "mode": "p2",
+      "started_utc": "2026-11-17T19:45:50.319219+00:00"
+    },
+    {
+      "engine": "rust",
+      "year": 2026,
+      "mode": "seq",
+      "started_utc": "2026-11-17T20:20:07.248291+00:00"
+    },
+    {
+      "engine": "rust",
+      "year": 2026,
+      "mode": "p2",
+      "started_utc": "2026-11-17T20:21:29.104510+00:00"
+    },
+    {
+      "engine": "original",
+      "year": 2020,
+      "mode": "seq",
+      "started_utc": "2026-11-17T20:28:13.980612+00:00"
+    },
+    {
+      "engine": "original64",
+      "year": 2020,
+      "mode": "seq",
+      "started_utc": "2026-11-17T20:41:24.521017+00:00"
+    },
+    {
+      "engine": "rust",
+      "year": 2020,
+      "mode": "seq",
+      "started_utc": "2026-11-17T20:56:14.642416+00:00"
+    },
+    {
+      "engine": "original64",
+      "year": 2020,
+      "mode": "p2",
+      "started_utc": "2026-11-17T20:57:36.865367+00:00"
+    },
+    {
+      "engine": "rust",
+      "year": 2020,
+      "mode": "p2",
+      "started_utc": "2026-11-17T21:18:37.978426+00:00"
+    },
+    {
+      "engine": "original",
+      "year": 2020,
+      "mode": "p2",
+      "started_utc": "2026-11-17T21:20:07.147054+00:00"
+    }
+  ],
+  "timing_notes": [
+    "The two final Rust 2026 runs followed all native 2026 runs after the area-0 routing fix; OS cache was not reset.",
+    "One extra /admin?status request (83 ms) occurred during native32 2026 p2."
+  ],
+  "archive_comparison": {
+    "total_files": 99,
+    "reference_files": 33,
+    "compared_files": 66,
+    "compared_files_byte_identical": 46,
+    "decoded_equal_files": 66,
+    "byte_identical_files": 46
+  },
+  "cohorts": [
+    {
+      "year": 2026,
+      "source_volume": "old/base00001.db4",
+      "volume_bytes": 1641097505,
+      "document_types": [
+        "incoming reply",
+        "judicial order",
+        "hearing protocol"
+      ],
+      "cascade_counts": [
+        1,
+        5,
+        2
+      ]
+    },
+    {
+      "year": 2020,
+      "source_volume": "old/doc3.db4",
+      "volume_bytes": 6018115617,
+      "document_types": [
+        "motion",
+        "judicial order",
+        "additional case materials"
+      ],
+      "cascade_counts": [
+        5,
+        4,
+        1
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "engine": "rust",
+      "year": 2026,
+      "mode": "seq",
+      "roots": 3,
+      "wall_ms": 16922.427,
+      "requests": [
+        {
+          "document": "A",
+          "elapsed_ms": 14986,
+          "deleted_objects": 1
+        },
+        {
+          "document": "B",
+          "elapsed_ms": 1181,
+          "deleted_objects": 5
+        },
+        {
+          "document": "C",
+          "elapsed_ms": 705,
+          "deleted_objects": 2
+        }
+      ],
+      "counters": {
+        "cpu_s": 16.359375,
+        "read_ops": 622375,
+        "write_ops": 829,
+        "other_ops": 94903,
+        "read_bytes": 31544436419,
+        "write_bytes": 5391588,
+        "other_bytes": 10196212
+      },
+      "average_cpu_cores": 0.967,
+      "changed_db4": [
+        "workbase\\usertrace.db4",
+        "workbase\\work.db4",
+        "workbase\\workpost.db4"
+      ],
+      "expected_scope_matches": true,
+      "all_absent": true,
+      "case_preserved": true,
+      "restored": true
+    },
+    {
+      "engine": "original",
+      "year": 2026,
+      "mode": "seq",
+      "roots": 3,
+      "wall_ms": 417216.6,
+      "requests": [
+        {
+          "document": "A",
+          "elapsed_ms": 118582,
+          "deleted_objects": 1
+        },
+        {
+          "document": "B",
+          "elapsed_ms": 196302,
+          "deleted_objects": 5
+        },
+        {
+          "document": "C",
+          "elapsed_ms": 102271,
+          "deleted_objects": 2
+        }
+      ],
+      "counters": {
+        "cpu_s": 416.03125,
+        "read_ops": 4828051,
+        "write_ops": 1953,
+        "other_ops": 25405697,
+        "read_bytes": 19755584186,
+        "write_bytes": 2694353,
+        "other_bytes": 464584664
+      },
+      "average_cpu_cores": 0.997,
+      "changed_db4": [
+        "config.db4",
+        "workbase\\usertrace.db4",
+        "workbase\\work.db4",
+        "workbase\\workpost.db4"
+      ],
+      "expected_scope_matches": true,
+      "all_absent": true,
+      "case_preserved": true,
+      "restored": true
+    },
+    {
+      "engine": "original64",
+      "year": 2026,
+      "mode": "seq",
+      "roots": 3,
+      "wall_ms": 545294.663,
+      "requests": [
+        {
+          "document": "A",
+          "elapsed_ms": 140416,
+          "deleted_objects": 1
+        },
+        {
+          "document": "B",
+          "elapsed_ms": 262399,
+          "deleted_objects": 5
+        },
+        {
+          "document": "C",
+          "elapsed_ms": 142428,
+          "deleted_objects": 2
+        }
+      ],
+      "counters": {
+        "cpu_s": 543.859375,
+        "read_ops": 4828171,
+        "write_ops": 1953,
+        "other_ops": 25586071,
+        "read_bytes": 19755645506,
+        "write_bytes": 2694353,
+        "other_bytes": 467472652
+      },
+      "average_cpu_cores": 0.997,
+      "changed_db4": [
+        "config.db4",
+        "workbase\\usertrace.db4",
+        "workbase\\work.db4",
+        "workbase\\workpost.db4"
+      ],
+      "expected_scope_matches": true,
+      "all_absent": true,
+      "case_preserved": true,
+      "restored": true
+    },
+    {
+      "engine": "original",
+      "year": 2026,
+      "mode": "p2",
+      "roots": 2,
+      "wall_ms": 668007.979,
+      "requests": [
+        {
+          "document": "A",
+          "elapsed_ms": 508578,
+          "deleted_objects": 1
+        },
+        {
+          "document": "B",
+          "elapsed_ms": 668000,
+          "deleted_objects": 5
+        }
+      ],
+      "counters": {
+        "cpu_s": 874.0,
+        "read_ops": 7331930,
+        "write_ops": 2987,
+        "other_ops": 19349579,
+        "read_bytes": 30002670417,
+        "write_bytes": 3812255,
+        "other_bytes": 421814132
+      },
+      "average_cpu_cores": 1.308,
+      "changed_db4": [
+        "config.db4",
+        "workbase\\usertrace.db4",
+        "workbase\\work.db4",
+        "workbase\\workpost.db4"
+      ],
+      "expected_scope_matches": true,
+      "all_absent": true,
+      "case_preserved": true,
+      "restored": true
+    },
+    {
+      "engine": "original64",
+      "year": 2026,
+      "mode": "p2",
+      "roots": 2,
+      "wall_ms": 759619.007,
+      "requests": [
+        {
+          "document": "A",
+          "elapsed_ms": 624316,
+          "deleted_objects": 1
+        },
+        {
+          "document": "B",
+          "elapsed_ms": 759606,
+          "deleted_objects": 5
+        }
+      ],
+      "counters": {
+        "cpu_s": 1024.0625,
+        "read_ops": 7359235,
+        "write_ops": 2987,
+        "other_ops": 19338823,
+        "read_bytes": 30114253484,
+        "write_bytes": 3813663,
+        "other_bytes": 421909368
+      },
+      "average_cpu_cores": 1.348,
+      "changed_db4": [
+        "config.db4",
+        "workbase\\usertrace.db4",
+        "workbase\\work.db4",
+        "workbase\\workpost.db4"
+      ],
+      "expected_scope_matches": true,
+      "all_absent": true,
+      "case_preserved": true,
+      "restored": true
+    },
+    {
+      "engine": "rust",
+      "year": 2026,
+      "mode": "p2",
+      "roots": 2,
+      "wall_ms": 26545.634,
+      "requests": [
+        {
+          "document": "A",
+          "elapsed_ms": 26540,
+          "deleted_objects": 1
+        },
+        {
+          "document": "B",
+          "elapsed_ms": 26044,
+          "deleted_objects": 5
+        }
+      ],
+      "counters": {
+        "cpu_s": 48.125,
+        "read_ops": 1202115,
+        "write_ops": 628,
+        "other_ops": 151678,
+        "read_bytes": 61571596857,
+        "write_bytes": 3941114,
+        "other_bytes": 18233722
+      },
+      "average_cpu_cores": 1.813,
+      "changed_db4": [
+        "workbase\\usertrace.db4",
+        "workbase\\work.db4",
+        "workbase\\workpost.db4"
+      ],
+      "expected_scope_matches": true,
+      "all_absent": true,
+      "case_preserved": true,
+      "restored": true
+    },
+    {
+      "engine": "original",
+      "year": 2020,
+      "mode": "seq",
+      "roots": 3,
+      "wall_ms": 707975.89,
+      "requests": [
+        {
+          "document": "A",
+          "elapsed_ms": 329618,
+          "deleted_objects": 5
+        },
+        {
+          "document": "B",
+          "elapsed_ms": 214836,
+          "deleted_objects": 4
+        },
+        {
+          "document": "C",
+          "elapsed_ms": 163479,
+          "deleted_objects": 1
+        }
+      ],
+      "counters": {
+        "cpu_s": 719.796875,
+        "read_ops": 7197324,
+        "write_ops": 4125,
+        "other_ops": 38124516,
+        "read_bytes": 29438552711,
+        "write_bytes": 5426199,
+        "other_bytes": 696684412
+      },
+      "average_cpu_cores": 1.017,
+      "changed_db4": [
+        "config.db4",
+        "workbase\\usertrace.db4",
+        "workbase\\work.db4",
+        "workbase\\workpost.db4"
+      ],
+      "expected_scope_matches": true,
+      "all_absent": true,
+      "case_preserved": true,
+      "restored": true
+    },
+    {
+      "engine": "original64",
+      "year": 2020,
+      "mode": "seq",
+      "roots": 3,
+      "wall_ms": 809608.791,
+      "requests": [
+        {
+          "document": "A",
+          "elapsed_ms": 382858,
+          "deleted_objects": 5
+        },
+        {
+          "document": "B",
+          "elapsed_ms": 292933,
+          "deleted_objects": 4
+        },
+        {
+          "document": "C",
+          "elapsed_ms": 133800,
+          "deleted_objects": 1
+        }
+      ],
+      "counters": {
+        "cpu_s": 822.984375,
+        "read_ops": 7197466,
+        "write_ops": 4125,
+        "other_ops": 38258692,
+        "read_bytes": 29438655111,
+        "write_bytes": 5415959,
+        "other_bytes": 698833972
+      },
+      "average_cpu_cores": 1.017,
+      "changed_db4": [
+        "config.db4",
+        "workbase\\usertrace.db4",
+        "workbase\\work.db4",
+        "workbase\\workpost.db4"
+      ],
+      "expected_scope_matches": true,
+      "all_absent": true,
+      "case_preserved": true,
+      "restored": true
+    },
+    {
+      "engine": "rust",
+      "year": 2020,
+      "mode": "seq",
+      "roots": 3,
+      "wall_ms": 17098.269,
+      "requests": [
+        {
+          "document": "A",
+          "elapsed_ms": 15591,
+          "deleted_objects": 5
+        },
+        {
+          "document": "B",
+          "elapsed_ms": 1029,
+          "deleted_objects": 4
+        },
+        {
+          "document": "C",
+          "elapsed_ms": 425,
+          "deleted_objects": 1
+        }
+      ],
+      "counters": {
+        "cpu_s": 16.203125,
+        "read_ops": 619956,
+        "write_ops": 1007,
+        "other_ops": 89718,
+        "read_bytes": 31757592389,
+        "write_bytes": 6658039,
+        "other_bytes": 9773424
+      },
+      "average_cpu_cores": 0.948,
+      "changed_db4": [
+        "workbase\\usertrace.db4",
+        "workbase\\work.db4",
+        "workbase\\workpost.db4"
+      ],
+      "expected_scope_matches": true,
+      "all_absent": true,
+      "case_preserved": true,
+      "restored": true
+    },
+    {
+      "engine": "original64",
+      "year": 2020,
+      "mode": "p2",
+      "roots": 2,
+      "wall_ms": 1181156.155,
+      "requests": [
+        {
+          "document": "A",
+          "elapsed_ms": 1181144,
+          "deleted_objects": 5
+        },
+        {
+          "document": "B",
+          "elapsed_ms": 995922,
+          "deleted_objects": 4
+        }
+      ],
+      "counters": {
+        "cpu_s": 1659.265625,
+        "read_ops": 11879053,
+        "write_ops": 3848,
+        "other_ops": 32039339,
+        "read_bytes": 48619030229,
+        "write_bytes": 5055272,
+        "other_bytes": 693785400
+      },
+      "average_cpu_cores": 1.405,
+      "changed_db4": [
+        "config.db4",
+        "workbase\\usertrace.db4",
+        "workbase\\work.db4",
+        "workbase\\workpost.db4"
+      ],
+      "expected_scope_matches": true,
+      "all_absent": true,
+      "case_preserved": true,
+      "restored": true
+    },
+    {
+      "engine": "rust",
+      "year": 2020,
+      "mode": "p2",
+      "roots": 2,
+      "wall_ms": 25693.466,
+      "requests": [
+        {
+          "document": "A",
+          "elapsed_ms": 24612,
+          "deleted_objects": 5
+        },
+        {
+          "document": "B",
+          "elapsed_ms": 25681,
+          "deleted_objects": 4
+        }
+      ],
+      "counters": {
+        "cpu_s": 46.09375,
+        "read_ops": 1208787,
+        "write_ops": 897,
+        "other_ops": 156458,
+        "read_bytes": 61909006144,
+        "write_bytes": 5858112,
+        "other_bytes": 18439534
+      },
+      "average_cpu_cores": 1.794,
+      "changed_db4": [
+        "workbase\\usertrace.db4",
+        "workbase\\work.db4",
+        "workbase\\workpost.db4"
+      ],
+      "expected_scope_matches": true,
+      "all_absent": true,
+      "case_preserved": true,
+      "restored": true
+    },
+    {
+      "engine": "original",
+      "year": 2020,
+      "mode": "p2",
+      "roots": 2,
+      "wall_ms": 1168863.437,
+      "requests": [
+        {
+          "document": "A",
+          "elapsed_ms": 1168834,
+          "deleted_objects": 5
+        },
+        {
+          "document": "B",
+          "elapsed_ms": 1038024,
+          "deleted_objects": 4
+        }
+      ],
+      "counters": {
+        "cpu_s": 1616.78125,
+        "read_ops": 11987260,
+        "write_ops": 3848,
+        "other_ops": 32024113,
+        "read_bytes": 49062532901,
+        "write_bytes": 5055016,
+        "other_bytes": 695371140
+      },
+      "average_cpu_cores": 1.383,
+      "changed_db4": [
+        "config.db4",
+        "workbase\\usertrace.db4",
+        "workbase\\work.db4",
+        "workbase\\workpost.db4"
+      ],
+      "expected_scope_matches": true,
+      "all_absent": true,
+      "case_preserved": true,
+      "restored": true
+    }
+  ],
+  "data_volume_comparison": [
+    {
+      "year": 2026,
+      "mode": "seq",
+      "engine": "rust",
+      "volume": "workbase/work.db4",
+      "complete_records": 417,
+      "oids_and_markers_match": true,
+      "all_fields_match": true
+    },
+    {
+      "year": 2026,
+      "mode": "seq",
+      "engine": "original64",
+      "volume": "workbase/work.db4",
+      "complete_records": 417,
+      "oids_and_markers_match": true,
+      "all_fields_match": true
+    },
+    {
+      "year": 2026,
+      "mode": "seq",
+      "engine": "rust",
+      "volume": "workbase/workpost.db4",
+      "complete_records": 606,
+      "oids_and_markers_match": true,
+      "all_fields_match": true
+    },
+    {
+      "year": 2026,
+      "mode": "seq",
+      "engine": "original64",
+      "volume": "workbase/workpost.db4",
+      "complete_records": 606,
+      "oids_and_markers_match": true,
+      "all_fields_match": true
+    },
+    {
+      "year": 2026,
+      "mode": "p2",
+      "engine": "rust",
+      "volume": "workbase/work.db4",
+      "complete_records": 417,
+      "oids_and_markers_match": true,
+      "all_fields_match": true
+    },
+    {
+      "year": 2026,
+      "mode": "p2",
+      "engine": "original64",
+      "volume": "workbase/work.db4",
+      "complete_records": 417,
+      "oids_and_markers_match": true,
+      "all_fields_match": true
+    },
+    {
+      "year": 2026,
+      "mode": "p2",
+      "engine": "rust",
+      "volume": "workbase/workpost.db4",
+      "complete_records": 606,
+      "oids_and_markers_match": true,
+      "all_fields_match": true
+    },
+    {
+      "year": 2026,
+      "mode": "p2",
+      "engine": "original64",
+      "volume": "workbase/workpost.db4",
+      "complete_records": 606,
+      "oids_and_markers_match": true,
+      "all_fields_match": true
+    },
+    {
+      "year": 2020,
+      "mode": "seq",
+      "engine": "rust",
+      "volume": "workbase/work.db4",
+      "complete_records": 417,
+      "oids_and_markers_match": true,
+      "all_fields_match": true
+    },
+    {
+      "year": 2020,
+      "mode": "seq",
+      "engine": "original64",
+      "volume": "workbase/work.db4",
+      "complete_records": 417,
+      "oids_and_markers_match": true,
+      "all_fields_match": true
+    },
+    {
+      "year": 2020,
+      "mode": "seq",
+      "engine": "rust",
+      "volume": "workbase/workpost.db4",
+      "complete_records": 606,
+      "oids_and_markers_match": true,
+      "all_fields_match": true
+    },
+    {
+      "year": 2020,
+      "mode": "seq",
+      "engine": "original64",
+      "volume": "workbase/workpost.db4",
+      "complete_records": 606,
+      "oids_and_markers_match": true,
+      "all_fields_match": true
+    },
+    {
+      "year": 2020,
+      "mode": "p2",
+      "engine": "rust",
+      "volume": "workbase/work.db4",
+      "complete_records": 417,
+      "oids_and_markers_match": true,
+      "all_fields_match": true
+    },
+    {
+      "year": 2020,
+      "mode": "p2",
+      "engine": "original64",
+      "volume": "workbase/work.db4",
+      "complete_records": 417,
+      "oids_and_markers_match": true,
+      "all_fields_match": true
+    },
+    {
+      "year": 2020,
+      "mode": "p2",
+      "engine": "rust",
+      "volume": "workbase/workpost.db4",
+      "complete_records": 606,
+      "oids_and_markers_match": true,
+      "all_fields_match": true
+    },
+    {
+      "year": 2020,
+      "mode": "p2",
+      "engine": "original64",
+      "volume": "workbase/workpost.db4",
+      "complete_records": 606,
+      "oids_and_markers_match": true,
+      "all_fields_match": true
+    }
+  ]
+}

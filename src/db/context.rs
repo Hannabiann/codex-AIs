@@ -559,7 +559,15 @@ impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
         if self.read(scope, oid)?.as_ref() != expected {
             return Err("Документ уже изменён. Откройте актуальную редакцию.".into());
         }
-        let path = self.write_path(scope, record.area)?;
+        // DeleteObject stages an area-0 record over a read-only source. Area 0
+        // exists in several writable volumes; retain the source area's routing
+        // so that the following Delete writes its marker to the matching volume.
+        let target_area = if record.area == 0 {
+            expected.map_or(0, |original| original.area)
+        } else {
+            record.area
+        };
+        let path = self.write_path(scope, target_area)?;
         let in_target = self
             .record_mount(scope, oid)?
             .is_some_and(|(_, mount)| super::script_volume_path(&self.root, &mount.key) == path);

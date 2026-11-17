@@ -107,7 +107,7 @@ def generate(theme):
     path=ROOT/'docs/performance-0.17.json'
     if path.exists():
      data=json.loads(path.read_text(encoding='utf-8'))
-     c=Canvas(1440,1000,'Удаление двух объектов и параллельное формирование отчётов')
+     c=Canvas(1440,1000,'Удаление двух новых тестовых дел и параллельное формирование отчётов')
      c.text(48,54,'Контрольные измерения',32,INK,True)
      c.text(48,95,'Windows, один полный комплект, последовательное переключение серверов.',22,MUTED)
      def chart(top,title,rows,tick,maximum,footnote):
@@ -119,7 +119,7 @@ def generate(theme):
        y=y0+14+i*60;c.text(48,y+23,name,22,INK);w=max(2,width*value/maximum);c.rect(x0,y,w,28,color);c.text(x0+w+10,y+23,f'{value:.3f} с'.replace('.',','),20,INK)
       c.text(48,y1+69,footnote,20,MUTED)
      rows=[('kodweb.exe',data['native']['median_ms']/1000,NATIVE),('codex-AIs 0.16',data['before']['median_ms']/1000,BEFORE),('codex-AIs 0.17',data['after']['median_ms']/1000,TEAL)]
-     chart(155,'Удаление двух объектов · медиана пяти запусков',rows,0.2,1.2,'Новые тестовые объекты; очистка ссылок без каскада, отметка удаления и KOD. Шкала: секунды.')
+     chart(155,'Два новых тестовых дела · медиана пяти запусков',rows,0.2,1.2,'Только заголовок; очистка ссылок без каскада, отметка удаления и KOD. Шкала: секунды.')
      chart(555,'Два одинаковых 1АС · codex-AIs 0.15 после прогрева',[('Последовательно',49.968,NATIVE),('Параллельно',33.484,TEAL)],10,60,'Данные 0.15: один запуск пары в каждом режиме. Все книги побайтно совпали. Шкала: секунды.')
      c.text(48,956,'Параметры, все повторения и ограничения сравнения: docs/BENCHMARKS.md',21,MUTED)
      c.save('benchmarks')

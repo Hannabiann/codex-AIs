@@ -1,0 +1,29 @@
+{
+  "version": "0.17.1",
+  "date": "2026-11-18",
+  "windows_exe_sha256": "81c70521d92880ddcddcae1f1e2b7d53cc00810f10ab7ca38474c0ed600978ac",
+  "regression": {
+    "passed": 337,
+    "failed": 0,
+    "ignored": 52
+  },
+  "deletion_batches": 12,
+  "exported_kod_files": 99,
+  "decoded_kod_comparisons": 66,
+  "complete_volume_comparisons": 16,
+  "complete_records_compared": 8184,
+  "original_control_hashes_unchanged": 6,
+  "baseline_restored": true,
+  "source_files": 64,
+  "test_only_ast_items_removed": 106,
+  "journal_protocol_changed": false,
+  "native_child_process_crash_suite_rerun": false,
+  "physical_power_loss_tested": false,
+  "linux_freebsd_full_cycle_tested": false,
+  "http_smoke": {
+    "passed": 12,
+    "restored_document_roots": 6,
+    "startup_without_path_environment": true
+  },
+  "light_dark_benchmark_figures_visually_checked": true
+}
