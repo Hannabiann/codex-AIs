@@ -4,6 +4,21 @@
 use super::*;
 use crate::db::mainkey::{MainKey, WriterNode};
 use std::cmp::Ordering;
+#[path = "writer_remove.rs"]
+mod remove;
+pub(super) fn delete(
+    path: &Path,
+    oid: u32,
+    hole: bool,
+    base: std::sync::Arc<Vec<u8>>,
+) -> Result<Option<Vec<u8>>, String> {
+    // A variable-length separator can grow during deletion and overflow its
+    // parent. Rebuild that unusual index using the existing checked path.
+    match remove::delete(path, oid, hole, base) {
+        Err(e) if e == "DB40 index node overflow" => Ok(None),
+        other => other,
+    }
+}
 
 fn compare(kind: u16, a: &[u8], b: &[u8]) -> Result<Ordering, String> {
     let min = match kind {
@@ -54,17 +69,24 @@ impl Tree<'_> {
         }
     }
     fn load(&mut self, id: u32) -> Result<WriterNode, String> {
+        let node = self.load_native(id)?;
+        for pair in node.keys.windows(2) {
+            if compare(self.kind, &pair[0], &pair[1])? != Ordering::Less {
+                return Err(format!(
+                    "unordered insert index node {id}, area {}, attribute {}, kind {}",
+                    self.area, self.attr, self.kind
+                ));
+            }
+        }
+        Ok(node)
+    }
+    fn load_native(&mut self, id: u32) -> Result<WriterNode, String> {
         let node = if let Some(n) = self.staged.get(&id) {
             n.clone()
         } else {
             self.index
                 .writer_node(id, self.area, self.attr, self.size())?
         };
-        for pair in node.keys.windows(2) {
-            if compare(self.kind, &pair[0], &pair[1])? != Ordering::Less {
-                return Err("unordered insert index node".into());
-            }
-        }
         Ok(node)
     }
     fn save(&mut self, n: WriterNode) -> Result<u32, String> {
@@ -318,13 +340,17 @@ fn presence(bytes: Option<&[u8]>, oid: u32) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-pub(super) fn append(path: &Path, record: &Record) -> Result<Option<Vec<u8>>, String> {
+pub(super) fn append(
+    path: &Path,
+    record: &Record,
+    base: std::sync::Arc<Vec<u8>>,
+) -> Result<Option<Vec<u8>>, String> {
     check_volume_budget(path)?;
     let oid = record
         .integer(1024)
         .filter(|v| *v != 0)
         .ok_or("DB40 insert OID missing")?;
-    let mut index = MainKey::open(path)?;
+    let mut index = MainKey::from_image(base.clone())?;
     let entry = index.lookup_including_deleted(oid)?;
     if entry.is_none() && index.max_oid()?.is_some_and(|max| oid <= max) {
         return Ok(None);
@@ -399,7 +425,7 @@ pub(super) fn append(path: &Path, record: &Record) -> Result<Option<Vec<u8>>, St
             .collect::<Vec<_>>();
         additions.push((field, old_root, delta, keys));
     }
-    let mut image = Image::new(std::fs::read(path).map_err(|e| e.to_string())?)?;
+    let mut image = Image::new(base.as_ref().clone())?;
     if image.bytes[..289] != header {
         return Err("DB40 header changed during insert".into());
     }

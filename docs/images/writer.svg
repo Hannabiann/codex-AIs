@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1000" viewBox="0 0 1440 1000" role="img"><title>Подготовка, страничная запись и восстановление DB40</title>
 <rect x="0" y="0" width="1440" height="1000" fill="#ffffff"/>
 <text x="48" y="54" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="32" font-weight="700">Подготовка и публикация изменения DB40</text>
-<text x="48" y="93" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">codex-AIs 0.16 · одно изменение тома · единица журнала 4096 байт</text>
+<text x="48" y="93" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">codex-AIs 0.17 · одно изменение тома · единица журнала 4096 байт</text>
 <rect x="48" y="125" width="1344" height="100" rx="0" fill="#ffffff" stroke="#d3dfe9"/>
 <text x="70" y="162" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="25" font-weight="700">1. Проверить редакцию и подготовить образ</text>
-<text x="70" y="201" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Добавление: путь в B-дереве. Удаление: затронутые индексы.</text>
+<text x="70" y="201" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Добавление и простое удаление: изменение узлов B-дерева.</text>
 <line x1="720" y1="226" x2="720" y2="247" stroke="#00786b" stroke-width="3"/>
 <polygon points="713,245 727,245 720,257" fill="#00786b"/>
 <rect x="48" y="258" width="1344" height="100" rx="0" fill="#ffffff" stroke="#d3dfe9"/>

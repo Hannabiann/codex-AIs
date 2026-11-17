@@ -1,0 +1,72 @@
+{
+  "version": "0.17",
+  "date": "2026-11-18",
+  "os": "Windows x64",
+  "workers": 4,
+  "os_file_cache_cleared": false,
+  "full_copy_files": 753753,
+  "native": {
+    "label": "native-after",
+    "runs_ms": [
+      448,
+      446,
+      390,
+      316,
+      307
+    ],
+    "median_ms": 390,
+    "pairs": 5,
+    "own_objects": 10,
+    "kod_verified": 10,
+    "restored_files": 0
+  },
+  "native_before": {
+    "label": "native-before",
+    "runs_ms": [
+      302,
+      474,
+      343,
+      404,
+      367
+    ],
+    "median_ms": 367,
+    "pairs": 5,
+    "own_objects": 10,
+    "kod_verified": 10,
+    "restored_files": 0
+  },
+  "before": {
+    "label": "rust-016-before",
+    "runs_ms": [
+      1014,
+      1021,
+      872,
+      919,
+      1051
+    ],
+    "median_ms": 1014,
+    "pairs": 5,
+    "own_objects": 10,
+    "kod_verified": 10,
+    "restored_files": 0
+  },
+  "after": {
+    "label": "rust-017-clean",
+    "runs_ms": [
+      737,
+      783,
+      826,
+      650,
+      612
+    ],
+    "median_ms": 737,
+    "pairs": 5,
+    "own_objects": 10,
+    "kod_verified": 10,
+    "restored_files": 0
+  },
+  "final_profile_enabled": false,
+  "byte_identical_dataset_between_modes": false,
+  "restored_data_files": 0,
+  "conditions": "Five sequential requests, two newly created objects each; two warmed previews; deleteobj=0, flong=0, fhole=1. Same full copy; new OIDs, no rollback. Servers and builds are not concurrent with timing."
+}

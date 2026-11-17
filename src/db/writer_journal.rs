@@ -278,9 +278,10 @@ fn backup(
             .open(&target)
             .map_err(|e| e.to_string())?;
         if snapshot::identity(&file)? != snapshot::identity(&base_file)? {
-            let previous = read_bounded(&target, MAX_IMAGE)?;
-            snapshot::freeze(&file, &previous)?;
-            patch(&mut file, &previous, old, || hook(Step::BackupPage))?;
+            snapshot::freeze_lazy(&file, || {
+                read_bounded(&target, MAX_IMAGE).map(std::sync::Arc::new)
+            })?;
+            patch_from_file(&mut file, old, || hook(Step::BackupPage))?;
             snapshot::retire(&file)?;
             return Ok(());
         }
@@ -294,6 +295,44 @@ fn backup(
     drop(file);
     crate::settings::replace_file(&temp, &target).map_err(|e| e.to_string())?;
     sync_parent(&target)
+}
+
+// The backup is usually not held by readers. Compare it in small chunks so a
+// one-page update does not allocate another complete volume. Every byte is
+// still compared, and the complete resulting backup is synced before the base.
+fn patch_from_file(
+    file: &mut File,
+    new: &[u8],
+    mut page_done: impl FnMut() -> Result<(), String>,
+) -> Result<(), String> {
+    let old_len = usize::try_from(file.metadata().map_err(|e| e.to_string())?.len())
+        .map_err(|_| "DB40 backup size overflow")?;
+    if old_len > MAX_IMAGE {
+        return Err("DB40 recovery file exceeds size limit".into());
+    }
+    let mut buffer = [0u8; PAGE * 16];
+    for at in (0..new.len()).step_by(buffer.len()) {
+        let end = (at + buffer.len()).min(new.len());
+        let count = old_len.saturating_sub(at).min(end - at);
+        file.seek(SeekFrom::Start(at as u64))
+            .map_err(|e| e.to_string())?;
+        file.read_exact(&mut buffer[..count])
+            .map_err(|e| e.to_string())?;
+        for offset in (0..end - at).step_by(PAGE) {
+            let desired = part(new, at + offset);
+            let existing = part(&buffer[..count], offset);
+            if existing != desired {
+                file.seek(SeekFrom::Start((at + offset) as u64))
+                    .and_then(|_| file.write_all(desired))
+                    .map_err(|e| e.to_string())?;
+                page_done()?;
+            }
+        }
+    }
+    if old_len != new.len() {
+        file.set_len(new.len() as u64).map_err(|e| e.to_string())?;
+    }
+    file.sync_all().map_err(|e| e.to_string())
 }
 
 /// Return None for dense changes, which retain the full-image replacement path.
@@ -312,11 +351,13 @@ pub(super) fn plan(old: &[u8], new: &[u8]) -> Option<Vec<u8>> {
     }
     Some(journal.encode())
 }
-fn apply(
+
+fn apply_shared(
     base: &Path,
     old: &[u8],
     new: &[u8],
     encoded: &[u8],
+    shared: Option<&std::sync::Arc<Vec<u8>>>,
     mut hook: impl FnMut(Step) -> Result<(), String>,
 ) -> Result<usize, String> {
     let started = std::time::Instant::now();
@@ -342,7 +383,11 @@ fn apply(
         .write(true)
         .open(base)
         .map_err(|e| e.to_string())?;
-    snapshot::freeze(&file, old)?;
+    if let Some(old) = shared {
+        snapshot::freeze_shared(&file, old)?;
+    } else {
+        snapshot::freeze(&file, old)?;
+    }
     let written = patch(&mut file, old, new, || hook(Step::BasePage))?;
     hook(Step::Base)?;
     let base_ms = started.elapsed().as_micros();
@@ -372,13 +417,23 @@ fn apply(
     }
     Ok(written)
 }
-pub(super) fn publish(
+
+pub(super) fn publish_shared(
+    base: &Path,
+    old: &std::sync::Arc<Vec<u8>>,
+    new: &[u8],
+    encoded: &[u8],
+) -> Result<usize, String> {
+    publish_shared_inner(base, old, new, encoded, Some(old))
+}
+fn publish_shared_inner(
     base: &Path,
     old: &[u8],
     new: &[u8],
     encoded: &[u8],
+    shared: Option<&std::sync::Arc<Vec<u8>>>,
 ) -> Result<usize, String> {
-    match apply(base, old, new, encoded, |_| Ok(())) {
+    match apply_shared(base, old, new, encoded, shared, |_| Ok(())) {
         Ok(n) => Ok(n),
         Err(error) => match recover(base) {
             Ok(Some(true)) => Ok(encoded.len()),

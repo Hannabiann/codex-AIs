@@ -346,7 +346,7 @@ impl<'a> Runtime<'a> {
             registry: None,
             documents: None,
             data_root: None,
-            log_root: std::env::var_os("KODEKS_LOG_DIR").map(std::path::PathBuf::from),
+            log_root: crate::runtime_logs::configured_root(),
             opener: None,
             closure_cells: RefCell::new(Vec::new()),
             attribute: None,

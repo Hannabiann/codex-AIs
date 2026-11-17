@@ -315,11 +315,11 @@ fn commit_change(
             "Документ уже изменён другим сохранением. Откройте актуальную редакцию.".into(),
         );
     }
-    let old = std::fs::read(path).map_err(|e| e.to_string())?;
+    let old = std::sync::Arc::new(std::fs::read(path).map_err(|e| e.to_string())?);
     let bytes = if let Some(record) = record {
-        candidate(path, &[record.clone()])?
+        index_delta::candidate_from_image(path, &[record.clone()], &[], old.clone())?
     } else {
-        candidate_changes(path, &[], &[(oid, hole)])?
+        index_delta::candidate_from_image(path, &[], &[(oid, hole)], old.clone())?
     };
     let prepared = started.elapsed();
     let bytes = std::sync::Arc::new(bytes);
@@ -346,10 +346,10 @@ fn commit_change(
             let _publish = PUBLICATION
                 .write()
                 .map_err(|_| "DB40 publication lock poisoned")?;
-            if std::fs::read(path).map_err(|e| e.to_string())? != old {
+            if !matches_image(path, &old)? {
                 return Err("DB40 changed outside this transaction".into());
             }
-            published_bytes = journal::publish(path, &old, &bytes, encoded)?;
+            published_bytes = journal::publish_shared(path, &old, &bytes, encoded)?;
         } else {
             let mut f = std::fs::OpenOptions::new()
                 .write(true)
@@ -363,7 +363,7 @@ fn commit_change(
             drop(f);
             prepare_backup(path, &backup_tmp, &old)?;
             created.push(backup_tmp.clone());
-            if std::fs::read(path).map_err(|e| e.to_string())? != old {
+            if !matches_image(path, &old)? {
                 return Err("DB40 changed outside this transaction".into());
             }
             crate::settings::replace_file(&backup_tmp, &backup)
@@ -387,9 +387,9 @@ fn commit_change(
     // Only files created by this transaction are eligible for cleanup.
     // Existing stale temporary files cause create_new to fail and are retained.
     let safe_cleanup = result.is_ok()
-        || std::fs::read(path)
-            .ok()
-            .is_some_and(|data| data == old || data.as_slice() == bytes.as_slice());
+        || std::fs::read(path).ok().is_some_and(|data| {
+            data.as_slice() == old.as_slice() || data.as_slice() == bytes.as_slice()
+        });
     if safe_cleanup {
         for file in created {
             let _ = std::fs::remove_file(file);
@@ -411,6 +411,24 @@ fn commit_change(
         );
     }
     result
+}
+// Preserve the full external-change check without allocating another complete
+// volume just to compare it. The publication and volume locks are held by caller.
+fn matches_image(path: &Path, expected: &[u8]) -> Result<bool, String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    if file.metadata().map_err(|e| e.to_string())?.len() != expected.len() as u64 {
+        return Ok(false);
+    }
+    let mut buffer = [0u8; 65536];
+    for chunk in expected.chunks(buffer.len()) {
+        file.read_exact(&mut buffer[..chunk.len()])
+            .map_err(|e| e.to_string())?;
+        if &buffer[..chunk.len()] != chunk {
+            return Ok(false);
+        }
+    }
+    Ok(file.read(&mut buffer[..1]).map_err(|e| e.to_string())? == 0)
 }
 /// Atomic replacement never modifies the old inode. A second directory entry
 /// can therefore retain that exact version without rewriting the whole volume.
@@ -603,7 +621,9 @@ struct Image {
     capacity: usize,
     span: usize,
     next: usize,
-    free: std::collections::BTreeSet<usize>,
+    // Earliest allocation bit that may be free. Scan the native bitmap lazily;
+    // materializing every free 128-byte block in a BTreeSet dominated small writes.
+    first_free: usize,
 }
 impl Image {
     fn new(bytes: Vec<u8>) -> Result<Self, String> {
@@ -619,12 +639,6 @@ impl Image {
         let span = (unit * 8 + 1) * unit * maps;
         let n = bytes.len() - 289;
         let next = n / span * capacity + (n % span).saturating_sub(unit * maps).div_ceil(unit);
-        let free = (1..next)
-            .filter(|id| {
-                let map = 289 + id / capacity * span;
-                bytes[map + (id % capacity) / 8] & (1 << (id % 8)) == 0
-            })
-            .collect();
         Ok(Self {
             bytes,
             unit,
@@ -632,7 +646,7 @@ impl Image {
             capacity,
             span,
             next,
-            free,
+            first_free: 1,
         })
     }
     fn offset(&self, block: usize) -> usize {
@@ -665,7 +679,7 @@ impl Image {
                 return Err("DB40 overlapping/free replacement frame".into());
             }
             self.bytes[at] &= !mask;
-            self.free.insert(id);
+            self.first_free = self.first_free.min(id);
         }
         Ok(())
     }
@@ -682,27 +696,35 @@ impl Image {
         bytes.extend(payload);
         let blocks = bytes.len().div_ceil(self.unit);
         let mut run = 0;
-        let mut previous = usize::MAX;
         let mut reuse = None;
-        for &id in &self.free {
-            if previous.checked_add(1) != Some(id)
-                || (blocks <= self.capacity && id % self.capacity == 0)
-            {
+        let mut id = self.first_free;
+        let mut first = self.next;
+        while id < self.next {
+            let map = 289 + id / self.capacity * self.span;
+            let bits = self.bytes[map + (id % self.capacity) / 8];
+            if bits & (1 << (id % 8)) != 0 {
+                run = 0;
+                // Fully allocated bitmap bytes need no per-block traversal.
+                id += if bits == 255 { 8 - id % 8 } else { 1 };
+                continue;
+            }
+            first = first.min(id);
+            if blocks <= self.capacity && id % self.capacity == 0 {
                 run = 0;
             }
             run += 1;
-            previous = id;
             if run == blocks {
                 reuse = Some(id + 1 - blocks);
                 break;
             }
+            id += 1;
         }
+        self.first_free = first;
         let start = if let Some(start) = reuse {
             start
         } else {
             if blocks <= self.capacity && self.next % self.capacity + blocks > self.capacity {
                 let aligned = self.next.div_ceil(self.capacity) * self.capacity;
-                self.free.extend(self.next..aligned);
                 self.next = aligned;
             }
             let start = self.next;
@@ -717,13 +739,15 @@ impl Image {
         for i in 0..blocks {
             let id = start + i;
             let map = 289 + id / self.capacity * self.span;
-            self.free.remove(&id);
             self.bytes[map + (id % self.capacity) / 8] |= 1 << (id % 8);
             let p = self.offset(id);
             let begin = i * self.unit;
             let end = (begin + self.unit).min(bytes.len());
             self.bytes[p..p + self.unit].fill(0);
             self.bytes[p..p + end - begin].copy_from_slice(&bytes[begin..end]);
+        }
+        if start == self.first_free {
+            self.first_free = start + blocks;
         }
         Ok((start as u32, crc))
     }

@@ -71,12 +71,28 @@ pub(in crate::db) fn register(file: &File) -> Result<Arc<Snapshot>, String> {
     Ok(snapshot)
 }
 pub(super) fn freeze(file: &File, old: &[u8]) -> Result<(), String> {
+    freeze_with(file, || Arc::new(old.to_vec()))
+}
+pub(super) fn freeze_shared(file: &File, old: &Arc<Vec<u8>>) -> Result<(), String> {
+    freeze_with(file, || old.clone())
+}
+fn freeze_with(file: &File, image: impl FnOnce() -> Arc<Vec<u8>>) -> Result<(), String> {
+    freeze_lazy(file, || Ok(image()))
+}
+pub(super) fn freeze_lazy(
+    file: &File,
+    image: impl FnOnce() -> Result<Arc<Vec<u8>>, String>,
+) -> Result<(), String> {
     let id = identity(file)?;
     let readers = readers()
         .lock()
         .map_err(|_| "DB40 snapshot lock poisoned")?;
     if let Some(snapshot) = readers.get(&id).and_then(Weak::upgrade) {
-        snapshot.bytes.get_or_init(|| Arc::new(old.to_vec()));
+        if snapshot.bytes.get().is_none() {
+            // Publication is exclusive; only read the old file if somebody
+            // actually holds a reader for this generation.
+            let _ = snapshot.bytes.set(image()?);
+        }
     }
     Ok(())
 }

@@ -8,6 +8,7 @@ mod ks;
 mod monitor;
 mod product;
 mod rich_text;
+mod runtime_logs;
 mod server;
 mod settings;
 mod vm;
@@ -450,7 +451,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         product::version(),
         root.display()
     );
-    let engine = Db4Engine::init_from_config_root(root).map_err(std::io::Error::other)?;
+    let engine = Db4Engine::init_from_config_root(&root).map_err(std::io::Error::other)?;
+    if matches!(command, "serve" | "diagnose") {
+        runtime_logs::initialize(&root).map_err(std::io::Error::other)?;
+    }
     match Some(command) {
         Some("diagnose") => {
             let target = args.get(2).map(String::as_str).unwrap_or("/20a/");

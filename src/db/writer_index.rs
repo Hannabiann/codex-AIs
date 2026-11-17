@@ -63,13 +63,33 @@ pub(super) fn candidate_changes(
     changes: &[Record],
     deletions: &[(u32, bool)],
 ) -> Result<Vec<u8>, String> {
+    check_volume_budget(path)?;
+    candidate_from_image(
+        path,
+        changes,
+        deletions,
+        std::sync::Arc::new(std::fs::read(path).map_err(|e| e.to_string())?),
+    )
+}
+pub(super) fn candidate_from_image(
+    path: &Path,
+    changes: &[Record],
+    deletions: &[(u32, bool)],
+    base: std::sync::Arc<Vec<u8>>,
+) -> Result<Vec<u8>, String> {
+    if changes.is_empty() && deletions.len() == 1 {
+        let (oid, hole) = deletions[0];
+        if let Some(image) = insert::delete(path, oid, hole, base.clone())? {
+            return Ok(image);
+        }
+    }
     if changes.len() == 1 && deletions.is_empty() {
-        if let Some(image) = insert::append(path, &changes[0])? {
+        if let Some(image) = insert::append(path, &changes[0], base.clone())? {
             return Ok(image);
         }
     }
     check_volume_budget(path)?;
-    let mut index = super::super::mainkey::MainKey::open(path)?;
+    let mut index = super::super::mainkey::MainKey::from_image(base.clone())?;
     let (header, directory) = index.writer_parts();
     let mut roots = BTreeMap::new();
     for d in directory.chunks_exact(10) {
@@ -84,7 +104,7 @@ pub(super) fn candidate_changes(
         return Err("DB40 write with a populated global word index is not implemented".into());
     }
     let schema = super::super::schema::Schema::read(path)?;
-    let mut image = Image::new(std::fs::read(path).map_err(|e| e.to_string())?)?;
+    let mut image = Image::new(base.as_ref().clone())?;
     if image.bytes[..289] != header {
         return Err("DB40 header changed during transaction".into());
     }
