@@ -1,0 +1,21 @@
+codex-AIs
+Copyright (C) 2026 codex-AIs contributors
+
+This project's Rust implementation and original documentation are provided
+under GNU General Public License version 3 only (GPL-3.0-only). See LICENSE.
+
+The name is inspired by Kodeks and AIS Court Proceedings; AI acknowledges
+AI-assisted development. This is an independent compatibility project and
+does not imply endorsement by the original software vendor.
+
+Court data, DB4/DBS volumes, original executables, vendor KS source collections,
+Microsoft Office templates and binaries are not included or relicensed.
+Identifiers, protocol names, short compatibility patterns and SHA-256 source
+fingerprints describe interoperability with user-supplied data.
+
+Third-party Rust dependencies keep their own licenses. Inspect Cargo.lock
+and THIRD_PARTY_LICENSES.md / docs/licenses when redistributing a binary. No third-party dependency source has been copied into this tree.
+
+Development used AI assistance. The authors do not claim that every change
+was written manually. Review, reproducible builds and independent testing
+remain part of maintaining this project.

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="180" viewBox="0 0 1400 180" role="img"><title>codex-AIs: KS runtime and DB40 server</title>
+<rect x="0" y="0" width="1400" height="180" rx="0" fill="white" stroke="#d3dfe9"/>
+<text x="40" y="67" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="42" font-weight="700">codex-AIs</text>
+<text x="40" y="111" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="26" font-weight="400">KS runtime / DB40 / HTTP</text>
+<text x="40" y="151" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">АИС «Судопроизводство» · экспериментальная реализация сервера</text>
+</svg>

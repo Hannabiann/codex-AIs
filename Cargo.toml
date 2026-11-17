@@ -1,0 +1,23 @@
+[package]
+name = "codex-ais"
+version = "0.16.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Portable Rust compatibility server for Kodeks-based court information systems"
+rust-version = "1.88"
+
+[[bin]]
+name = "codex-AIs"
+path = "src/main.rs"
+
+[dependencies]
+crc32fast = "=1.5.4"
+regex = "=1.10.6"
+tokio = { version = "=1.43.0", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
+encoding_rs = "=0.8.35"
+stacker = "=0.1.25"
+
+flate2 = { version = "=1.0.35", default-features = false, features = ["rust_backend"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.191"

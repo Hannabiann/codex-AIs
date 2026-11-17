@@ -1,0 +1,10 @@
+{
+  "units": "seconds",
+  "environment": "one Windows VM; one full court dataset; exclusive server runs; OS cache not cleared",
+  "measurements": [
+    {"label": "1АС за 2025 год", "native": 1897.442, "rust": 333.018, "native_variant": "kodweb64", "rust_version": "0.12.1"},
+    {"label": "Z22.1 за 2025 год", "native": 246.667, "rust": 156.323, "native_variant": "kodweb64", "rust_version": "0.12.1"},
+    {"label": "Каскад после просмотра", "native": 119.918, "rust": 5.198, "native_variant": "kodweb", "rust_version": "0.14"},
+    {"label": "Два простых удаления", "native": 0.309, "rust": 5.155, "native_variant": "kodweb", "rust_version": "0.14"}
+  ]
+}

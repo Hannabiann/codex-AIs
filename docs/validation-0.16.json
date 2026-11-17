@@ -1,0 +1,103 @@
+{
+  "version": "0.16",
+  "date": "2026-11-18",
+  "os": "Windows x64",
+  "windows_exe_sha256": "f77416f4f96a678ebdb50581896536bb3aa9ffe2fb9d45a3276e6ed51440ca6a",
+  "regression": {
+    "passed": 334,
+    "failed": 0,
+    "ignored": 50
+  },
+  "external_native_writer_tests": 9,
+  "process_exit_stages": 7,
+  "native_recovery_and_concurrent_reader": true,
+  "atomic_commit_final": true,
+  "concurrent_writer_final": true,
+  "corruption_and_unrelated_change_fail_closed": true,
+  "physical_power_loss_tested": false,
+  "original_hashes_unchanged": 6,
+  "copy_hashes_checked": 24,
+  "config_record_bytes_unchanged": true,
+  "source_files": 62,
+  "test_only_ast_items_removed": 102,
+  "performance": {
+    "version": "0.16",
+    "date": "2026-11-18",
+    "os": "Windows x64",
+    "workers": 4,
+    "os_file_cache_cleared": false,
+    "full_copy_files": 753753,
+    "native": {
+      "label": "original-benchmark",
+      "runs_ms": [
+        323,
+        393,
+        439
+      ],
+      "median_ms": 393,
+      "pairs": 3,
+      "own_objects": 6,
+      "kod_verified": 6,
+      "restored_files": 0
+    },
+    "before": {
+      "label": "rust-015-baseline",
+      "runs_ms": [
+        5469,
+        4700,
+        5018
+      ],
+      "median_ms": 5018,
+      "pairs": 3,
+      "own_objects": 6,
+      "kod_verified": 6,
+      "restored_files": 0
+    },
+    "after": {
+      "label": "rust-016-clean",
+      "runs_ms": [
+        840,
+        836,
+        971
+      ],
+      "median_ms": 840,
+      "pairs": 3,
+      "own_objects": 6,
+      "kod_verified": 6,
+      "restored_files": 0
+    },
+    "final_profile_enabled": false,
+    "all_modes_used_same_disposable_case_fields": true,
+    "byte_identical_dataset_between_modes": false,
+    "restored_data_files": 0,
+    "conditions": "Three sequential requests, two newly created objects per request; warm non-cascading preview, deleteobj=0, flong=0, fhole=1. Independent full copy; servers run consecutively. OIDs differ between runs; previous test changes are retained.",
+    "reports_015": {
+      "sequential_ms": 49968,
+      "parallel_ms": 33484,
+      "books_byte_equal": true,
+      "runs_per_mode": 1
+    }
+  },
+  "cancellation_ms": 78,
+  "home_under_full_queue_ms": 33,
+  "word_under_full_queue_ms": 10,
+  "heavy_running": 2,
+  "heavy_queued": 16,
+  "native_interoperability": {
+    "attributes": true,
+    "rtf_revisions": 2,
+    "word_button": true,
+    "deleted_objects": 6,
+    "kod_verified": 6
+  },
+  "daily_reports": {
+    "interval": "2025-10-01/2025-10-01",
+    "ms": {
+      "daily-1as": 39159,
+      "daily-z221": 143027
+    },
+    "pair_ms": 143094,
+    "byte_equal_to_native_compared_015": true
+  },
+  "linux_freebsd_full_cycle_tested": false
+}

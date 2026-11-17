@@ -1,0 +1,300 @@
+//! KS file access: data stays read-only; the logical log subtree is redirected.
+use super::*;
+use std::path::{Component, Path, PathBuf};
+
+fn script_io(operation: &str, path: &Path, error: std::io::Error) -> Fault {
+    Fault::Script(Value::String(format!(
+        "{operation} {}: {error}",
+        path.display()
+    )))
+}
+
+// Match paths before touching the source filesystem: data/log and its parents
+// need not exist. Parent components are resolved before deciding permissions.
+fn log_relative(root: &Path, name: &str) -> Option<PathBuf> {
+    #[cfg(windows)]
+    let canonical_root = root;
+    let root = PathBuf::from(super::super::path::script_path(&root.to_string_lossy()));
+    let path = root.join(name.replace('\\', "/"));
+    let mut normalized = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(part.as_os_str()),
+        }
+    }
+    // SPD's DebugLog opens time.log at the data root. Redirect root-level
+    // journals too, without ever opening the original file for writing.
+    if normalized.parent() == Some(root.as_path())
+        && normalized
+            .extension()
+            .is_some_and(|s| s.eq_ignore_ascii_case("log"))
+    {
+        return Some(PathBuf::from(format!(
+            "root-{}",
+            normalized.file_name()?.to_string_lossy()
+        )));
+    }
+    let prefix = root.join("log");
+    let direct = (|| {
+        let mut components = normalized.components();
+        for expected in prefix.components() {
+            let actual = components.next()?;
+            let equal = if cfg!(windows) {
+                actual.as_os_str().to_string_lossy().to_lowercase()
+                    == expected.as_os_str().to_string_lossy().to_lowercase()
+            } else {
+                actual == expected
+            };
+            if !equal {
+                return None;
+            }
+        }
+        Some(components.collect())
+    })();
+    if direct.is_some() {
+        return direct;
+    }
+    #[cfg(windows)]
+    {
+        // An absolute KS path can use an 8.3 spelling while data_root uses
+        // the canonical long name. Resolve only the existing data prefix;
+        // the logical log directory itself may not exist and is redirected.
+        let components: Vec<_> = normalized.components().collect();
+        let mut parent = PathBuf::new();
+        for (i, component) in components.iter().enumerate() {
+            if matches!(component, Component::Normal(n) if n.eq_ignore_ascii_case("log"))
+                && parent.canonicalize().ok().as_deref() == Some(canonical_root)
+            {
+                return Some(components[i + 1..].iter().collect());
+            }
+            parent.push(component.as_os_str());
+        }
+    }
+    None
+}
+
+impl Runtime<'_> {
+    // The vendor deletion form saves .kod recovery files in this one subtree.
+    // Validate each existing ancestor, including junctions, before creating it.
+    fn deletion_destination(&self, root: &Path, name: &str) -> Result<Option<PathBuf>, Fault> {
+        if !self.document_write_allowed {
+            return Ok(None);
+        }
+        let path = root.join(name.replace('\\', "/"));
+        let components = path.components().collect::<Vec<_>>();
+        if components.iter().any(|p| matches!(p, Component::ParentDir)) {
+            return Err("Deletion archive path traversal".into());
+        }
+        // createPath passes an absolute KS spelling (C:/...), whereas Windows
+        // canonicalize returns a verbatim path (\\?\C:\...). Resolve the
+        // existing data prefix, also accepting its native 8.3 spelling.
+        let mut parent = PathBuf::new();
+        let mut suffix = None;
+        for (i, part) in components.iter().enumerate() {
+            if matches!(part, Component::Normal(p) if p.eq_ignore_ascii_case("DelObject"))
+                && parent.canonicalize().ok().as_deref() == Some(root)
+            {
+                suffix = Some(&components[i + 1..]);
+                break;
+            }
+            parent.push(part.as_os_str());
+        }
+        let Some(parts) = suffix else {
+            return Ok(None);
+        };
+        let mut destination = root.join("DelObject");
+        for part in std::iter::once(None).chain(parts.iter().copied().map(Some)) {
+            if let Some(part) = part {
+                let Component::Normal(p) = part else {
+                    return Err("Deletion archive path traversal".into());
+                };
+                destination.push(p);
+            }
+            if std::fs::symlink_metadata(&destination).is_ok() {
+                let resolved = destination
+                    .canonicalize()
+                    .map_err(|e| script_io("Deletion archive", &destination, e))?;
+                if !resolved.starts_with(root.join("DelObject")) {
+                    return Err("Deletion archive outside data root".into());
+                }
+            }
+        }
+        Ok(Some(destination))
+    }
+    fn file_root(&self) -> Result<PathBuf, Fault> {
+        Path::new(self.data_root.as_ref().ok_or("File requires data root")?)
+            .canonicalize()
+            .map_err(|e| Fault::Host(format!("File data root: {e}")))
+    }
+
+    fn log_destination(&self, root: &Path, relative: &Path) -> Result<PathBuf, Fault> {
+        let configured = self.log_root.as_ref().ok_or(
+            "KODEKS_LOG_DIR is required for KS log writes; use a separate existing directory",
+        )?;
+        let log_root = configured
+            .canonicalize()
+            .map_err(|e| format!("KODEKS_LOG_DIR {}: {e}", configured.display()))?;
+        if !log_root.is_dir() {
+            return Err("KODEKS_LOG_DIR must be a directory".into());
+        }
+        // Neither subtree may contain the other: this also rules out mapping
+        // a log path back onto a source volume through the log root's parent.
+        if log_root.starts_with(root) || root.starts_with(&log_root) {
+            return Err(
+                "KODEKS_LOG_DIR must be separate from source data (no overlapping trees)".into(),
+            );
+        }
+        let mut destination = log_root.clone();
+        for component in relative.components() {
+            let Component::Normal(name) = component else {
+                return Err("log path must stay within KODEKS_LOG_DIR".into());
+            };
+            destination.push(name);
+            match std::fs::symlink_metadata(&destination) {
+                Ok(_) => {
+                    let resolved = destination
+                        .canonicalize()
+                        .map_err(|e| script_io("log path", &destination, e))?;
+                    if !resolved.starts_with(&log_root) {
+                        return Err(format!(
+                            "log path outside configured directory: {}",
+                            destination.display()
+                        )
+                        .into());
+                    }
+                    destination = resolved;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(script_io("log path", &destination, e)),
+            }
+        }
+        Ok(destination)
+    }
+
+    pub(super) fn open_file(&self, name: &str, create: bool) -> Result<Value, Fault> {
+        let root = self.file_root()?;
+        if create {
+            if let Some(path) = self.deletion_destination(&root, name)? {
+                if !path
+                    .extension()
+                    .is_some_and(|s| s.eq_ignore_ascii_case("kod"))
+                {
+                    return Err("Deletion archive requires .kod".into());
+                }
+                let file = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&path)
+                    .map_err(|e| script_io("Deletion archive", &path, e))?;
+                return Ok(Value::LogFile(Rc::new(RefCell::new(file))));
+            }
+        }
+        if let Some(relative) = log_relative(&root, name) {
+            if self.log_root.is_some() || create {
+                let destination = self.log_destination(&root, &relative)?;
+                // Probes and listings refer to the same directory as log writes.
+                // No source log directory is required, and none is created.
+                if !create {
+                    let meta = std::fs::metadata(&destination)
+                        .map_err(|e| script_io("log File", &destination, e))?;
+                    if meta.is_dir() {
+                        return Ok(Value::File(destination));
+                    }
+                }
+                if !relative
+                    .extension()
+                    .is_some_and(|s| s.eq_ignore_ascii_case("log"))
+                {
+                    return Err(format!("log File supports only .log files: {name}").into());
+                }
+                let file = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(create)
+                    .truncate(create)
+                    .open(&destination)
+                    .map_err(|e| script_io("log File", &destination, e))?;
+                return Ok(Value::LogFile(Rc::new(RefCell::new(file))));
+            }
+        }
+        if create {
+            return Err(format!(
+                "File creation outside configured log directory is not implemented: {name}"
+            )
+            .into());
+        }
+        let path = root.join(name.replace('\\', "/"));
+        let path = path
+            .canonicalize()
+            .map_err(|e| script_io("File", &path, e))?;
+        if !path.starts_with(&root) {
+            if root.starts_with(&path) && path.is_dir() {
+                return Ok(Value::AncestorDirectory(path));
+            }
+            return Err(format!(
+                "File outside data root: resolved={}, root={}",
+                path.display(),
+                root.display()
+            )
+            .into());
+        }
+        Ok(Value::File(path))
+    }
+
+    pub(super) fn log_path_operation(
+        &self,
+        operation: &str,
+        values: &[Value],
+    ) -> Result<Value, Fault> {
+        let [value] = values else {
+            return Err(format!("{operation} expects one path").into());
+        };
+        if !matches!(value, Value::String(_) | Value::FilePath(_)) {
+            return Err(format!("{operation} requires a string or FilePath").into());
+        }
+        let name = value.text();
+        let root = self.file_root()?;
+        if operation == "MkDir" {
+            if let Some(path) = self.deletion_destination(&root, &name)? {
+                return Ok(Value::Bool(std::fs::create_dir(&path).is_ok()));
+            }
+        }
+        let relative = log_relative(&root, &name).ok_or_else(|| {
+            format!(
+                "{operation} is only supported inside data_root/log; requested={name}; root={}",
+                root.display()
+            )
+        })?;
+        let destination = self.log_destination(&root, &relative)?;
+        let result = match operation {
+            "MkDir" => std::fs::create_dir(&destination),
+            "Unlink" => {
+                if !relative
+                    .extension()
+                    .is_some_and(|s| s.eq_ignore_ascii_case("log"))
+                {
+                    return Err(format!("Unlink is only supported for .log files: {name}").into());
+                }
+                std::fs::remove_file(&destination)
+            }
+            _ => unreachable!(),
+        };
+        // Native MkDir wraps mkdir and returns false on failure (00675fc6).
+        // A missing Unlink target is likewise a normal unsuccessful operation.
+        if let Err(ref e) = result {
+            if !matches!(
+                e.kind(),
+                std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::NotFound
+            ) {
+                eprintln!("{operation} {name} -> {}: {e}", destination.display());
+            }
+        }
+        Ok(Value::Bool(result.is_ok()))
+    }
+}

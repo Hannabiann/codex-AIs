@@ -1,0 +1,73 @@
+{
+  "version": "0.15",
+  "date": "2026-11-17",
+  "os": "Windows x64",
+  "cpu": "Intel Xeon Silver 4516Y+",
+  "cores": 6,
+  "logical_processors": 12,
+  "ram_bytes": 34358624256,
+  "full_copy_files": 753753,
+  "full_copy_bytes": 344531978013,
+  "workers": 4,
+  "profile": 0,
+  "os_file_cache_cleared": false,
+  "regression": {
+    "passed": 325,
+    "failed": 0,
+    "ignored": 46
+  },
+  "external_writer_concurrency": "passed",
+  "heavy_running": 2,
+  "heavy_queued": 16,
+  "cancellation_ms": 109,
+  "home_ms_under_full_heavy_queue": 32,
+  "word_ms_under_full_heavy_queue": 12,
+  "parallel_deletions": {
+    "count": 2,
+    "wall_ms": 5422,
+    "individual_ms": [
+      2712,
+      5333
+    ],
+    "kod_created": 2
+  },
+  "mixed_report_and_delete": {
+    "report_ms": 40348,
+    "delete_ms": 2602,
+    "home_ms": 61,
+    "xls_byte_equal": true,
+    "kod_created": true
+  },
+  "equal_reports_warm": {
+    "sequential_wall_ms": 49968,
+    "parallel_wall_ms": 33484,
+    "speedup": 1.492
+  },
+  "daily_reports": {
+    "interval": "2025-10-01/2025-10-01",
+    "rust_pair_ms": 149422,
+    "rust_1as_ms": 42922,
+    "rust_z221_ms": 148890,
+    "native_1as_concurrent_attempt_ms": 746881,
+    "native_z221_retry_alone_ms": 183703,
+    "native_pair_complete": false,
+    "native_pair_error": "Z22.1 response connection reset; retry with Connection: close succeeded",
+    "sheets": [
+      13,
+      8
+    ],
+    "constants": [
+      37947,
+      42447
+    ],
+    "formulas": [
+      17250,
+      476
+    ],
+    "differences": 0,
+    "formula_cached_values_compared": false
+  },
+  "source_files": 58,
+  "test_only_ast_items_removed": 94,
+  "windows_exe_sha256": "6044a5e5b6f29673fd034b2b9e90b07f2d90291754989b579c2d36fdc3f6a48c"
+}
