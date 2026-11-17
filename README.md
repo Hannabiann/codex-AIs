@@ -6,6 +6,27 @@ HTTP-сервер и интерпретатор KS для АИС «Судопр�
 
 Версия **0.16**, лицензия **GPL-3.0-only**. Проект не связан с разработчиком КОДЕКС. Совместимость проверяется на одном контрольном комплекте; другие выпуски АИС могут отличаться схемой и скриптами.
 
+## Быстрый запуск на Windows
+
+Готовая сборка для **Windows x64**: [скачать codex-AIs.exe версии 0.16](https://github.com/Hannabiann/codex-AIs/releases/download/v0.16/codex-AIs.exe). Также доступны [ZIP-архив](https://github.com/Hannabiann/codex-AIs/releases/download/v0.16/codex-AIs-0.16-windows-x86_64.zip) и [страница Releases](https://github.com/Hannabiann/codex-AIs/releases). Rust и средства сборки для запуска не нужны.
+
+1. Сделайте независимую копию полного комплекта КОДЕКС, например `C:\kodeks-test`. Скопируйте `codex-AIs.exe` в её корень, рядом с `config.db4` и оригинальными EXE.
+2. Остановите другой сервер, работающий с этим комплектом, дождитесь завершения процесса и освобождения порта 8070. Откройте PowerShell и выполните команды ниже, заменив путь к копии на свой.
+
+```powershell
+Set-Location C:\kodeks-test
+$env:KODEKS_DATA_DIR = (Get-Location).Path
+$env:KODEKS_LOG_DIR = 'C:\codex-AIs-logs'
+New-Item -ItemType Directory -Path $env:KODEKS_LOG_DIR -Force | Out-Null
+$env:KODEKS_HOST = '127.0.0.1'
+$env:KODEKS_PORT = '8070'
+.\codex-AIs.exe serve
+```
+
+3. Оставьте окно сервера открытым и перейдите на [главную страницу](http://localhost:8070/20a/). Администрирование: [localhost:8070/admin/](http://localhost:8070/admin/). Для доступа с других компьютеров перед запуском задайте `$env:KODEKS_HOST = '0.0.0.0'` и используйте IP-адрес сервера.
+
+[Что проверять в первую очередь](docs/TESTING.md). [Подробный запуск и восстановление перед переключением на kodweb](#запуск).
+
 ## Реализованные разделы
 
 | Раздел | Что работает на контрольном комплекте |
