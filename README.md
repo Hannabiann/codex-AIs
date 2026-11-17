@@ -37,19 +37,31 @@ HTTP-сервер и интерпретатор KS для АИС «Судопр�
 
 ## Устройство
 
-![Обработка запросов](docs/images/architecture.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/architecture.svg">
+  <img alt="Обработка запросов" src="docs/images/architecture.svg">
+</picture>
 
 Подключения, схемы и порядок томов читаются из `config.db4`; фиксированного списка файлов `old` или `work` нет. Каждый исполнитель имеет свой Runtime и Db4Engine. При четырёх исполнителях один обслуживает Word/At и состояние каталогов, второй — известные формы интерфейса, ещё два — поиск, удаление и XLS. Число исполнителей меняется в `/admin?advanced`.
 
 Публикации DB4 согласуются последовательно. Перед записью проверяется ожидаемая редакция. Небольшое изменение записывается страницами с журналом восстановления; предыдущая версия остаётся в резервном DB4. При большом объёме изменений используется замена полного файла. Отключение клиента отменяет вычисления; начатая публикация завершается целиком. [Пул, отмена и keep-alive](docs/CONCURRENCY.md).
 
-![Алгоритм записи DB40](docs/images/writer.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/writer-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/writer.svg">
+  <img alt="Алгоритм записи DB40" src="docs/images/writer.svg">
+</picture>
 
 В 0.16 добавление записи и индексных значений обновляет отдельные ветви B-деревьев. Остальные изменения используют существующие индексы вместо разбора всех документов тома. Для страничной записи сохраняются прежние и новые данные изменяемых страниц. Открытые читатели получают прежний образ в памяти и продолжают чтение без смешивания версий. Это требует дополнительной памяти на время таких чтений. [Протокол записи и восстановления](docs/DB40_WRITES.md).
 
 ## Измерения
 
-![Время удаления и формирования отчётов](docs/images/benchmarks.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/benchmarks-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/benchmarks.svg">
+  <img alt="Время удаления и формирования отчётов" src="docs/images/benchmarks.svg">
+</picture>
 
 Результаты относятся к одной Windows-машине и полной копии одного комплекта. Серверы запускались последовательно, файловый кэш ОС не очищался. [Все времена, параметры и методика](docs/BENCHMARKS.md). Исторические замеры годовых отчётов приведены отдельно от новых измерений удаления.
 

@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1000" viewBox="0 0 1440 1000" role="img"><title>Подготовка, страничная запись и восстановление DB40</title>
+<rect x="0" y="0" width="1440" height="1000" fill="#0d1117"/>
+<text x="48" y="54" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="32" font-weight="700">Подготовка и публикация изменения DB40</text>
+<text x="48" y="93" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">codex-AIs 0.16 · одно изменение тома · единица журнала 4096 байт</text>
+<rect x="48" y="125" width="1344" height="100" rx="0" fill="#161b22" stroke="#3d4b5c"/>
+<text x="70" y="162" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="25" font-weight="700">1. Проверить редакцию и подготовить образ</text>
+<text x="70" y="201" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Добавление: путь в B-дереве. Удаление: затронутые индексы.</text>
+<line x1="720" y1="226" x2="720" y2="247" stroke="#39d0bd" stroke-width="3"/>
+<polygon points="713,245 727,245 720,257" fill="#39d0bd"/>
+<rect x="48" y="258" width="1344" height="100" rx="0" fill="#161b22" stroke="#3d4b5c"/>
+<text x="70" y="295" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="25" font-weight="700">2. Сохранить журнал и резерв</text>
+<text x="70" y="334" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Прежние и новые страницы → sync. Резерв DB4 → sync.</text>
+<line x1="720" y1="359" x2="720" y2="380" stroke="#39d0bd" stroke-width="3"/>
+<polygon points="713,378 727,378 720,390" fill="#39d0bd"/>
+<rect x="48" y="391" width="1344" height="100" rx="0" fill="#161b22" stroke="#3d4b5c"/>
+<text x="70" y="428" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="25" font-weight="700">3. Записать страницы тома</text>
+<text x="70" y="467" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Открытым читателям — прежний образ в памяти. Том → sync.</text>
+<line x1="720" y1="492" x2="720" y2="513" stroke="#39d0bd" stroke-width="3"/>
+<polygon points="713,511 727,511 720,523" fill="#39d0bd"/>
+<rect x="48" y="524" width="1344" height="100" rx="0" fill="#161b22" stroke="#3d4b5c"/>
+<text x="70" y="561" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="25" font-weight="700">4. Зафиксировать результат</text>
+<text x="70" y="600" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Отметка COMMIT в журнале → sync. Затем удалить журнал.</text>
+<rect x="48" y="679" width="650" height="142" rx="0" fill="#161b22" stroke="#3d4b5c"/>
+<rect x="742" y="679" width="650" height="142" rx="0" fill="#161b22" stroke="#3d4b5c"/>
+<text x="70" y="719" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="24" font-weight="700">Сбой до полной отметки COMMIT</text>
+<text x="70" y="762" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Восстановить прежние страницы</text>
+<text x="70" y="798" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">Проверить контрольную сумму образа</text>
+<text x="764" y="719" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="24" font-weight="700">Полная отметка COMMIT</text>
+<text x="764" y="762" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Повторить запись новых страниц</text>
+<text x="764" y="798" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">Проверить контрольную сумму образа</text>
+<text x="48" y="874" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Большое изменение: полный временный файл и атомарная замена.</text>
+<text x="48" y="915" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">Повреждённый журнал: отказ с сохранением файлов. Каскад не является общей транзакцией.</text>
+<text x="48" y="956" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">После аварии, перед запуском kodweb: codex-AIs recover &lt;каталог данных&gt;</text>
+</svg>

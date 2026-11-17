@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1000" viewBox="0 0 1440 1000" role="img"><title>Удаление двух объектов и параллельное формирование отчётов</title>
+<rect x="0" y="0" width="1440" height="1000" fill="#ffffff"/>
 <text x="48" y="54" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="32" font-weight="700">Контрольные измерения</text>
 <text x="48" y="95" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">Windows, один полный комплект, последовательное переключение серверов.</text>
 <text x="48" y="155" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="26" font-weight="700">Удаление двух объектов · медиана трёх запусков</text>
@@ -20,10 +21,10 @@
 <rect x="420" y="199" width="55.675000000000004" height="28" rx="0" fill="#71869c"/>
 <text x="485.675" y="222" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="20" font-weight="400">0,393 с</text>
 <text x="48" y="282" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">codex-AIs 0.15</text>
-<rect x="420" y="259" width="710.8833333333333" height="28" rx="0" fill="#9db1bf"/>
+<rect x="420" y="259" width="710.8833333333333" height="28" rx="0" fill="#6d879c"/>
 <text x="1140.8833333333332" y="282" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="20" font-weight="400">5,018 с</text>
 <text x="48" y="342" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">codex-AIs 0.16</text>
-<rect x="420" y="319" width="119.0" height="28" rx="0" fill="#008779"/>
+<rect x="420" y="319" width="119.0" height="28" rx="0" fill="#00786b"/>
 <text x="549.0" y="342" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="20" font-weight="400">0,840 с</text>
 <text x="48" y="434" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="20" font-weight="400">Новые тестовые объекты; очистка ссылок без каскада, отметка удаления и KOD. Шкала: секунды.</text>
 <text x="48" y="555" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="26" font-weight="700">Два одинаковых 1АС · codex-AIs 0.15 после прогрева</text>
@@ -45,7 +46,7 @@
 <rect x="420" y="599" width="707.88" height="28" rx="0" fill="#71869c"/>
 <text x="1137.88" y="622" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="20" font-weight="400">49,968 с</text>
 <text x="48" y="682" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">Параллельно</text>
-<rect x="420" y="659" width="474.3566666666667" height="28" rx="0" fill="#008779"/>
+<rect x="420" y="659" width="474.3566666666667" height="28" rx="0" fill="#00786b"/>
 <text x="904.3566666666667" y="682" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="20" font-weight="400">33,484 с</text>
 <text x="48" y="774" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="20" font-weight="400">Данные 0.15: один запуск пары в каждом режиме. Все книги побайтно совпали. Шкала: секунды.</text>
 <text x="48" y="956" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="21" font-weight="400">Параметры, все повторения и ограничения сравнения: docs/BENCHMARKS.md</text>

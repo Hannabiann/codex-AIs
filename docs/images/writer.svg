@@ -1,22 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1000" viewBox="0 0 1440 1000" role="img"><title>Подготовка, страничная запись и восстановление DB40</title>
+<rect x="0" y="0" width="1440" height="1000" fill="#ffffff"/>
 <text x="48" y="54" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="32" font-weight="700">Подготовка и публикация изменения DB40</text>
 <text x="48" y="93" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">codex-AIs 0.16 · одно изменение тома · единица журнала 4096 байт</text>
-<rect x="48" y="125" width="1344" height="100" rx="0" fill="white" stroke="#d3dfe9"/>
+<rect x="48" y="125" width="1344" height="100" rx="0" fill="#ffffff" stroke="#d3dfe9"/>
 <text x="70" y="162" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="25" font-weight="700">1. Проверить редакцию и подготовить образ</text>
 <text x="70" y="201" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Добавление: путь в B-дереве. Удаление: затронутые индексы.</text>
-<line x1="720" y1="226" x2="720" y2="247" stroke="#008779" stroke-width="3"/>
-<polygon points="713,245 727,245 720,257" fill="#008779"/>
-<rect x="48" y="258" width="1344" height="100" rx="0" fill="white" stroke="#d3dfe9"/>
+<line x1="720" y1="226" x2="720" y2="247" stroke="#00786b" stroke-width="3"/>
+<polygon points="713,245 727,245 720,257" fill="#00786b"/>
+<rect x="48" y="258" width="1344" height="100" rx="0" fill="#ffffff" stroke="#d3dfe9"/>
 <text x="70" y="295" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="25" font-weight="700">2. Сохранить журнал и резерв</text>
 <text x="70" y="334" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Прежние и новые страницы → sync. Резерв DB4 → sync.</text>
-<line x1="720" y1="359" x2="720" y2="380" stroke="#008779" stroke-width="3"/>
-<polygon points="713,378 727,378 720,390" fill="#008779"/>
-<rect x="48" y="391" width="1344" height="100" rx="0" fill="white" stroke="#d3dfe9"/>
+<line x1="720" y1="359" x2="720" y2="380" stroke="#00786b" stroke-width="3"/>
+<polygon points="713,378 727,378 720,390" fill="#00786b"/>
+<rect x="48" y="391" width="1344" height="100" rx="0" fill="#ffffff" stroke="#d3dfe9"/>
 <text x="70" y="428" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="25" font-weight="700">3. Записать страницы тома</text>
 <text x="70" y="467" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Открытым читателям — прежний образ в памяти. Том → sync.</text>
-<line x1="720" y1="492" x2="720" y2="513" stroke="#008779" stroke-width="3"/>
-<polygon points="713,511 727,511 720,523" fill="#008779"/>
-<rect x="48" y="524" width="1344" height="100" rx="0" fill="white" stroke="#d3dfe9"/>
+<line x1="720" y1="492" x2="720" y2="513" stroke="#00786b" stroke-width="3"/>
+<polygon points="713,511 727,511 720,523" fill="#00786b"/>
+<rect x="48" y="524" width="1344" height="100" rx="0" fill="#ffffff" stroke="#d3dfe9"/>
 <text x="70" y="561" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="25" font-weight="700">4. Зафиксировать результат</text>
 <text x="70" y="600" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Отметка COMMIT в журнале → sync. Затем удалить журнал.</text>
 <rect x="48" y="679" width="650" height="142" rx="0" fill="#f3f6fa" stroke="#d3dfe9"/>

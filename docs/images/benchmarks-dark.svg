@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1000" viewBox="0 0 1440 1000" role="img"><title>Удаление двух объектов и параллельное формирование отчётов</title>
+<rect x="0" y="0" width="1440" height="1000" fill="#0d1117"/>
+<text x="48" y="54" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="32" font-weight="700">Контрольные измерения</text>
+<text x="48" y="95" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">Windows, один полный комплект, последовательное переключение серверов.</text>
+<text x="48" y="155" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="26" font-weight="700">Удаление двух объектов · медиана трёх запусков</text>
+<line x1="420.0" y1="185" x2="420.0" y2="365" stroke="#303d4b" stroke-width="1"/>
+<text x="415.0" y="393" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="18" font-weight="400">0</text>
+<line x1="561.6666666666666" y1="185" x2="561.6666666666666" y2="365" stroke="#303d4b" stroke-width="1"/>
+<text x="556.6666666666666" y="393" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="18" font-weight="400">1</text>
+<line x1="703.3333333333333" y1="185" x2="703.3333333333333" y2="365" stroke="#303d4b" stroke-width="1"/>
+<text x="698.3333333333333" y="393" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="18" font-weight="400">2</text>
+<line x1="845.0" y1="185" x2="845.0" y2="365" stroke="#303d4b" stroke-width="1"/>
+<text x="840.0" y="393" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="18" font-weight="400">3</text>
+<line x1="986.6666666666666" y1="185" x2="986.6666666666666" y2="365" stroke="#303d4b" stroke-width="1"/>
+<text x="981.6666666666666" y="393" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="18" font-weight="400">4</text>
+<line x1="1128.3333333333335" y1="185" x2="1128.3333333333335" y2="365" stroke="#303d4b" stroke-width="1"/>
+<text x="1123.3333333333335" y="393" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="18" font-weight="400">5</text>
+<line x1="1270.0" y1="185" x2="1270.0" y2="365" stroke="#303d4b" stroke-width="1"/>
+<text x="1265.0" y="393" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="18" font-weight="400">6</text>
+<text x="48" y="222" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">kodweb.exe</text>
+<rect x="420" y="199" width="55.675000000000004" height="28" rx="0" fill="#8fa8c2"/>
+<text x="485.675" y="222" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="20" font-weight="400">0,393 с</text>
+<text x="48" y="282" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">codex-AIs 0.15</text>
+<rect x="420" y="259" width="710.8833333333333" height="28" rx="0" fill="#627f9c"/>
+<text x="1140.8833333333332" y="282" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="20" font-weight="400">5,018 с</text>
+<text x="48" y="342" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">codex-AIs 0.16</text>
+<rect x="420" y="319" width="119.0" height="28" rx="0" fill="#39d0bd"/>
+<text x="549.0" y="342" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="20" font-weight="400">0,840 с</text>
+<text x="48" y="434" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="20" font-weight="400">Новые тестовые объекты; очистка ссылок без каскада, отметка удаления и KOD. Шкала: секунды.</text>
+<text x="48" y="555" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="26" font-weight="700">Два одинаковых 1АС · codex-AIs 0.15 после прогрева</text>
+<line x1="420.0" y1="585" x2="420.0" y2="705" stroke="#303d4b" stroke-width="1"/>
+<text x="415.0" y="733" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="18" font-weight="400">0</text>
+<line x1="561.6666666666666" y1="585" x2="561.6666666666666" y2="705" stroke="#303d4b" stroke-width="1"/>
+<text x="556.6666666666666" y="733" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="18" font-weight="400">10</text>
+<line x1="703.3333333333333" y1="585" x2="703.3333333333333" y2="705" stroke="#303d4b" stroke-width="1"/>
+<text x="698.3333333333333" y="733" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="18" font-weight="400">20</text>
+<line x1="845.0" y1="585" x2="845.0" y2="705" stroke="#303d4b" stroke-width="1"/>
+<text x="840.0" y="733" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="18" font-weight="400">30</text>
+<line x1="986.6666666666666" y1="585" x2="986.6666666666666" y2="705" stroke="#303d4b" stroke-width="1"/>
+<text x="981.6666666666666" y="733" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="18" font-weight="400">40</text>
+<line x1="1128.3333333333335" y1="585" x2="1128.3333333333335" y2="705" stroke="#303d4b" stroke-width="1"/>
+<text x="1123.3333333333335" y="733" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="18" font-weight="400">50</text>
+<line x1="1270.0" y1="585" x2="1270.0" y2="705" stroke="#303d4b" stroke-width="1"/>
+<text x="1265.0" y="733" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="18" font-weight="400">60</text>
+<text x="48" y="622" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">Последовательно</text>
+<rect x="420" y="599" width="707.88" height="28" rx="0" fill="#8fa8c2"/>
+<text x="1137.88" y="622" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="20" font-weight="400">49,968 с</text>
+<text x="48" y="682" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">Параллельно</text>
+<rect x="420" y="659" width="474.3566666666667" height="28" rx="0" fill="#39d0bd"/>
+<text x="904.3566666666667" y="682" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="20" font-weight="400">33,484 с</text>
+<text x="48" y="774" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="20" font-weight="400">Данные 0.15: один запуск пары в каждом режиме. Все книги побайтно совпали. Шкала: секунды.</text>
+<text x="48" y="956" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="21" font-weight="400">Параметры, все повторения и ограничения сравнения: docs/BENCHMARKS.md</text>
+</svg>
