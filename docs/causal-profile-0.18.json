@@ -1,0 +1,176 @@
+{
+  "executable_sha256": "9949c3e918b763912820987b3db565b0a1865be8bee22fb38da387fedef5b799",
+  "deletion_mode": "two concurrent previews, fview=1; no deletion writes",
+  "sampling": {
+    "duration_s": 70,
+    "rounds": 3085,
+    "method": "Brief SuspendThread + Wow64GetThreadContext + ReadProcessMemory + ResumeThread; no memory writes",
+    "not_a_timing_benchmark": true
+  },
+  "deletion": {
+    "lock_stack_observations": 941,
+    "observations_owned_by_other_worker": 805,
+    "distinct_cross_owned_locks": 16,
+    "wait_syscall_observations": 789,
+    "wait_syscall": "ZwWaitForAlertByThreadId+12",
+    "volume_guard_return": "0x005c7733",
+    "volume_guard_observations": 792,
+    "volume_object_lock_offset": "0x45c",
+    "volume_name_pointer_offset": "0x8",
+    "objects": [
+      {
+        "volume": "post1-4.db4",
+        "observations": 359
+      },
+      {
+        "volume": "doc3.db4",
+        "observations": 131
+      },
+      {
+        "volume": "doc4-5.db4",
+        "observations": 93
+      },
+      {
+        "volume": "2026doc.db4",
+        "observations": 86
+      },
+      {
+        "volume": "case_without_participant.db4",
+        "observations": 55
+      },
+      {
+        "volume": "doc1-2.db4",
+        "observations": 36
+      },
+      {
+        "volume": "unresolved object",
+        "observations": 14
+      },
+      {
+        "volume": "base00002.db4",
+        "observations": 8
+      },
+      {
+        "volume": "base00003.db4",
+        "observations": 7
+      },
+      {
+        "volume": "base.db4",
+        "observations": 6
+      },
+      {
+        "volume": "base00004.db4",
+        "observations": 5
+      },
+      {
+        "volume": "base00005.db4",
+        "observations": 4
+      },
+      {
+        "volume": "base00001.db4",
+        "observations": 1
+      }
+    ]
+  },
+  "lookup": {
+    "function": "0x0076c970",
+    "resolver": "0x00663010",
+    "caller": "0x00667ba0",
+    "builtin_table": [
+      "valueOf",
+      "constructor",
+      "toString",
+      "toPrimitive",
+      "toBoolean",
+      "toNumber",
+      "toObject",
+      "__refCnt",
+      "prototype",
+      "constructor"
+    ],
+    "delete_observations": 30,
+    "delete_names": {
+      "Content-Type": 30
+    },
+    "report_observations": 150,
+    "report_capture_cap": 150,
+    "report_distinct_names": 74,
+    "report_examples": [
+      "sqlrRezOB",
+      "res2",
+      "sPartKod",
+      "Document",
+      "Array",
+      "Attr"
+    ],
+    "limitations": [
+      "Time-selected snapshots are not invocation counters or execution-time shares",
+      "Copy preview path, not completed mutation, was sampled",
+      "Sampling perturbs scheduling",
+      "Exact cause of doubling logical reads not established"
+    ]
+  },
+  "converter_runs": [
+    {
+      "variant": "manual-1",
+      "wall_s": 105.83031879999908,
+      "exit_code": 0,
+      "template_sha256": "7e6f80cedf2ba16f61f81c8887916bfd34eeba5aea5eb51008e7e448d3f2ea53",
+      "xml_sha256": "79cdea31bd4ae2421c54c45a17a13eb850b2a9421b960ac3ae6a6e0cbe38d2ff",
+      "address_map_build_ms": 467.93609999999995
+    },
+    {
+      "variant": "addressed-1",
+      "wall_s": 62.93856029998278,
+      "exit_code": 0,
+      "template_sha256": "7e6f80cedf2ba16f61f81c8887916bfd34eeba5aea5eb51008e7e448d3f2ea53",
+      "xml_sha256": "79cdea31bd4ae2421c54c45a17a13eb850b2a9421b960ac3ae6a6e0cbe38d2ff",
+      "address_map_build_ms": 467.93609999999995
+    },
+    {
+      "variant": "addressed-2",
+      "wall_s": 62.73423850000836,
+      "exit_code": 0,
+      "template_sha256": "7e6f80cedf2ba16f61f81c8887916bfd34eeba5aea5eb51008e7e448d3f2ea53",
+      "xml_sha256": "79cdea31bd4ae2421c54c45a17a13eb850b2a9421b960ac3ae6a6e0cbe38d2ff",
+      "address_map_build_ms": 467.93609999999995
+    },
+    {
+      "variant": "manual-2",
+      "wall_s": 103.64510979998158,
+      "exit_code": 0,
+      "template_sha256": "7e6f80cedf2ba16f61f81c8887916bfd34eeba5aea5eb51008e7e448d3f2ea53",
+      "xml_sha256": "79cdea31bd4ae2421c54c45a17a13eb850b2a9421b960ac3ae6a6e0cbe38d2ff",
+      "address_map_build_ms": 467.93609999999995
+    }
+  ],
+  "converter_parity": [
+    {
+      "name": "addressed-1",
+      "constants": 0,
+      "formulas": 0,
+      "caches": 0,
+      "styles": 0,
+      "sheets": true,
+      "equal": true
+    },
+    {
+      "name": "addressed-2",
+      "constants": 0,
+      "formulas": 0,
+      "caches": 0,
+      "styles": 0,
+      "sheets": true,
+      "equal": true
+    },
+    {
+      "name": "manual-2",
+      "constants": 0,
+      "formulas": 0,
+      "caches": 0,
+      "styles": 0,
+      "sheets": true,
+      "equal": true
+    }
+  ]
+}
