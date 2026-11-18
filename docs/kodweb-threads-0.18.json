@@ -1,0 +1,160 @@
+{
+  "version": "5.3.2.120 x86",
+  "same_connection": true,
+  "workloads": [
+    {
+      "name": "delete-preview",
+      "uri": "/20a?DeleteObject",
+      "thread_id": 7116,
+      "initial_state": "KeepAlive",
+      "observed_request_thread_ids": [
+        7116
+      ]
+    },
+    {
+      "name": "report",
+      "uri": "/20a?StatOtchet221",
+      "thread_id": 5440,
+      "initial_state": "KeepAlive",
+      "observed_request_thread_ids": [
+        5440
+      ]
+    }
+  ],
+  "registry": {
+    "uri": "/20a?convertToExcel",
+    "thread_id": 7284,
+    "initial_state": "KeepAlive",
+    "observed_request_thread_ids": [
+      7284
+    ]
+  },
+  "conversion_samples": [
+    {
+      "elapsed_s": 153.68699999997625,
+      "report_thread_cpu_s": 138.2031,
+      "processes": [
+        {
+          "pid": 1620,
+          "name": "kdb.exe",
+          "ppid": 14800
+        }
+      ]
+    },
+    {
+      "elapsed_s": 154.75,
+      "report_thread_cpu_s": 138.2031,
+      "processes": [
+        {
+          "pid": 1620,
+          "name": "kdb.exe",
+          "ppid": 14800
+        },
+        {
+          "pid": 7276,
+          "name": "EXCEL.EXE",
+          "ppid": 1324
+        }
+      ]
+    },
+    {
+      "elapsed_s": 155.8279999999795,
+      "report_thread_cpu_s": 138.2031,
+      "processes": [
+        {
+          "pid": 1620,
+          "name": "kdb.exe",
+          "ppid": 14800
+        },
+        {
+          "pid": 7276,
+          "name": "EXCEL.EXE",
+          "ppid": 1324
+        }
+      ]
+    },
+    {
+      "elapsed_s": 156.9529999999795,
+      "report_thread_cpu_s": 138.2031,
+      "processes": [
+        {
+          "pid": 1620,
+          "name": "kdb.exe",
+          "ppid": 14800
+        },
+        {
+          "pid": 7276,
+          "name": "EXCEL.EXE",
+          "ppid": 1324
+        }
+      ]
+    },
+    {
+      "elapsed_s": 158.045999999973,
+      "report_thread_cpu_s": 138.2031,
+      "processes": [
+        {
+          "pid": 1620,
+          "name": "kdb.exe",
+          "ppid": 14800
+        },
+        {
+          "pid": 7276,
+          "name": "EXCEL.EXE",
+          "ppid": 1324
+        }
+      ]
+    },
+    {
+      "elapsed_s": 159.15600000001723,
+      "report_thread_cpu_s": 138.2031,
+      "processes": [
+        {
+          "pid": 1620,
+          "name": "kdb.exe",
+          "ppid": 14800
+        },
+        {
+          "pid": 7276,
+          "name": "EXCEL.EXE",
+          "ppid": 1324
+        }
+      ]
+    },
+    {
+      "elapsed_s": 160.25,
+      "report_thread_cpu_s": 138.2031,
+      "processes": [
+        {
+          "pid": 1620,
+          "name": "kdb.exe",
+          "ppid": 14800
+        },
+        {
+          "pid": 7276,
+          "name": "EXCEL.EXE",
+          "ppid": 1324
+        }
+      ]
+    },
+    {
+      "elapsed_s": 161.375,
+      "report_thread_cpu_s": 138.2031,
+      "processes": [
+        {
+          "pid": 1620,
+          "name": "kdb.exe",
+          "ppid": 14800
+        },
+        {
+          "pid": 7276,
+          "name": "EXCEL.EXE",
+          "ppid": 1324
+        }
+      ]
+    }
+  ],
+  "wct_report_state": "blocked; complete dependency chain unavailable",
+  "deletion_mode": "preview only; fview=1",
+  "completion": "Stopped after observing conversion; no full report timing"
+}
