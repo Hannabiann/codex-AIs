@@ -1,0 +1,771 @@
+{
+  "version": "0.18",
+  "date": "2026-11-18",
+  "environment": {
+    "os": "Windows Server 2025 x64",
+    "cpu": "Xeon Silver 4516Y+",
+    "cores": 6,
+    "logical_processors": 12,
+    "ram_gib": 32,
+    "full_copy_files": 753753,
+    "workers": 4,
+    "heavy_workers": 2,
+    "original_version": "5.3.2.120",
+    "os_cache_flushed": false
+  },
+  "deletion": {
+    "deleteobj": 1,
+    "fhole": 1,
+    "flong": 0,
+    "fview": 0,
+    "requests_simultaneous": 2
+  },
+  "runs": [
+    {
+      "label": "oldrust-cold-2026-r1",
+      "engine": "oldrust",
+      "year": 2026,
+      "condition": "rust",
+      "wall_ms": 39930.749,
+      "requests_ms": [
+        38002,
+        39919
+      ],
+      "cascade_sizes": [
+        1,
+        5
+      ],
+      "counters": {
+        "cpu_s": 51.609375,
+        "read_ops": 1201380,
+        "write_ops": 614,
+        "other_ops": 149712,
+        "read_bytes": 61571311425,
+        "write_bytes": 3863024,
+        "other_bytes": 18112522
+      },
+      "average_cpu_cores": 1.292,
+      "preview_ms": null,
+      "exe_sha256": "81c70521d92880ddcddcae1f1e2b7d53cc00810f10ab7ca38474c0ed600978ac",
+      "result_verified": true,
+      "baseline_restored": true
+    },
+    {
+      "label": "rust-cold-2026-r1",
+      "engine": "rust",
+      "year": 2026,
+      "condition": "rust",
+      "wall_ms": 17319.356,
+      "requests_ms": [
+        15386,
+        17310
+      ],
+      "cascade_sizes": [
+        1,
+        5
+      ],
+      "counters": {
+        "cpu_s": 18.671875,
+        "read_ops": 627805,
+        "write_ops": 2934,
+        "other_ops": 149794,
+        "read_bytes": 31276198011,
+        "write_bytes": 39232124,
+        "other_bytes": 13541828
+      },
+      "average_cpu_cores": 1.078,
+      "preview_ms": null,
+      "exe_sha256": "26b3487aa099e3297d427ad1509ed2f4dc703fdc5b56d106ee66567739238021",
+      "result_verified": true,
+      "baseline_restored": true
+    },
+    {
+      "label": "rust-cold-2020-r1",
+      "engine": "rust",
+      "year": 2020,
+      "condition": "rust",
+      "wall_ms": 18488.411,
+      "requests_ms": [
+        17889,
+        18466
+      ],
+      "cascade_sizes": [
+        5,
+        4
+      ],
+      "counters": {
+        "cpu_s": 19.734375,
+        "read_ops": 634817,
+        "write_ops": 3174,
+        "other_ops": 155390,
+        "read_bytes": 31587884420,
+        "write_bytes": 66810256,
+        "other_bytes": 13801500
+      },
+      "average_cpu_cores": 1.067,
+      "preview_ms": null,
+      "exe_sha256": "26b3487aa099e3297d427ad1509ed2f4dc703fdc5b56d106ee66567739238021",
+      "result_verified": true,
+      "baseline_restored": true
+    },
+    {
+      "label": "oldrust-cold-2020-r1",
+      "engine": "oldrust",
+      "year": 2020,
+      "condition": "rust",
+      "wall_ms": 28218.849,
+      "requests_ms": [
+        28206,
+        27181
+      ],
+      "cascade_sizes": [
+        5,
+        4
+      ],
+      "counters": {
+        "cpu_s": 50.078125,
+        "read_ops": 1208745,
+        "write_ops": 899,
+        "other_ops": 155539,
+        "read_bytes": 61908587622,
+        "write_bytes": 5886598,
+        "other_bytes": 18393876
+      },
+      "average_cpu_cores": 1.775,
+      "preview_ms": null,
+      "exe_sha256": "81c70521d92880ddcddcae1f1e2b7d53cc00810f10ab7ca38474c0ed600978ac",
+      "result_verified": true,
+      "baseline_restored": true
+    },
+    {
+      "label": "rust-cold-2026-r2",
+      "engine": "rust",
+      "year": 2026,
+      "condition": "rust",
+      "wall_ms": 17788.832,
+      "requests_ms": [
+        15831,
+        17775
+      ],
+      "cascade_sizes": [
+        1,
+        5
+      ],
+      "counters": {
+        "cpu_s": 19.296875,
+        "read_ops": 627901,
+        "write_ops": 2935,
+        "other_ops": 189996,
+        "read_bytes": 31276983476,
+        "write_bytes": 39232208,
+        "other_bytes": 15986762
+      },
+      "average_cpu_cores": 1.085,
+      "preview_ms": null,
+      "exe_sha256": "26b3487aa099e3297d427ad1509ed2f4dc703fdc5b56d106ee66567739238021",
+      "result_verified": true,
+      "baseline_restored": true
+    },
+    {
+      "label": "oldrust-cold-2026-r2",
+      "engine": "oldrust",
+      "year": 2026,
+      "condition": "rust",
+      "wall_ms": 26739.339,
+      "requests_ms": [
+        25060,
+        26729
+      ],
+      "cascade_sizes": [
+        1,
+        5
+      ],
+      "counters": {
+        "cpu_s": 48.21875,
+        "read_ops": 1201338,
+        "write_ops": 616,
+        "other_ops": 158744,
+        "read_bytes": 61571195961,
+        "write_bytes": 3863151,
+        "other_bytes": 18661776
+      },
+      "average_cpu_cores": 1.803,
+      "preview_ms": null,
+      "exe_sha256": "81c70521d92880ddcddcae1f1e2b7d53cc00810f10ab7ca38474c0ed600978ac",
+      "result_verified": true,
+      "baseline_restored": true
+    },
+    {
+      "label": "oldrust-cold-2020-r2",
+      "engine": "oldrust",
+      "year": 2020,
+      "condition": "rust",
+      "wall_ms": 30011.465,
+      "requests_ms": [
+        29979,
+        29502
+      ],
+      "cascade_sizes": [
+        5,
+        4
+      ],
+      "counters": {
+        "cpu_s": 51.234375,
+        "read_ops": 1208465,
+        "write_ops": 5644,
+        "other_ops": 156652,
+        "read_bytes": 61860974527,
+        "write_bytes": 76923264,
+        "other_bytes": 18479062
+      },
+      "average_cpu_cores": 1.707,
+      "preview_ms": null,
+      "exe_sha256": "81c70521d92880ddcddcae1f1e2b7d53cc00810f10ab7ca38474c0ed600978ac",
+      "result_verified": true,
+      "baseline_restored": true
+    },
+    {
+      "label": "rust-cold-2020-r2",
+      "engine": "rust",
+      "year": 2020,
+      "condition": "rust",
+      "wall_ms": 18088.793,
+      "requests_ms": [
+        16914,
+        18078
+      ],
+      "cascade_sizes": [
+        5,
+        4
+      ],
+      "counters": {
+        "cpu_s": 19.28125,
+        "read_ops": 642937,
+        "write_ops": 5659,
+        "other_ops": 172029,
+        "read_bytes": 31591253279,
+        "write_bytes": 76976739,
+        "other_bytes": 14888904
+      },
+      "average_cpu_cores": 1.066,
+      "preview_ms": null,
+      "exe_sha256": "26b3487aa099e3297d427ad1509ed2f4dc703fdc5b56d106ee66567739238021",
+      "result_verified": true,
+      "baseline_restored": true
+    },
+    {
+      "label": "oldrust-cold-2026-r3",
+      "engine": "oldrust",
+      "year": 2026,
+      "condition": "rust",
+      "wall_ms": 26077.826,
+      "requests_ms": [
+        24491,
+        26066
+      ],
+      "cascade_sizes": [
+        1,
+        5
+      ],
+      "counters": {
+        "cpu_s": 47.234375,
+        "read_ops": 1202266,
+        "write_ops": 617,
+        "other_ops": 171030,
+        "read_bytes": 61575359646,
+        "write_bytes": 3863235,
+        "other_bytes": 19412836
+      },
+      "average_cpu_cores": 1.811,
+      "preview_ms": null,
+      "exe_sha256": "81c70521d92880ddcddcae1f1e2b7d53cc00810f10ab7ca38474c0ed600978ac",
+      "result_verified": true,
+      "baseline_restored": true
+    },
+    {
+      "label": "rust-cold-2026-r3",
+      "engine": "rust",
+      "year": 2026,
+      "condition": "rust",
+      "wall_ms": 17194.175,
+      "requests_ms": [
+        15392,
+        17182
+      ],
+      "cascade_sizes": [
+        1,
+        5
+      ],
+      "counters": {
+        "cpu_s": 18.765625,
+        "read_ops": 635645,
+        "write_ops": 2935,
+        "other_ops": 159219,
+        "read_bytes": 31278370895,
+        "write_bytes": 39232208,
+        "other_bytes": 14170468
+      },
+      "average_cpu_cores": 1.091,
+      "preview_ms": null,
+      "exe_sha256": "26b3487aa099e3297d427ad1509ed2f4dc703fdc5b56d106ee66567739238021",
+      "result_verified": true,
+      "baseline_restored": true
+    },
+    {
+      "label": "rust-cold-2020-r3",
+      "engine": "rust",
+      "year": 2020,
+      "condition": "rust",
+      "wall_ms": 18039.368,
+      "requests_ms": [
+        17801,
+        18030
+      ],
+      "cascade_sizes": [
+        5,
+        4
+      ],
+      "counters": {
+        "cpu_s": 19.421875,
+        "read_ops": 636867,
+        "write_ops": 3215,
+        "other_ops": 158265,
+        "read_bytes": 31615835559,
+        "write_bytes": 41222998,
+        "other_bytes": 13967826
+      },
+      "average_cpu_cores": 1.077,
+      "preview_ms": null,
+      "exe_sha256": "26b3487aa099e3297d427ad1509ed2f4dc703fdc5b56d106ee66567739238021",
+      "result_verified": true,
+      "baseline_restored": true
+    },
+    {
+      "label": "oldrust-cold-2020-r3",
+      "engine": "oldrust",
+      "year": 2020,
+      "condition": "rust",
+      "wall_ms": 26392.983,
+      "requests_ms": [
+        26382,
+        25662
+      ],
+      "cascade_sizes": [
+        5,
+        4
+      ],
+      "counters": {
+        "cpu_s": 47.375,
+        "read_ops": 1208750,
+        "write_ops": 895,
+        "other_ops": 155877,
+        "read_bytes": 61908799275,
+        "write_bytes": 5853798,
+        "other_bytes": 18409932
+      },
+      "average_cpu_cores": 1.795,
+      "preview_ms": null,
+      "exe_sha256": "81c70521d92880ddcddcae1f1e2b7d53cc00810f10ab7ca38474c0ed600978ac",
+      "result_verified": true,
+      "baseline_restored": true
+    },
+    {
+      "label": "original-cold-2026-r1",
+      "engine": "original",
+      "year": 2026,
+      "condition": "native",
+      "wall_ms": 737179.211,
+      "requests_ms": [
+        634646,
+        737153
+      ],
+      "cascade_sizes": [
+        1,
+        5
+      ],
+      "counters": {
+        "cpu_s": 983.640625,
+        "read_ops": 7348781,
+        "write_ops": 3339,
+        "other_ops": 19316359,
+        "read_bytes": 30068998586,
+        "write_bytes": 4243840,
+        "other_bytes": 421514908
+      },
+      "average_cpu_cores": 1.334,
+      "preview_ms": null,
+      "exe_sha256": "9949c3e918b763912820987b3db565b0a1865be8bee22fb38da387fedef5b799",
+      "result_verified": true,
+      "baseline_restored": true
+    },
+    {
+      "label": "original-cold-2020-r1",
+      "engine": "original",
+      "year": 2020,
+      "condition": "native",
+      "wall_ms": 1163657.434,
+      "requests_ms": [
+        1163634,
+        1025076
+      ],
+      "cascade_sizes": [
+        5,
+        4
+      ],
+      "counters": {
+        "cpu_s": 1619.59375,
+        "read_ops": 12112908,
+        "write_ops": 4200,
+        "other_ops": 32009640,
+        "read_bytes": 49574403819,
+        "write_bytes": 5470483,
+        "other_bytes": 697642392
+      },
+      "average_cpu_cores": 1.392,
+      "preview_ms": null,
+      "exe_sha256": "9949c3e918b763912820987b3db565b0a1865be8bee22fb38da387fedef5b799",
+      "result_verified": true,
+      "baseline_restored": true
+    },
+    {
+      "label": "oldrust-warm-2020-r1",
+      "engine": "oldrust",
+      "year": 2020,
+      "condition": "warm",
+      "wall_ms": 16903.378,
+      "requests_ms": [
+        16894,
+        1101
+      ],
+      "cascade_sizes": [
+        5,
+        4
+      ],
+      "counters": {
+        "cpu_s": 16.671875,
+        "read_ops": 614995,
+        "write_ops": 884,
+        "other_ops": 85786,
+        "read_bytes": 31550599508,
+        "write_bytes": 5886264,
+        "other_bytes": 9577712
+      },
+      "average_cpu_cores": 0.986,
+      "preview_ms": 14084,
+      "exe_sha256": "81c70521d92880ddcddcae1f1e2b7d53cc00810f10ab7ca38474c0ed600978ac",
+      "result_verified": true,
+      "baseline_restored": true
+    },
+    {
+      "label": "rust-warm-2020-r1",
+      "engine": "rust",
+      "year": 2020,
+      "condition": "warm",
+      "wall_ms": 3574.042,
+      "requests_ms": [
+        1410,
+        3564
+      ],
+      "cascade_sizes": [
+        5,
+        4
+      ],
+      "counters": {
+        "cpu_s": 3.671875,
+        "read_ops": 42248,
+        "write_ops": 879,
+        "other_ops": 85778,
+        "read_bytes": 1283557540,
+        "write_bytes": 5857576,
+        "other_bytes": 4987900
+      },
+      "average_cpu_cores": 1.027,
+      "preview_ms": 14533,
+      "exe_sha256": "26b3487aa099e3297d427ad1509ed2f4dc703fdc5b56d106ee66567739238021",
+      "result_verified": true,
+      "baseline_restored": true
+    }
+  ],
+  "comparisons": {
+    "archives": [
+      {
+        "label": "oldrust-cold-2026-r1",
+        "decoded_equal_files": 6,
+        "byte_identical_files": 3
+      },
+      {
+        "label": "rust-cold-2026-r1",
+        "decoded_equal_files": 6,
+        "byte_identical_files": 3
+      },
+      {
+        "label": "rust-cold-2020-r1",
+        "decoded_equal_files": 9,
+        "byte_identical_files": 3
+      },
+      {
+        "label": "oldrust-cold-2020-r1",
+        "decoded_equal_files": 9,
+        "byte_identical_files": 3
+      },
+      {
+        "label": "rust-cold-2026-r2",
+        "decoded_equal_files": 6,
+        "byte_identical_files": 3
+      },
+      {
+        "label": "oldrust-cold-2026-r2",
+        "decoded_equal_files": 6,
+        "byte_identical_files": 3
+      },
+      {
+        "label": "oldrust-cold-2020-r2",
+        "decoded_equal_files": 9,
+        "byte_identical_files": 3
+      },
+      {
+        "label": "rust-cold-2020-r2",
+        "decoded_equal_files": 9,
+        "byte_identical_files": 3
+      },
+      {
+        "label": "oldrust-cold-2026-r3",
+        "decoded_equal_files": 6,
+        "byte_identical_files": 3
+      },
+      {
+        "label": "rust-cold-2026-r3",
+        "decoded_equal_files": 6,
+        "byte_identical_files": 3
+      },
+      {
+        "label": "rust-cold-2020-r3",
+        "decoded_equal_files": 9,
+        "byte_identical_files": 3
+      },
+      {
+        "label": "oldrust-cold-2020-r3",
+        "decoded_equal_files": 9,
+        "byte_identical_files": 3
+      },
+      {
+        "label": "oldrust-warm-2020-r1",
+        "decoded_equal_files": 9,
+        "byte_identical_files": 3
+      },
+      {
+        "label": "rust-warm-2020-r1",
+        "decoded_equal_files": 9,
+        "byte_identical_files": 3
+      }
+    ],
+    "data_volumes": [
+      {
+        "label": "oldrust-cold-2026-r1",
+        "volume": "workbase/work.db4",
+        "complete_records": 417,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "oldrust-cold-2026-r1",
+        "volume": "workbase/workpost.db4",
+        "complete_records": 606,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "rust-cold-2026-r1",
+        "volume": "workbase/work.db4",
+        "complete_records": 417,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "rust-cold-2026-r1",
+        "volume": "workbase/workpost.db4",
+        "complete_records": 606,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "rust-cold-2020-r1",
+        "volume": "workbase/work.db4",
+        "complete_records": 417,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "rust-cold-2020-r1",
+        "volume": "workbase/workpost.db4",
+        "complete_records": 606,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "oldrust-cold-2020-r1",
+        "volume": "workbase/work.db4",
+        "complete_records": 417,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "oldrust-cold-2020-r1",
+        "volume": "workbase/workpost.db4",
+        "complete_records": 606,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "rust-cold-2026-r2",
+        "volume": "workbase/work.db4",
+        "complete_records": 417,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "rust-cold-2026-r2",
+        "volume": "workbase/workpost.db4",
+        "complete_records": 606,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "oldrust-cold-2026-r2",
+        "volume": "workbase/work.db4",
+        "complete_records": 417,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "oldrust-cold-2026-r2",
+        "volume": "workbase/workpost.db4",
+        "complete_records": 606,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "oldrust-cold-2020-r2",
+        "volume": "workbase/work.db4",
+        "complete_records": 417,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "oldrust-cold-2020-r2",
+        "volume": "workbase/workpost.db4",
+        "complete_records": 606,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "rust-cold-2020-r2",
+        "volume": "workbase/work.db4",
+        "complete_records": 417,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "rust-cold-2020-r2",
+        "volume": "workbase/workpost.db4",
+        "complete_records": 606,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "oldrust-cold-2026-r3",
+        "volume": "workbase/work.db4",
+        "complete_records": 417,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "oldrust-cold-2026-r3",
+        "volume": "workbase/workpost.db4",
+        "complete_records": 606,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "rust-cold-2026-r3",
+        "volume": "workbase/work.db4",
+        "complete_records": 417,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "rust-cold-2026-r3",
+        "volume": "workbase/workpost.db4",
+        "complete_records": 606,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "rust-cold-2020-r3",
+        "volume": "workbase/work.db4",
+        "complete_records": 417,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "rust-cold-2020-r3",
+        "volume": "workbase/workpost.db4",
+        "complete_records": 606,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "oldrust-cold-2020-r3",
+        "volume": "workbase/work.db4",
+        "complete_records": 417,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "oldrust-cold-2020-r3",
+        "volume": "workbase/workpost.db4",
+        "complete_records": 606,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "oldrust-warm-2020-r1",
+        "volume": "workbase/work.db4",
+        "complete_records": 417,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "oldrust-warm-2020-r1",
+        "volume": "workbase/workpost.db4",
+        "complete_records": 606,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "rust-warm-2020-r1",
+        "volume": "workbase/work.db4",
+        "complete_records": 417,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      },
+      {
+        "label": "rust-warm-2020-r1",
+        "volume": "workbase/workpost.db4",
+        "complete_records": 606,
+        "oids_and_markers_match": true,
+        "all_fields_match": true
+      }
+    ],
+    "total_kod": 123
+  },
+  "methodology": {
+    "fresh_snapshot_each_run": true,
+    "fresh_process_each_run": true,
+    "cold_means_no_deletion_preview": true,
+    "rust_repeats_per_year": 3,
+    "native_repeats_per_year": 1,
+    "warm_preview_one_executor": true,
+    "compilation_or_backups_during_timers": false
+  }
+}

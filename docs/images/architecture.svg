@@ -52,8 +52,8 @@
 <line x1="1236" y1="591" x2="1236" y2="615" stroke="#00786b" stroke-width="3"/>
 <polygon points="1229,613 1243,613 1236,625" fill="#00786b"/>
 <rect x="48" y="626" width="1344" height="85" rx="0" fill="#f3f6fa" stroke="#d3dfe9"/>
-<text x="70" y="661" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Чтение: собственные кэши исполнителя, индексный отбор, открытые образы томов</text>
-<text x="70" y="694" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="21" font-weight="400">Очередь тяжёлых запросов не занимает резервные места интерфейса и владельца.</text>
+<text x="70" y="661" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Чтение: общий кэш обратных ссылок и диапазонов; локальные читатели томов</text>
+<text x="70" y="694" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="21" font-weight="400">Один построитель на поколение тома. Ожидание отменяется при отключении клиента.</text>
 <line x1="720" y1="712" x2="720" y2="736" stroke="#00786b" stroke-width="3"/>
 <polygon points="713,734 727,734 720,746" fill="#00786b"/>
 <rect x="48" y="747" width="1344" height="151" rx="0" fill="#ffffff" stroke="#d3dfe9"/>

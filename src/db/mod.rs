@@ -6,6 +6,7 @@ pub mod mainkey;
 pub mod morphology;
 pub mod registry;
 pub mod schema;
+mod shared_query;
 pub mod text_query;
 pub mod volume;
 use encoding_rs::WINDOWS_1251;
@@ -77,11 +78,9 @@ pub struct Db4Engine {
     // mutually exclusive for this immutable snapshot.
     readers: Mutex<BTreeMap<usize, (u64, mainkey::MainKey)>>,
     write_epoch: std::sync::atomic::AtomicU64,
-    // Read-only per-volume range results; bounded independently of record bodies.
-    range_results: Mutex<indexed_query::RangeCache>,
-    // Derived reverse links for fields lacking a native index. Historical
-    // volumes retain their cache when another (writable) volume changes.
-    reverse_links: Mutex<indexed_query::ReverseLinks>,
+    // Immutable results, keyed by canonical volume path and generation rather
+    // than an engine-local mount number. Request/KS state remains independent.
+    queries: std::sync::Arc<shared_query::SharedQueries>,
 }
 pub enum RecordLookup<T = Record> {
     Missing,
@@ -309,6 +308,7 @@ impl Db4Engine {
     pub fn init_from_config_root(root: impl AsRef<Path>) -> Result<Self, String> {
         let root = root.as_ref().canonicalize().map_err(|e| e.to_string())?;
         let mut engine = Self::default();
+        engine.queries = shared_query::SharedQueries::for_root(&root)?;
         // Only bootstrap names are built in. Never enumerate all database files.
         let mut seen = HashSet::new();
         engine.register(&root, &root.join("config.db4"), &mut seen)?;
@@ -1088,10 +1088,6 @@ impl Db4Engine {
                 .lock()
                 .map_err(|_| "reader cache poisoned")?
                 .clear();
-            *self
-                .range_results
-                .lock()
-                .map_err(|_| "range cache poisoned")? = Default::default();
             self.write_epoch.store(current, Ordering::Release);
         }
         Ok(())

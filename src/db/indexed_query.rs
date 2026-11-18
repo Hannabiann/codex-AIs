@@ -1,15 +1,21 @@
 //! Set operations on native attribute indexes. Document bodies are only read
 //! for predicates whose field has no native index, or for small residual sets.
-use super::{schema::Area, Db4Engine};
+use super::{
+    schema::Area,
+    shared_query::{path_key, BuildKey},
+    Db4Engine,
+};
 use crate::ks::sql::{BoundPredicate as P, MAX_INDEX_CANDIDATES};
+use std::{path::PathBuf, sync::Arc};
 
-type RangeKey = (usize, u16, String);
+type RangeKey = (PathBuf, u64, u16, String);
 #[derive(Debug, Default)]
 pub(super) struct ReverseLinks {
-    entries: std::collections::BTreeMap<(usize, u16), (u64, std::sync::Arc<Vec<(u16, u32, u32)>>)>,
+    entries:
+        std::collections::BTreeMap<(PathBuf, u16), (u64, std::sync::Arc<Vec<(u16, u32, u32)>>)>,
     count: usize,
     targets: std::collections::BTreeMap<
-        (usize, u16, u32),
+        (PathBuf, u16, u32),
         (
             u64,
             std::sync::Arc<std::collections::BTreeMap<u16, Vec<u32>>>,
@@ -17,24 +23,78 @@ pub(super) struct ReverseLinks {
         ),
     >,
     target_count: usize,
-    fields: std::collections::BTreeMap<(usize, u16, u16), (u64, std::sync::Arc<Vec<(u32, u32)>>)>,
+    fields: std::collections::BTreeMap<(PathBuf, u16, u16), (u64, std::sync::Arc<Vec<(u32, u32)>>)>,
     field_count: usize,
+}
+enum ReverseHit {
+    Target(Arc<std::collections::BTreeMap<u16, Vec<u32>>>),
+    Field(Arc<Vec<(u32, u32)>>),
+    Full(Arc<Vec<(u16, u32, u32)>>),
+}
+impl ReverseHit {
+    fn ids(self, attribute: u16, target: u32) -> Vec<u32> {
+        match self {
+            Self::Target(items) => items.get(&attribute).cloned().unwrap_or_default(),
+            Self::Field(items) => {
+                let start = items.partition_point(|&(value, _)| value < target);
+                items[start..]
+                    .iter()
+                    .take_while(|&&(value, _)| value == target)
+                    .map(|&(_, oid)| oid)
+                    .collect()
+            }
+            Self::Full(items) => {
+                let start = items
+                    .partition_point(|&(field, value, _)| (field, value) < (attribute, target));
+                items[start..]
+                    .iter()
+                    .take_while(|&&(field, value, _)| (field, value) == (attribute, target))
+                    .map(|&(_, _, oid)| oid)
+                    .collect()
+            }
+        }
+    }
+}
+impl ReverseLinks {
+    fn get(
+        &self,
+        path: &PathBuf,
+        area: u16,
+        attribute: u16,
+        target: u32,
+        revision: u64,
+    ) -> Option<ReverseHit> {
+        if let Some((r, items, _)) = self.targets.get(&(path.clone(), area, target)) {
+            if *r == revision {
+                return Some(ReverseHit::Target(items.clone()));
+            }
+        }
+        if let Some((r, items)) = self.fields.get(&(path.clone(), area, attribute)) {
+            if *r == revision {
+                return Some(ReverseHit::Field(items.clone()));
+            }
+        }
+        self.entries
+            .get(&(path.clone(), area))
+            .filter(|(r, _)| *r == revision)
+            .map(|(_, items)| ReverseHit::Full(items.clone()))
+    }
 }
 /// Complete results for immutable volume indexes, never a restricted subset.
 /// Reports reuse historical date ranges for each judge. Evict the least recently
 /// used range instead of discarding every hot range when one new range arrives.
 #[derive(Debug, Default)]
 pub(super) struct RangeCache {
-    entries: std::collections::BTreeMap<RangeKey, (Vec<u32>, u64)>,
+    entries: std::collections::BTreeMap<RangeKey, (Arc<Vec<u32>>, u64)>,
     ids: usize,
     clock: u64,
 }
 impl RangeCache {
-    fn get(&mut self, key: &RangeKey) -> Option<&Vec<u32>> {
+    fn get(&mut self, key: &RangeKey) -> Option<Arc<Vec<u32>>> {
         let entry = self.entries.get_mut(key)?;
         self.clock += 1;
         entry.1 = self.clock;
-        Some(&entry.0)
+        Some(entry.0.clone())
     }
     fn contains_key(&self, key: &RangeKey) -> bool {
         self.entries.contains_key(key)
@@ -60,7 +120,7 @@ impl RangeCache {
         }
         self.clock += 1;
         self.ids += ids.len();
-        self.entries.insert(key, (ids, self.clock));
+        self.entries.insert(key, (Arc::new(ids), self.clock));
     }
 }
 
@@ -119,6 +179,31 @@ fn needs_native_text_index(p: &P, area: &Area) -> bool {
     }
 }
 impl Db4Engine {
+    fn query_generation(&self, v: usize) -> Result<u64, String> {
+        let path = &self.volumes[v].path;
+        super::writer::ensure_recovered(path)?;
+        let _publication = super::writer::open_guard()?;
+        Ok(super::writer::generation(path))
+    }
+
+    fn reverse_cached(
+        &self,
+        v: usize,
+        area: u16,
+        attribute: u16,
+        target: u32,
+        revision: u64,
+    ) -> Result<Option<Vec<u32>>, String> {
+        let path = path_key(&self.volumes[v].path);
+        let hit = self
+            .queries
+            .reverse_links
+            .lock()
+            .map_err(|_| "reverse link cache poisoned")?
+            .get(&path, area, attribute, target, revision);
+        Ok(hit.map(|hit| hit.ids(attribute, target)))
+    }
+
     fn reverse_link_matches(
         &self,
         v: usize,
@@ -126,65 +211,35 @@ impl Db4Engine {
         attribute: u16,
         target: u32,
     ) -> Result<Option<Vec<u32>>, String> {
-        use std::{
-            collections::{BTreeMap, BTreeSet},
-            sync::Arc,
-        };
+        use std::collections::{BTreeMap, BTreeSet};
         const MAX: usize = 8_000_000;
         const PER_VOLUME: usize = 1_000_000;
-        let started = std::time::Instant::now();
-        let key = (v, area.id);
-        let target_key = (v, area.id, target);
-        let field_key = (v, area.id, attribute);
-        let revision = super::writer::generation(&self.volumes[v].path);
-        let cached = {
-            let cache = self
-                .reverse_links
-                .lock()
-                .map_err(|_| "reverse link cache poisoned")?;
-            if let Some((r, matched, _)) = cache.targets.get(&target_key) {
-                if *r == revision {
-                    return Ok(Some(matched.get(&attribute).cloned().unwrap_or_default()));
-                }
+        let path = path_key(&self.volumes[v].path);
+        loop {
+            crate::execution::check()?;
+            let revision = self.query_generation(v)?;
+            if let Some(ids) = self.reverse_cached(v, area.id, attribute, target, revision)? {
+                return Ok(Some(ids));
             }
-            if let Some((r, items)) = cache.fields.get(&field_key) {
-                if *r == revision {
-                    let start = items.partition_point(|&(value, _)| value < target);
-                    return Ok(Some(
-                        items[start..]
-                            .iter()
-                            .take_while(|&&(value, _)| value == target)
-                            .map(|&(_, oid)| oid)
-                            .collect(),
-                    ));
-                }
+            let _build = self
+                .queries
+                .build(BuildKey::Reverse(path.clone(), area.id, revision))?;
+            // A waiter may wake after publication or after another builder has
+            // completed the index. Never build a new version under an old gate.
+            if self.query_generation(v)? != revision {
+                continue;
             }
-            cache
-                .entries
-                .get(&key)
-                .filter(|(r, _)| *r == revision)
-                .map(|(_, items)| items.clone())
-        };
-        let fields = area
-            .fields
-            .values()
-            .filter(|f| f.kind == 5 && f.flags & 1 == 0)
-            .map(|f| f.id)
-            .collect::<BTreeSet<_>>();
-        let mut matched = BTreeMap::<u16, Vec<u32>>::new();
-        if let Some(items) = cached {
-            for &field in &fields {
-                let lower = items.partition_point(|&(a, t, _)| (a, t) < (field, target));
-                let ids = items[lower..]
-                    .iter()
-                    .take_while(|&&(a, t, _)| (a, t) == (field, target))
-                    .map(|&(_, _, oid)| oid)
-                    .collect::<Vec<_>>();
-                if !ids.is_empty() {
-                    matched.insert(field, ids);
-                }
+            if let Some(ids) = self.reverse_cached(v, area.id, attribute, target, revision)? {
+                return Ok(Some(ids));
             }
-        } else {
+            let started = std::time::Instant::now();
+            let fields = area
+                .fields
+                .values()
+                .filter(|f| f.kind == 5 && f.flags & 1 == 0)
+                .map(|f| f.id)
+                .collect::<BTreeSet<_>>();
+            let mut matched = BTreeMap::<u16, Vec<u32>>::new();
             let mut full = Some(Vec::new());
             let mut field_index = Some(Vec::new());
             let mut match_count = 0usize;
@@ -233,88 +288,92 @@ impl Db4Engine {
                 }
                 Ok(ids.len())
             })?;
-            // Results belong to that snapshot; never label them with a newer
-            // generation or pollute a cache after concurrent publication.
-            if revision != super::writer::generation(&self.volumes[v].path) {
-                return Ok(Some(matched.remove(&attribute).unwrap_or_default()));
+
+            // Sorting and I/O never hold the shared cache/publication locks.
+            let full = full.map(|mut items| {
+                items.sort_unstable();
+                items.dedup();
+                Arc::new(items)
+            });
+            let field_index = field_index.map(|mut items| {
+                items.sort_unstable();
+                items.dedup();
+                Arc::new(items)
+            });
+            for ids in matched.values_mut() {
+                ids.sort_unstable();
+                ids.dedup();
             }
+            let result = matched.get(&attribute).cloned().unwrap_or_default();
+            let count = matched.values().map(Vec::len).sum::<usize>();
             let saved_full = full.is_some();
-            // A dense area may overflow the complete reverse index, while the
-            // field used by a cascade is sparse. Keep that complete field for
-            // all subsequent victim OIDs, not just this one victim.
-            if let Some(mut items) = field_index {
-                items.sort_unstable();
-                items.dedup();
-                let mut cache = self
-                    .reverse_links
-                    .lock()
-                    .map_err(|_| "reverse link cache poisoned")?;
-                if let Some((_, old)) = cache.fields.remove(&field_key) {
-                    cache.field_count -= old.len();
+            super::writer::ensure_recovered(&self.volumes[v].path)?;
+            {
+                let _publication = super::writer::open_guard()?;
+                if revision == super::writer::generation(&self.volumes[v].path) {
+                    let mut cache = self
+                        .queries
+                        .reverse_links
+                        .lock()
+                        .map_err(|_| "reverse link cache poisoned")?;
+                    if let Some(items) = field_index {
+                        let key = (path.clone(), area.id, attribute);
+                        if let Some((_, old)) = cache.fields.remove(&key) {
+                            cache.field_count -= old.len();
+                        }
+                        while cache.field_count + items.len() > 4_000_000
+                            || cache.fields.len() >= 4096
+                        {
+                            let Some((_, (_, old))) = cache.fields.pop_first() else {
+                                break;
+                            };
+                            cache.field_count -= old.len();
+                        }
+                        cache.field_count += items.len();
+                        cache.fields.insert(key, (revision, items));
+                    }
+                    if let Some(items) = full {
+                        let key = (path.clone(), area.id);
+                        if let Some((_, old)) = cache.entries.remove(&key) {
+                            cache.count -= old.len();
+                        }
+                        while cache.count + items.len() > MAX || cache.entries.len() >= 4096 {
+                            let Some((_, (_, old))) = cache.entries.pop_first() else {
+                                break;
+                            };
+                            cache.count -= old.len();
+                        }
+                        cache.count += items.len();
+                        cache.entries.insert(key, (revision, items));
+                    }
+                    // When the complete index is too dense, a target's other
+                    // unindexed fields are still complete and reusable.
+                    if count <= 2_000_000 {
+                        let key = (path.clone(), area.id, target);
+                        if let Some((_, _, old)) = cache.targets.remove(&key) {
+                            cache.target_count -= old;
+                        }
+                        while cache.targets.len() >= 16384 || cache.target_count + count > 2_000_000
+                        {
+                            let Some((_, (_, _, old))) = cache.targets.pop_first() else {
+                                break;
+                            };
+                            cache.target_count -= old;
+                        }
+                        cache.target_count += count;
+                        cache
+                            .targets
+                            .insert(key, (revision, Arc::new(matched), count));
+                    }
                 }
-                while cache.field_count + items.len() > 4_000_000 || cache.fields.len() >= 4096 {
-                    let Some((_, (_, old))) = cache.fields.pop_first() else {
-                        break;
-                    };
-                    cache.field_count -= old.len();
-                }
-                cache.field_count += items.len();
-                cache.fields.insert(field_key, (revision, Arc::new(items)));
-            }
-            if let Some(mut items) = full {
-                items.sort_unstable();
-                items.dedup();
-                let items = Arc::new(items);
-                let mut cache = self
-                    .reverse_links
-                    .lock()
-                    .map_err(|_| "reverse link cache poisoned")?;
-                if let Some((_, old)) = cache.entries.remove(&key) {
-                    cache.count -= old.len();
-                }
-                while cache.count + items.len() > MAX || cache.entries.len() >= 4096 {
-                    let Some((_, (_, old))) = cache.entries.pop_first() else {
-                        break;
-                    };
-                    cache.count -= old.len();
-                }
-                cache.count += items.len();
-                cache.entries.insert(key, (revision, items));
             }
             if started.elapsed().as_millis() > 200
                 && std::env::var_os("KODEKS_PROFILE").is_some_and(|v| v == "1")
             {
-                eprintln!("DB reverse link scan: volume={}, area={}, examined={}, matches={}, full_cache={}, elapsed_ms={}", self.volumes[v].name,area.id,examined,match_count,saved_full,started.elapsed().as_millis());
+                eprintln!("DB shared reverse link scan: volume={}, area={}, examined={}, matches={}, full_cache={}, elapsed_ms={}", self.volumes[v].name,area.id,examined,match_count,saved_full,started.elapsed().as_millis());
             }
+            return Ok(Some(result));
         }
-        for ids in matched.values_mut() {
-            ids.sort_unstable();
-            ids.dedup();
-        }
-        let result = matched.get(&attribute).cloned().unwrap_or_default();
-        let count = matched.values().map(Vec::len).sum::<usize>();
-        // Keep target results even when a large all-target index cannot fit.
-        // Checking another field for the same victim must not rescan the volume.
-        if count <= 2_000_000 {
-            let mut cache = self
-                .reverse_links
-                .lock()
-                .map_err(|_| "reverse link cache poisoned")?;
-            if let Some((_, _, old)) = cache.targets.remove(&target_key) {
-                cache.target_count -= old;
-            }
-            while cache.targets.len() >= 16384 || cache.target_count + count > 2_000_000 {
-                let Some((_, (_, _, old))) = cache.targets.pop_first() else {
-                    break;
-                };
-                cache.target_count -= old;
-            }
-            cache.target_count += count;
-            cache
-                .targets
-                .insert(target_key, (revision, Arc::new(matched), count));
-        }
-        Ok(Some(result))
     }
     // A residual scan already has its complete candidate list. Resolve a batch
     // through MainKey once, rather than repeating the root-to-leaf lookup and
@@ -346,52 +405,82 @@ impl Db4Engine {
         }
         Ok(result)
     }
+    fn range_cached(&self, v: usize, area: u16, predicate: String) -> Result<bool, String> {
+        let key = (
+            path_key(&self.volumes[v].path),
+            self.query_generation(v)?,
+            area,
+            predicate,
+        );
+        Ok(self
+            .queries
+            .ranges
+            .lock()
+            .map_err(|_| "range cache poisoned")?
+            .contains_key(&key))
+    }
     fn cached_index_bounds(
         &self,
         key: (usize, u16, String),
         compute: impl FnOnce() -> Result<Vec<u32>, String>,
     ) -> Result<Vec<u32>, String> {
-        if let Some(ids) = self
-            .range_results
-            .lock()
-            .map_err(|_| "range cache poisoned")?
-            .get(&key)
-        {
-            return Ok(ids.clone());
+        let (v, area, predicate) = key;
+        let path = path_key(&self.volumes[v].path);
+        loop {
+            crate::execution::check()?;
+            let revision = self.query_generation(v)?;
+            let key = (path.clone(), revision, area, predicate.clone());
+            let cached = self
+                .queries
+                .ranges
+                .lock()
+                .map_err(|_| "range cache poisoned")?
+                .get(&key);
+            if let Some(ids) = cached {
+                return Ok((*ids).clone());
+            }
+            let _build = self.queries.build(BuildKey::Range(
+                path.clone(),
+                area,
+                revision,
+                predicate.clone(),
+            ))?;
+            if self.query_generation(v)? != revision {
+                continue;
+            }
+            let cached = self
+                .queries
+                .ranges
+                .lock()
+                .map_err(|_| "range cache poisoned")?
+                .get(&key);
+            if let Some(ids) = cached {
+                return Ok((*ids).clone());
+            }
+            let ids = compute()?;
+            super::writer::ensure_recovered(&self.volumes[v].path)?;
+            let _publication = super::writer::open_guard()?;
+            if revision == super::writer::generation(&self.volumes[v].path) {
+                self.queries
+                    .ranges
+                    .lock()
+                    .map_err(|_| "range cache poisoned")?
+                    .insert(key, ids.clone());
+            }
+            return Ok(ids);
         }
-        let ids = compute()?;
-        self.range_results
-            .lock()
-            .map_err(|_| "range cache poisoned")?
-            .insert(key, ids.clone());
-        Ok(ids)
     }
     fn unindexed_range(&self, v: usize, area: &Area, predicate: &P) -> Result<Vec<u32>, String> {
-        let key = (v, area.id, format!("{predicate:?}"));
-        if let Some(ids) = self
-            .range_results
-            .lock()
-            .map_err(|_| "range cache poisoned")?
-            .get(&key)
-        {
-            return Ok(ids.clone());
-        }
-        let started = std::time::Instant::now();
-        let candidates = self.with_reader(v, |tree| {
-            tree.area_candidates(area.id, MAX_INDEX_CANDIDATES)
-        })?;
-        let examined = candidates.len();
-        let ids = self.residual_matches(v, area, predicate, candidates)?;
-        if started.elapsed().as_millis() > 200
-            && std::env::var_os("KODEKS_PROFILE").is_some_and(|v| v == "1")
-        {
-            eprintln!("DB unindexed date scan: volume={}, area={}, examined={examined}, matched={}, elapsed_ms={}, predicate={predicate:?}", self.volumes[v].name, area.id, ids.len(), started.elapsed().as_millis());
-        }
-        self.range_results
-            .lock()
-            .map_err(|_| "range cache poisoned")?
-            .insert(key, ids.clone());
-        Ok(ids)
+        self.cached_index_bounds((v, area.id, format!("{predicate:?}")), || {
+            let started = std::time::Instant::now();
+            let candidates = self.with_reader(v, |tree| tree.area_candidates(area.id, MAX_INDEX_CANDIDATES))?;
+            let examined = candidates.len();
+            let ids = self.residual_matches(v, area, predicate, candidates)?;
+            if started.elapsed().as_millis() > 200 && std::env::var_os("KODEKS_PROFILE").is_some_and(|v| v == "1") {
+                eprintln!("DB shared unindexed date scan: volume={}, area={}, examined={examined}, matched={}, elapsed_ms={}, predicate={predicate:?}", self.volumes[v].name, area.id, ids.len(), started.elapsed().as_millis());
+            }
+            Ok(ids)
+        })
     }
 
     pub(super) fn indexed_volume(
@@ -562,11 +651,7 @@ impl Db4Engine {
                             if unindexed_done.contains(attribute) {
                                 continue;
                             }
-                            let cached = self
-                                .range_results
-                                .lock()
-                                .map_err(|_| "range cache poisoned")?
-                                .contains_key(&(v, area.id, format!("{range:?}")));
+                            let cached = self.range_cached(v, area.id, format!("{range:?}"))?;
                             if cached || !selected.as_ref().is_some_and(|ids| ids.len() <= 100000) {
                                 unindexed_done.insert(*attribute);
                                 let mut ids = self.unindexed_range(v, area, range)?;

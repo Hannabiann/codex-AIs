@@ -178,7 +178,12 @@ fn recover_locked(path: &Path) -> Result<(), String> {
     let _publication = PUBLICATION
         .write()
         .map_err(|_| "DB40 publication lock poisoned")?;
-    journal::recover(path)?;
+    if journal::recover(path)?.is_some() {
+        published_generation(
+            path,
+            std::fs::metadata(path).map_err(|e| e.to_string())?.len(),
+        )?;
+    }
     Ok(())
 }
 pub(crate) fn recover_directory(root: &Path) -> Result<usize, String> {
@@ -244,6 +249,15 @@ pub(crate) fn generation(path: &Path) -> u64 {
         .ok()
         .and_then(|s| s.generations.get(&path_key(path)).copied())
         .unwrap_or(0)
+}
+/// Call before releasing PUBLICATION: readers and shared query caches must
+/// observe the new generation together with the newly published file image.
+fn published_generation(path: &Path, size: u64) -> Result<(), String> {
+    let mut state = writes().lock().map_err(|_| "DB40 writer lock poisoned")?;
+    state.sizes.insert(path_key(path), size);
+    let generation = EPOCH.fetch_add(1, Ordering::AcqRel) + 1;
+    state.generations.insert(path_key(path), generation);
+    Ok(())
 }
 pub(crate) fn reserve(path: &Path) -> Result<u32, String> {
     ensure_recovered(path)?;
@@ -350,6 +364,7 @@ fn commit_change(
                 return Err("DB40 changed outside this transaction".into());
             }
             published_bytes = journal::publish_shared(path, &old, &bytes, encoded)?;
+            published_generation(path, bytes.len() as u64)?;
         } else {
             let mut f = std::fs::OpenOptions::new()
                 .write(true)
@@ -376,12 +391,9 @@ fn commit_change(
             std::fs::File::open(path.parent().ok_or("DB40 parent missing")?)
                 .and_then(|f| f.sync_all())
                 .map_err(|e| e.to_string())?;
+            published_generation(path, bytes.len() as u64)?;
         }
         crate::execution::committed();
-        let mut state = writes().lock().map_err(|_| "DB40 writer lock poisoned")?;
-        state.sizes.insert(path_key(path), bytes.len() as u64);
-        let generation = EPOCH.fetch_add(1, Ordering::AcqRel) + 1;
-        state.generations.insert(path_key(path), generation);
         Ok(())
     })();
     // Only files created by this transaction are eligible for cleanup.

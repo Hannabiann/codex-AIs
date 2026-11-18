@@ -1,6 +1,6 @@
 [package]
 name = "codex-ais"
-version = "0.17.1"
+version = "0.18.0"
 edition = "2021"
 license = "GPL-3.0-only"
 description = "Portable Rust compatibility server for Kodeks-based court information systems"

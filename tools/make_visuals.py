@@ -71,8 +71,8 @@ def generate(theme):
      c.text(x+16,565,'Runtime + Db4Engine',21,TEAL,True)
      c.arrow(x+156,591,625)
     c.rect(48,626,1344,85,BG,BORDER)
-    c.text(70,661,'Чтение: собственные кэши исполнителя, индексный отбор, открытые образы томов',23,INK)
-    c.text(70,694,'Очередь тяжёлых запросов не занимает резервные места интерфейса и владельца.',21,MUTED)
+    c.text(70,661,'Чтение: общий кэш обратных ссылок и диапазонов; локальные читатели томов',23,INK)
+    c.text(70,694,'Один построитель на поколение тома. Ожидание отменяется при отключении клиента.',21,MUTED)
     c.arrow(720,712,746)
     c.rect(48,747,1344,151,PANEL,BORDER)
     c.text(70,786,'Запись: согласованная публикация одного изменения',25,INK,True)
@@ -86,8 +86,8 @@ def generate(theme):
 
     c=Canvas(1440,1000,'Подготовка, страничная запись и восстановление DB40')
     c.text(48,54,'Подготовка и публикация изменения DB40',32,INK,True)
-    c.text(48,93,'codex-AIs 0.17 · одно изменение тома · единица журнала 4096 байт',22,MUTED)
-    steps=[('1. Проверить редакцию и подготовить образ','Добавление и простое удаление: изменение узлов B-дерева.'),('2. Сохранить журнал и резерв','Прежние и новые страницы → sync. Резерв DB4 → sync.'),('3. Записать страницы тома','Открытым читателям — прежний образ в памяти. Том → sync.'),('4. Зафиксировать результат','Отметка COMMIT в журнале → sync. Затем удалить журнал.')]
+    c.text(48,93,'codex-AIs 0.18 · одно изменение тома · единица журнала 4096 байт',22,MUTED)
+    steps=[('1. Проверить редакцию и подготовить образ','Добавление и простое удаление: изменение узлов B-дерева.'),('2. Сохранить журнал и резерв','Прежние и новые страницы → sync. Резерв DB4 → sync.'),('3. Записать страницы тома','Открытым читателям — прежний образ в памяти. Том → sync.'),('4. Зафиксировать результат','COMMIT → sync. Удалить журнал; обновить поколение под блокировкой.')]
     for i,(title,detail) in enumerate(steps):
      y=125+i*133;c.rect(48,y,1344,100,PANEL,BORDER)
      c.text(70,y+37,title,25,INK,True);c.text(70,y+76,detail,23,MUTED)
@@ -123,6 +123,30 @@ def generate(theme):
      chart(555,'Два одинаковых 1АС · codex-AIs 0.15 после прогрева',[('Последовательно',49.968,NATIVE),('Параллельно',33.484,TEAL)],10,60,'Данные 0.15: один запуск пары в каждом режиме. Все книги побайтно совпали. Шкала: секунды.')
      c.text(48,956,'Параметры, все повторения и ограничения сравнения: docs/BENCHMARKS.md',21,MUTED)
      c.save('benchmarks')
+    path=ROOT/'docs/shared-cache-0.18.json'
+    if path.exists():
+     import statistics,math
+     data=json.loads(path.read_text(encoding='utf-8'))
+     runs=[r for r in data['runs'] if r['condition']=='rust']
+     maximum=math.ceil(max(r['wall_ms']/1000 for r in runs)/10)*10+10
+     c=Canvas(1440,680,'Два одновременных удаления: локальные и общие кэши DB')
+     c.text(48,54,'Два одновременных удаления: до и после общего кэша',30,INK,True)
+     c.text(48,95,'Полная копия · новый процесс · без предпросмотра · три повторения каждого варианта',22,MUTED)
+     x0=380;width=850
+     for value in range(0,maximum+1,10):
+      x=x0+width*value/maximum;c.line(x,145,x,505,GRID,1);c.text(x-8,540,str(value),20,MUTED)
+     for group,year in enumerate([2026,2020]):
+      c.text(48,165+group*190,f'Документы {year}',24,INK,True)
+      for i,(engine,label,color) in enumerate([('oldrust','0.17.1 · локальный кэш',NATIVE),('rust','0.18 · общий кэш',TEAL)]):
+       values=[r['wall_ms']/1000 for r in runs if r['engine']==engine and r['year']==year]
+       y=185+group*190+i*65;median=statistics.median(values)
+       c.text(48,y+26,label,22,INK);c.rect(x0,y,width*median/maximum,34,color)
+       lo=x0+width*min(values)/maximum;hi=x0+width*max(values)/maximum
+       c.line(lo,y+17,hi,y+17,INK,2);c.line(lo,y+10,lo,y+24,INK,2);c.line(hi,y+10,hi,y+24,INK,2)
+       c.text(hi+14,y+25,f'{median:.3f} с'.replace('.',','),22,INK)
+     c.text(48,587,'Полоса — медиана; отрезок — минимум и максимум. Шкала: секунды.',22,MUTED)
+     c.text(48,627,'Сравнение с kodweb, прогрев и проверка KOD/DB4: docs/SHARED_CACHE_0.18.md',21,MUTED)
+     c.save('shared-cache')
     print(f'Generated {theme} technical SVG figures')
 
 for theme in ('light','dark') if args.theme=='both' else (args.theme,):
