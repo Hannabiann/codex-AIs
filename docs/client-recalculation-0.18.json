@@ -1,0 +1,22 @@
+{
+  "report": "1АС: отчёт о работе суда",
+  "period": "2025-01-01 through 2025-01-31",
+  "wall_s": 9.537817700009327,
+  "scope": "Helper startup, Excel creation, open, CalculateFull, save, close and process exit",
+  "process_poll_interval_s": 0.5,
+  "isolated_formula_calculation_s": null,
+  "runs": 1,
+  "environment": "Client-equivalent scenario on test computer; servers stopped",
+  "formula_count": 17250,
+  "sheet_count": 13,
+  "included_in_rust_server_timing": false,
+  "constants_equal": true,
+  "formulas_equal": true,
+  "cached_formula_differences": 0,
+  "limitations": [
+    "Not measured on a separate user workstation",
+    "Excel version and hardware are not recorded in this timing summary",
+    "Opening may trigger automatic recalculation; phase times unavailable",
+    "No LibreOffice timing"
+  ]
+}
