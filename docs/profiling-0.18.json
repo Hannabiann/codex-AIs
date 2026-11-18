@@ -1,0 +1,544 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-19",
+  "version": "0.18",
+  "environment": {
+    "os": "Windows Server 2025 x64",
+    "cpu_visible_to_windows": "Intel Xeon Silver 4516Y+",
+    "cores_visible_to_windows": 6,
+    "logical_processors_visible_to_windows": 12,
+    "ram_gib": 32,
+    "physical_host_topology_verified": false,
+    "excel": "16.0.20527.20196 x86",
+    "kodweb": "5.3.2.120 x86",
+    "native_exe_sha256": "9949c3e918b763912820987b3db565b0a1865be8bee22fb38da387fedef5b799",
+    "rust_exe_sha256": "26b3487aa099e3297d427ad1509ed2f4dc703fdc5b56d106ee66567739238021"
+  },
+  "method": {
+    "full_copy": true,
+    "copy_file_count": 753753,
+    "snapshot_selected_files": 13637,
+    "snapshot_gib": 190.642,
+    "source_read_only": true,
+    "servers_run_exclusively": true,
+    "os_cache_flushed": false,
+    "controls_per_configuration": 1,
+    "etw_during_timed_controls": false,
+    "rust_workers": 4,
+    "rust_heavy_workers": 2,
+    "report_period": [
+      "2025-01-01",
+      "2025-01-31"
+    ],
+    "report_filters": [],
+    "delete_cascade_sizes": [
+      1,
+      5
+    ],
+    "delete_all_related": true,
+    "delete_markers": true,
+    "delete_full_reference_check": false,
+    "delete_preview": false,
+    "native_report_pair_retries": 1,
+    "rust_report_formula_calculation": "Deferred to client Excel/LibreOffice; no server calculation engine"
+  },
+  "controls": [
+    {
+      "label": "original-del-seq-control",
+      "mode": "delete-seq",
+      "etw_enabled": false,
+      "wall_s": 342.4204114000022,
+      "requests_s": [
+        117.831,
+        224.455
+      ],
+      "server_cpu_s": 341.296875,
+      "server_read_ops": 3596826,
+      "server_read_gib": 13.70706424023956,
+      "server_peak_private_mib": 294.03515625,
+      "sampled_all_process_cpu_s": 341.296875
+    },
+    {
+      "label": "original-del-pair-control",
+      "mode": "delete-pair",
+      "etw_enabled": false,
+      "wall_s": 763.1459325999895,
+      "requests_s": [
+        649.568,
+        763.078
+      ],
+      "server_cpu_s": 1011.703125,
+      "server_read_ops": 7364409,
+      "server_read_gib": 28.062285844236612,
+      "server_peak_private_mib": 480.67578125,
+      "sampled_all_process_cpu_s": 1011.703125
+    },
+    {
+      "label": "rust-del-seq-control",
+      "mode": "delete-seq",
+      "etw_enabled": false,
+      "wall_s": 28.50305409997236,
+      "requests_s": [
+        27.177,
+        1.259
+      ],
+      "server_cpu_s": 18.1875,
+      "server_read_ops": 608325,
+      "server_read_gib": 29.072558406740427,
+      "server_peak_private_mib": 289.55078125,
+      "sampled_all_process_cpu_s": 18.1875
+    },
+    {
+      "label": "rust-del-pair-control",
+      "mode": "delete-pair",
+      "etw_enabled": false,
+      "wall_s": 17.002878899977077,
+      "requests_s": [
+        16.087,
+        16.963
+      ],
+      "server_cpu_s": 18.421875,
+      "server_read_ops": 628196,
+      "server_read_gib": 29.152263704687357,
+      "server_peak_private_mib": 336.7109375,
+      "sampled_all_process_cpu_s": 18.421875
+    },
+    {
+      "label": "original-report-seq",
+      "mode": "report-seq",
+      "etw_enabled": false,
+      "wall_s": 1474.2369935000024,
+      "requests_s": [
+        723.527,
+        750.58
+      ],
+      "server_cpu_s": 370.484375,
+      "server_read_ops": 1899599,
+      "server_read_gib": 0.6832064855843782,
+      "server_peak_private_mib": 931.44921875,
+      "sampled_all_process_cpu_s": 1600.484375
+    },
+    {
+      "label": "rust-report-seq",
+      "mode": "report-seq",
+      "etw_enabled": false,
+      "wall_s": 87.7732286999817,
+      "requests_s": [
+        44.266,
+        43.449
+      ],
+      "server_cpu_s": 87.6875,
+      "server_read_ops": 3669206,
+      "server_read_gib": 1.6991331037133932,
+      "server_peak_private_mib": 524.51953125,
+      "sampled_all_process_cpu_s": 87.6875
+    },
+    {
+      "label": "rust-report-pair",
+      "mode": "report-pair",
+      "etw_enabled": false,
+      "wall_s": 61.17460289999144,
+      "requests_s": [
+        61.139,
+        49.186
+      ],
+      "server_cpu_s": 109.890625,
+      "server_read_ops": 4222612,
+      "server_read_gib": 2.6918189506977797,
+      "server_peak_private_mib": 861.85546875,
+      "sampled_all_process_cpu_s": 109.890625
+    }
+  ],
+  "native_report_pair_retry": {
+    "complete": false,
+    "wall_s": 968.7135894999956,
+    "valid_outputs": 1,
+    "requested_outputs": 2,
+    "request_connection": "close",
+    "requests": [
+      {
+        "valid": false,
+        "elapsed_ms": 968446,
+        "bytes": 4128768,
+        "status": 200,
+        "transport_error": "ConnectionResetError"
+      },
+      {
+        "valid": true,
+        "elapsed_ms": 968675,
+        "bytes": 4191232,
+        "status": 200
+      }
+    ],
+    "note": "Native process survived; both converters exited. Client failed to capture two complete XLS responses. Not a successful pair throughput measurement."
+  },
+  "converter_controls": {
+    "runs": [
+      {
+        "mode": "automatic",
+        "wall_s": 189.21202370000537,
+        "server_running": false,
+        "process_cpu_sampled_s": [
+          {
+            "name": "kdb.exe",
+            "cpu_s": 28.078125
+          },
+          {
+            "name": "EXCEL.EXE",
+            "cpu_s": 214.9375
+          },
+          {
+            "name": "conhost.exe",
+            "cpu_s": 0.015625
+          },
+          {
+            "name": "splwow64.exe",
+            "cpu_s": 3.4375
+          }
+        ]
+      },
+      {
+        "mode": "manual",
+        "wall_s": 121.88887179997982,
+        "server_running": false,
+        "process_cpu_sampled_s": [
+          {
+            "name": "kdb.exe",
+            "cpu_s": 29.65625
+          },
+          {
+            "name": "conhost.exe",
+            "cpu_s": 0.015625
+          },
+          {
+            "name": "EXCEL.EXE",
+            "cpu_s": 123.015625
+          }
+        ]
+      }
+    ],
+    "automatic_divided_by_manual": 1.5523322261157946,
+    "same_xml": true,
+    "byte_identical_template_before_each_run": true,
+    "one_explicit_calculate_full": true,
+    "automatic_mode_restored": true,
+    "cached_formula_differences_between_modes": 0,
+    "initial_pilot_manual_s": 120.08898930001305
+  },
+  "validation": {
+    "kod_semantic_comparisons": 30,
+    "complete_volume_comparisons": 10,
+    "complete_record_comparisons": 5115,
+    "workbooks": 14,
+    "constant_positions_per_workbook": 37947,
+    "formula_positions_per_workbook": 17250,
+    "sheets_per_workbook": 13,
+    "all_constant_values_and_formulas_equal": true,
+    "rust_cached_formula_differences_per_workbook": 62,
+    "rust_client_recalculated_workbooks": 1,
+    "rust_client_recalculated_cached_formula_differences": 0,
+    "manual_pilot_cached_difference": "TODAY changed across midnight; formula and other cached values equal",
+    "crash_recovery_retested": false,
+    "writer_changed": false
+  },
+  "profiles": {
+    "trace_checks": [
+      {
+        "label": "original-del-pair",
+        "window": "window-0000",
+        "events": 1695679,
+        "events_lost": 0,
+        "truncated": false
+      },
+      {
+        "label": "original-del-pair",
+        "window": "window-0060",
+        "events": 1336434,
+        "events_lost": 0,
+        "truncated": false
+      },
+      {
+        "label": "original-del-pair",
+        "window": "window-0240",
+        "events": 1221880,
+        "events_lost": 0,
+        "truncated": false
+      },
+      {
+        "label": "original-del-pair",
+        "window": "window-tail",
+        "events": 419880,
+        "events_lost": 0,
+        "truncated": false
+      },
+      {
+        "label": "original-report-single",
+        "window": "window-0000",
+        "events": 596546,
+        "events_lost": 0,
+        "truncated": false
+      },
+      {
+        "label": "original-report-single",
+        "window": "window-0060",
+        "events": 888493,
+        "events_lost": 0,
+        "truncated": false
+      },
+      {
+        "label": "original-report-single",
+        "window": "window-0240",
+        "events": 531940,
+        "events_lost": 0,
+        "truncated": false
+      },
+      {
+        "label": "original-report-single",
+        "window": "window-0264",
+        "events": 990211,
+        "events_lost": 0,
+        "truncated": false
+      },
+      {
+        "label": "original-report-single",
+        "window": "window-background",
+        "events": 338352,
+        "events_lost": 0,
+        "truncated": false
+      },
+      {
+        "label": "original-report-single",
+        "window": "window-conversion",
+        "events": 483544,
+        "events_lost": 0,
+        "truncated": false
+      },
+      {
+        "label": "original-report-pair-profile",
+        "window": "window-0000",
+        "events": 546014,
+        "events_lost": 0,
+        "truncated": false
+      },
+      {
+        "label": "original-report-pair-profile",
+        "window": "window-0060",
+        "events": 1318401,
+        "events_lost": 0,
+        "truncated": false
+      },
+      {
+        "label": "rust-del-pair-profile",
+        "window": "window-0000",
+        "events": 1736957,
+        "events_lost": 0,
+        "truncated": false
+      },
+      {
+        "label": "rust-report-single",
+        "window": "window-0000",
+        "events": 1893719,
+        "events_lost": 0,
+        "truncated": false
+      },
+      {
+        "label": "rust-report-single",
+        "window": "window-0060",
+        "events": 978507,
+        "events_lost": 0,
+        "truncated": false
+      }
+    ],
+    "native_delete_window": {
+      "window_s": 21.3306569,
+      "workers": [
+        {
+          "worker_rank": 1,
+          "samples": 15076,
+          "running_s": 15.689764600000194,
+          "ready_s": 2.371317600000099,
+          "completed_blocked_s": 3.26957469999971,
+          "shared_build_condvar_wait_s": 0.0,
+          "critical_section_stack_wait_s": 3.2695011999997097
+        },
+        {
+          "worker_rank": 2,
+          "samples": 14682,
+          "running_s": 14.98608350000007,
+          "ready_s": 2.5278678999997255,
+          "completed_blocked_s": 3.671120200000207,
+          "shared_build_condvar_wait_s": 0.0,
+          "critical_section_stack_wait_s": 3.671116600000207
+        }
+      ],
+      "archive_reads": {
+        "Ops": 147701,
+        "Bytes": 604983296,
+        "OffsetObservations": 147701,
+        "UniqueLocations": 142222,
+        "RepeatedLocationOps": 5479,
+        "MaximumCallsAtOneLocation": 2,
+        "SizeCounts": {
+          "4096": 147701
+        }
+      },
+      "attributed_physical_disk_ops": 0
+    },
+    "native_report_single": {
+      "workers": [
+        {
+          "worker_rank": 1,
+          "samples": 20806,
+          "running_s": 21.2071386,
+          "ready_s": 0.016430399999999738,
+          "completed_blocked_s": 0.0018484999999982391,
+          "shared_build_condvar_wait_s": 0.0,
+          "critical_section_stack_wait_s": 0.0
+        }
+      ],
+      "leaf_samples": {
+        "samples": 20806,
+        "categories": {
+          "linear_string_lookup": {
+            "samples": 1976,
+            "denominator": 20806
+          },
+          "memmove": {
+            "samples": 991,
+            "denominator": 20806
+          },
+          "memset": {
+            "samples": 867,
+            "denominator": 20806
+          },
+          "bit_count_loop": {
+            "samples": 877,
+            "denominator": 20806
+          },
+          "atomic_increment": {
+            "samples": 655,
+            "denominator": 20806
+          },
+          "atomic_decrement": {
+            "samples": 755,
+            "denominator": 20806
+          },
+          "enter_critical_section": {
+            "samples": 578,
+            "denominator": 20806
+          },
+          "leave_critical_section": {
+            "samples": 547,
+            "denominator": 20806
+          }
+        }
+      }
+    },
+    "native_report_pair": {
+      "window_s": 21.0546625,
+      "workers": [
+        {
+          "worker_rank": 1,
+          "samples": 20317,
+          "running_s": 20.768576099999812,
+          "ready_s": 0.10831189999986751,
+          "completed_blocked_s": 0.1777745000003208,
+          "shared_build_condvar_wait_s": 0.0,
+          "critical_section_stack_wait_s": 0.17746950000032233
+        },
+        {
+          "worker_rank": 2,
+          "samples": 20079,
+          "running_s": 20.54109739999994,
+          "ready_s": 0.1529308999999323,
+          "completed_blocked_s": 0.3606342000001261,
+          "shared_build_condvar_wait_s": 0.0,
+          "critical_section_stack_wait_s": 0.36027510000012436
+        }
+      ],
+      "leaf_samples": {
+        "samples": 40396,
+        "categories": {
+          "linear_string_lookup": {
+            "samples": 3533,
+            "denominator": 40396
+          },
+          "memmove": {
+            "samples": 1715,
+            "denominator": 40396
+          },
+          "memset": {
+            "samples": 1625,
+            "denominator": 40396
+          },
+          "bit_count_loop": {
+            "samples": 1318,
+            "denominator": 40396
+          },
+          "atomic_increment": {
+            "samples": 1217,
+            "denominator": 40396
+          },
+          "atomic_decrement": {
+            "samples": 1347,
+            "denominator": 40396
+          },
+          "enter_critical_section": {
+            "samples": 1157,
+            "denominator": 40396
+          },
+          "leave_critical_section": {
+            "samples": 1053,
+            "denominator": 40396
+          }
+        }
+      },
+      "diagnostic_aborted_after_s": 100,
+      "completed_reports": 0
+    },
+    "rust_delete": {
+      "workers": [
+        {
+          "worker_rank": 1,
+          "samples": 16930,
+          "running_s": 16.965679200000036,
+          "ready_s": 0.028341200000007234,
+          "completed_blocked_s": 1.0063475999999572,
+          "shared_build_condvar_wait_s": 0.20410730000000057,
+          "critical_section_stack_wait_s": 0.00041269999999781246
+        },
+        {
+          "worker_rank": 2,
+          "samples": 2826,
+          "running_s": 2.860716599999989,
+          "ready_s": 0.032133200000045464,
+          "completed_blocked_s": 15.101719499999966,
+          "shared_build_condvar_wait_s": 13.416793999999994,
+          "critical_section_stack_wait_s": 0.024680199999997057
+        }
+      ]
+    },
+    "rust_report": {
+      "workers": [
+        {
+          "worker_rank": 1,
+          "samples": 13574,
+          "running_s": 13.762605699999991,
+          "ready_s": 0.06755739999998059,
+          "completed_blocked_s": 0.7638068000000293,
+          "shared_build_condvar_wait_s": 0.0,
+          "critical_section_stack_wait_s": 0.0
+        }
+      ]
+    }
+  },
+  "limitations": [
+    "One run per control configuration, not medians.",
+    "Separate bounded diagnostic traces; profiling overhead is excluded from timing controls.",
+    "Native report pair download reset reproduced in two attempts; second output completeness not established.",
+    "Fresh secondary heavy Rust worker first used by report pair.",
+    "Rust report generation defers formula calculation to the client.",
+    "Native PDB unavailable; exact protected object and all high-level callers unresolved.",
+    "Native conversion controls ran sequentially automatic then manual, one run each."
+  ]
+}
