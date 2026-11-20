@@ -84,8 +84,11 @@ pub(super) fn candidate_from_image(
         }
     }
     if changes.len() == 1 && deletions.is_empty() {
-        if let Some(image) = insert::append(path, &changes[0], base.clone())? {
-            return Ok(image);
+        match insert::append(path, &changes[0], base.clone()) {
+            Ok(Some(image)) => return Ok(image),
+            Ok(None) => {}
+            Err(e) if e == insert::REBUILD_NUMERIC => {}
+            Err(e) => return Err(e),
         }
     }
     check_volume_budget(path)?;

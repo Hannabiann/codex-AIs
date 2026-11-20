@@ -317,6 +317,19 @@ impl Db4Engine {
         let config_index = indexed_catalog(&engine.volumes[config_v], config_v, |r| {
             config.push(r.clone())
         })?;
+        // MainKey retains superseded registry rows. Native QueryValue selects
+        // by the indexed name and parent; a historical row can have both the
+        // same parent and spelling while being absent from the name index.
+        let mut tree = mainkey::MainKey::open(&engine.volumes[config_v].path)?;
+        if tree.has_field_index(621, 1) {
+            let value_ids: HashSet<_> = tree
+                .text_candidates(621, 1, |_| true)?
+                .into_iter()
+                .collect();
+            config.retain(|r| {
+                r.area != 621 || r.integer(0x400).is_some_and(|id| value_ids.contains(&id))
+            });
+        }
         *engine
             .scan_lock
             .get_mut()

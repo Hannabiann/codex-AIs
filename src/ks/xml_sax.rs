@@ -2,7 +2,7 @@
 //! No DTD, external entities, file access or network resolution.
 use super::*;
 #[derive(Debug, PartialEq)]
-pub(super) enum Event {
+pub(crate) enum Event {
     Start(String, Vec<(String, String)>),
     End(String),
     Text(String),
@@ -48,7 +48,7 @@ fn name(rest: &mut &str) -> Result<String, String> {
     *rest = &rest[end..];
     Ok(n)
 }
-pub(super) fn events(source: &str) -> Result<Vec<Event>, String> {
+pub(crate) fn events(source: &str) -> Result<Vec<Event>, String> {
     if source.len() > 4 * 1024 * 1024 {
         return Err("XML size limit".into());
     }

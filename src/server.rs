@@ -3,6 +3,8 @@ use crate::{
     vm,
 };
 use std::{collections::HashMap, sync::Arc};
+#[path = "registration_settings.rs"]
+pub(crate) mod registration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -620,6 +622,14 @@ pub fn dispatch_http(
         Err(e) => return message("501 Not Implemented", e),
     }
     request.authorization = authorization.map(str::to_owned);
+    if matches!(path.trim_end_matches('/'), "/20a")
+        && request
+            .target
+            .split_once('?')
+            .is_some_and(|(_, q)| q == "saveRegistrationNumbers")
+    {
+        return registration::save(engine, &request, authorization);
+    }
     if let (Some((monitor, id)), Some(user)) = (&request.monitor, &request.user) {
         monitor.user(*id, &user.login);
     }
@@ -646,13 +656,22 @@ pub fn dispatch_http(
     if response.status == "200 OK" {
         if let Some((code, headers)) = metadata {
             response.status = match code {
+                200 if dir.mapped_to.eq_ignore_ascii_case("spdas.dbs")
+                    && response.body.is_empty() =>
+                {
+                    "204 No Content"
+                }
                 200 => "200 OK",
+                204 if response.body.is_empty() => "204 No Content",
                 302 => "302 Found",
+                303 => "303 See Other",
                 304 => "304 Not Modified",
                 400 => "400 Bad Request",
                 401 => "401 Unauthorized",
                 403 => "403 Forbidden",
                 404 => "404 Not Found",
+                405 => "405 Method Not Allowed",
+                409 => "409 Conflict",
                 500 => "500 Internal Server Error",
                 _ => {
                     return message(
@@ -1189,7 +1208,11 @@ async fn connection_request(
         .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
         .map(|(_, v)| v.as_str())
         .unwrap_or(response.mime);
-    let mut header=format!("HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: {}\r\nX-Content-Type-Options: nosniff\r\n",response.status,content_type,response.body.len(),if keep_alive {"keep-alive"} else {"close"});
+    let connection = if keep_alive { "keep-alive" } else { "close" };
+    let mut header = format!("HTTP/1.1 {}\r\nContent-Type: {content_type}\r\nConnection: {connection}\r\nX-Content-Type-Options: nosniff\r\n", response.status);
+    if response.status != "204 No Content" {
+        header.push_str(&format!("Content-Length: {}\r\n", response.body.len()));
+    }
     if keep_alive {
         header.push_str(&format!(
             "Keep-Alive: timeout={}\r\n",

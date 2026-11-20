@@ -130,7 +130,7 @@ pub struct Store {
     path: PathBuf,
     token: String,
 }
-fn nonce() -> std::io::Result<String> {
+pub(crate) fn nonce() -> std::io::Result<String> {
     let mut bytes = [0u8; 32];
     #[cfg(windows)]
     {

@@ -422,7 +422,13 @@ impl Runtime<'_> {
             }
             let (id, kind) = self
                 .field_definition(d.scope, d.area, &args[0])?
-                .ok_or("Unknown field definition")?;
+                .ok_or_else(|| {
+                    Fault::Script(Value::ScriptException(format!(
+                        "Unknown field '{}' in area {}",
+                        args[0].text(),
+                        d.area
+                    )))
+                })?;
             if id == 1024 {
                 return Err("Document identity is immutable".into());
             }

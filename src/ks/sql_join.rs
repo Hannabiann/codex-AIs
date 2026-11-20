@@ -306,7 +306,7 @@ pub fn parse(sql_text: &str) -> Result<Option<Join>, String> {
         };
         columns.push((r.area, column));
     }
-    if columns.len() > 64 {
+    if columns.len() > sql::MAX_COLUMNS {
         return Err("SQL column limit".into());
     }
     let mut local = vec![Vec::new(); areas.len()];

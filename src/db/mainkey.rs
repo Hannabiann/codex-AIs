@@ -93,6 +93,12 @@ fn u32at(b: &[u8], i: usize) -> u32 {
     u32::from_le_bytes(b[i..i + 4].try_into().unwrap())
 }
 impl MainKey {
+    pub(super) fn has_field_index(&self, area: u16, attr: u16) -> bool {
+        self.directory
+            .chunks_exact(10)
+            .any(|entry| u16at(entry, 6) == area && u16at(entry, 8) == attr)
+    }
+
     pub(super) fn snapshot_size(&self) -> u64 {
         self.size
     }

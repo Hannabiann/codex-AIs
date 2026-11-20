@@ -3,6 +3,9 @@ use super::host::{Column, Projection};
 use std::sync::Arc;
 
 pub const MAX_SQL_ROWS: usize = 1_000_000;
+// The stock Word template opens a document with over ninety requested
+// attributes in addition to the protocol's fixed metadata columns.
+pub(super) const MAX_COLUMNS: usize = 1024;
 pub const MAX_INDEX_CANDIDATES: usize = 8_000_000;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Comparison {
@@ -988,7 +991,7 @@ impl Parser {
         let mut columns = Vec::new();
         let mut qualifiers = Vec::new();
         loop {
-            if columns.len() >= 64 {
+            if columns.len() >= MAX_COLUMNS {
                 return Err("SQL column limit".into());
             }
             columns.push(if p.kw("ANNOTATION") {

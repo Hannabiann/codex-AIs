@@ -75,6 +75,23 @@ function getJudOfKol(kol){
 "#;
 
 pub fn request_source<'a>(name: &str, source: &'a str) -> Cow<'a, str> {
+    if name.eq_ignore_ascii_case("getdelo") && source.contains("SELECT * FROM \"Дело\"") {
+        return Cow::Owned(source.replace(
+            "SELECT * FROM \"Дело\"",
+            r#"SELECT OID,"Предмет спора","Номер аж","Номер в ФАС","Номер в ВАС РФ","Наименование (1; Ndela)","Категория спора (13; Kspk5)","Коллегия" FROM "Дело""#,
+        ));
+    }
+    // The Word client reads these six named columns. Keep the RTF as a DB4
+    // stream so its binary contents never pass through a text conversion.
+    if name.eq_ignore_ascii_case("getblank") && source.contains("SELECT * FROM \"Бланки\"") {
+        return Cow::Owned(source.replace(
+            "SELECT * FROM \"Бланки\"",
+            "SELECT OID,\"Наименование\",\"Тип\",\"Номер\",\"Содержание\",\"Данные\" FROM \"Бланки\"",
+        ).replace(
+            "(new Document(parseInt(result.getInt('Тип')))).NumDoc",
+            "((new Document(parseInt(result.getInt('Тип')))).NumDoc || 0)",
+        ));
+    }
     // Only select the same immutable link descriptors once per schema/area.
     // Keep the original SQL, recursive ordering, preview and write branches.
     if name == "DeleteObject" && matches_source(source, DELETE_OBJECT_ID) {

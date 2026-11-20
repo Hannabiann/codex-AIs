@@ -1,6 +1,21 @@
 //! DB40 record encoding. The commit path is kept separate from the KS API.
 use super::fields::{Field, Record, Value, MAX_FIELD};
 use std::io::Write;
+#[path = "writer_counters.rs"]
+pub(crate) mod counters;
+
+/// VirtualText containing one unformatted run. Native ToStream requires
+/// the object descriptor even when there are no styles or embedded images.
+pub(crate) fn plain_text(data: Vec<u8>) -> Result<Value, String> {
+    let length = u32::try_from(data.len()).map_err(|_| "Text is too large")?;
+    let mut run = vec![1, 0, 1, 0, 0, 0];
+    run.extend(length.to_le_bytes());
+    run.extend([0, 0]);
+    let mut metadata = vec![12, 0, 12, 0];
+    metadata.extend(crc16(&run).to_le_bytes());
+    metadata.extend(run);
+    Ok(Value::TextWithMetadata { data, metadata })
+}
 
 pub(super) fn crc16(bytes: &[u8]) -> u16 {
     const fn table() -> [u16; 256] {
@@ -335,7 +350,6 @@ fn commit_change(
     } else {
         index_delta::candidate_from_image(path, &[], &[(oid, hole)], old.clone())?
     };
-    let prepared = started.elapsed();
     let bytes = std::sync::Arc::new(bytes);
     let mut check = super::mainkey::MainKey::from_image(bytes.clone())?;
     let entry = check.lookup_including_deleted(oid)?;
@@ -349,6 +363,16 @@ fn commit_change(
         return Err("DB40 transaction verification failed".into());
     }
     drop(check);
+    publish_checked(path, old, bytes, started)
+}
+
+fn publish_checked(
+    path: &Path,
+    old: std::sync::Arc<Vec<u8>>,
+    bytes: std::sync::Arc<Vec<u8>>,
+    started: std::time::Instant,
+) -> Result<(), String> {
+    let prepared = started.elapsed();
     let temporary = journal::sidecar(path, &format!(".codex-{}.tmp", std::process::id()));
     let backup = journal::sidecar(path, ".codex-backup");
     let backup_tmp = journal::sidecar(path, &format!(".codex-backup-{}.tmp", std::process::id()));
@@ -639,8 +663,11 @@ struct Image {
 }
 impl Image {
     fn new(bytes: Vec<u8>) -> Result<Self, String> {
-        if bytes.len() < 289 || &bytes[..4] != b"DB40" || u16at(&bytes, 5) != 0x614 {
-            return Err("writer requires DB40 0x614".into());
+        Self::for_version(bytes, 0x614)
+    }
+    fn for_version(bytes: Vec<u8>, version: u16) -> Result<Self, String> {
+        if bytes.len() < 289 || &bytes[..4] != b"DB40" || u16at(&bytes, 5) != version {
+            return Err(format!("writer requires DB40 {version:#x}"));
         }
         let unit = u16at(&bytes, 19) as usize;
         let maps = u16at(&bytes, 21) as usize;

@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 
 /// Registry strings are stored as consecutive 255-byte attribute-4 chunks.
 /// Unlike an ordinary multivalued document field, QueryValue joins them.
-pub(super) fn string_value(record: &Record) -> Option<String> {
+pub(crate) fn string_value(record: &Record) -> Option<String> {
     let mut chunks = record.fields.iter().filter_map(|f| match &f.value {
         super::fields::Value::String(bytes) if f.id == 4 && f.wire_type == 2 => {
             Some(bytes.as_slice())
@@ -20,9 +20,33 @@ pub(super) fn string_value(record: &Record) -> Option<String> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
+    pub oid: u32,
     pub name: String,
     pub kind: String,
     pub value: String,
+}
+impl Entry {
+    pub fn current_value(&self, data_root: Option<&str>, web_root: bool) -> Result<String, String> {
+        let Some(root) = data_root.filter(|_| {
+            web_root
+                && super::writer::epoch() != 0
+                && super::writer::counters::NAMES
+                    .iter()
+                    .any(|n| n.eq_ignore_ascii_case(&self.name))
+        }) else {
+            return Ok(self.value.clone());
+        };
+        let path = std::path::Path::new(root)
+            .join("config.db4")
+            .canonicalize()
+            .map_err(|e| e.to_string())?;
+        if super::writer::generation(&path) == 0 {
+            return Ok(self.value.clone());
+        }
+        let record =
+            super::read_file_oid(&path, self.oid)?.ok_or("registration counter missing")?;
+        string_value(&record).ok_or_else(|| "invalid registration counter".into())
+    }
 }
 #[derive(Debug, Clone)]
 pub struct Key {
@@ -75,6 +99,7 @@ impl Registry {
                 let value = string_value(r);
                 if let Some(value) = value {
                     key.values.push(Entry {
+                        oid: r.integer(0x400).ok_or("registry value OID missing")?,
                         name,
                         kind: r
                             .string(5)

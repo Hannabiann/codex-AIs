@@ -33,7 +33,7 @@ mod xls_report;
 #[path = "xml_report.rs"]
 mod xml_report;
 #[path = "xml_sax.rs"]
-mod xml_sax;
+pub(crate) mod xml_sax;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 type Object = Rc<RefCell<HashMap<String, Value>>>;
 type Loader<'a> = Box<dyn Fn(u32, u16) -> Result<String, String> + 'a>;
@@ -62,6 +62,20 @@ struct InputStream {
     closed: bool,
 }
 impl InputStream {
+    fn insert_text(&mut self, bytes: &[u8]) -> Result<(), Fault> {
+        if self.data.len().saturating_add(bytes.len()) > 16 * 1024 * 1024 {
+            return Err("stream size limit".into());
+        }
+        if self.position == self.data.len() {
+            self.data.extend_from_slice(bytes);
+        } else {
+            self.data
+                .splice(self.position..self.position, bytes.iter().copied());
+        }
+        self.position += bytes.len();
+        Ok(())
+    }
+
     fn value(data: &[u8]) -> Value {
         Value::ReadStream(Rc::new(RefCell::new(Self {
             data: data.to_vec(),
@@ -303,6 +317,7 @@ pub struct Runtime<'a> {
     output: String,
     binary_output: Option<Vec<u8>>,
     steps: usize,
+    pub(crate) distribution_generation: u64,
     instruction_limit: Option<usize>,
     eval_depth: usize,
     pub path: String,
@@ -366,6 +381,7 @@ impl<'a> Runtime<'a> {
             output: String::new(),
             binary_output: None,
             steps: 0,
+            distribution_generation: 0,
             instruction_limit: None,
             eval_depth: 0,
             path: path.into(),
@@ -544,6 +560,22 @@ impl<'a> Runtime<'a> {
         }
         self
     }
+    pub(crate) fn update_directory_setting(
+        &mut self,
+        name: &str,
+        value: &str,
+        integer: bool,
+    ) -> Result<(), String> {
+        let value = if integer {
+            Value::Number(value.parse::<i32>().map_err(|_| "Некорректный REG_DWORD")? as f64)
+        } else {
+            Value::String(value.into())
+        };
+        if let Some(Value::Object(this)) = self.scopes[0].borrow().get("this") {
+            this.borrow_mut().insert(name.into(), value);
+        }
+        Ok(())
+    }
     pub fn with_database_host(mut self, host: impl super::database::DatabaseHost + 'a) -> Self {
         self.dbhost = Some(RefCell::new(Box::new(host)));
         self
@@ -710,6 +742,87 @@ impl<'a> Runtime<'a> {
             .borrow()
             .named(0, name)
     }
+    pub(crate) fn distribution_document(
+        &self,
+    ) -> Result<Option<crate::db::fields::Record>, String> {
+        let host = self
+            .dbhost
+            .as_ref()
+            .ok_or("database host missing")?
+            .borrow();
+        let schema = host.shared_schema(0)?;
+        let area = schema
+            .areas
+            .get(&0)
+            .ok_or("Служебная область отсутствует")?;
+        let name = area.fields.get(&1).ok_or("Поле названия отсутствует")?;
+        let quote = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+        let sql = format!(
+            "SELECT OID FROM {} WHERE {}='Настройка распределения'",
+            quote(&area.name),
+            quote(&name.name)
+        );
+        let ids = host.query(0, &sql)?;
+        match ids.as_slice() {
+            [] => Ok(None),
+            [oid] => host.read(0, *oid),
+            _ => Err("В базе несколько документов «Настройка распределения»".into()),
+        }
+    }
+    pub(crate) fn distribution_choices(&self, id: u16) -> Result<String, String> {
+        let host = self
+            .dbhost
+            .as_ref()
+            .ok_or("database host missing")?
+            .borrow();
+        let schema = host.shared_schema(0)?;
+        let area = schema.areas.get(&id).ok_or("Справочник отсутствует")?;
+        let area_name = area.name.replace('"', "\"\"");
+        let ids = host.query(0, &format!("SELECT OID FROM \"{area_name}\""))?;
+        let mut rows = Vec::new();
+        for oid in ids {
+            crate::execution::check()?;
+            if let Some(meta) = host.metadata(0, oid)? {
+                if meta.area == id {
+                    if let Some(name) = meta.name {
+                        let s = crate::db::decode(&name).replace(['\t', '\r', '\n'], " ");
+                        rows.push((s, oid));
+                    }
+                }
+            }
+        }
+        rows.sort_unstable();
+        Ok(rows
+            .into_iter()
+            .map(|(s, oid)| format!("{oid}\t{s}\n"))
+            .collect())
+    }
+    pub(crate) fn save_distribution_xml(
+        &self,
+        expected: &crate::db::fields::Record,
+        bytes: Vec<u8>,
+    ) -> Result<(), String> {
+        if expected.area != 0
+            || expected.string(1).map(crate::db::decode).as_deref()
+                != Some("Настройка распределения")
+        {
+            return Err("Неверный служебный документ".into());
+        }
+        let mut next = expected.clone();
+        let mut fields = std::sync::Arc::make_mut(&mut next.fields)
+            .iter_mut()
+            .filter(|f| f.id == 4);
+        let f = fields.next().ok_or("Поле XML отсутствует")?;
+        if fields.next().is_some() || f.wire_type != 4 {
+            return Err("Неизвестный формат поля XML".into());
+        }
+        f.value = crate::db::writer::plain_text(bytes)?;
+        self.dbhost
+            .as_ref()
+            .ok_or("database host missing")?
+            .borrow_mut()
+            .write_document(0, &next, Some(expected))
+    }
     fn execute_document(
         &mut self,
         oid: u32,
@@ -868,11 +981,7 @@ impl<'a> Runtime<'a> {
             if bad {
                 return Err("output stream encoding".into());
             }
-            if stream.data.len() + bytes.len() > 16 * 1024 * 1024 {
-                return Err("output stream size limit".into());
-            }
-            stream.data.extend_from_slice(&bytes);
-            stream.position = stream.data.len();
+            stream.insert_text(&bytes)?;
             return Ok(());
         }
         if let Some(bytes) = &mut self.binary_output {
@@ -1424,7 +1533,7 @@ impl<'a> Runtime<'a> {
             }),
             (
                 Value::List(list),
-                "AddCondition" | "Add" | "Find" | "AddEmptyCondition" | "Delete",
+                "AddCondition" | "Add" | "Find" | "AddEmptyCondition" | "Delete" | "IsInArray",
             ) => Ok(Value::ListMethod(list, key)),
             (Value::List(list), "Size" | "length") => {
                 Ok(Value::Number(self.list_ids(&list.borrow())?.len() as f64))
@@ -2777,22 +2886,25 @@ impl<'a> Runtime<'a> {
                     .registry
                     .as_ref()
                     .ok_or("RegistryRoot is not configured")?;
-                let entry_value = |e: &crate::db::registry::Entry| {
-                    Value::ReadOnlyObject(Rc::new(RefCell::new(HashMap::from([
-                        ("NameVal".into(), Value::String(e.name.clone())),
-                        (
-                            "NameType".into(),
-                            match e.kind.as_str() {
-                                "REG_SZ" => Value::Number(1.0),
-                                "REG_DWORD" => Value::Number(4.0),
-                                _ => Value::Unavailable(format!(
-                                    "unsupported registry type {}",
-                                    e.kind
-                                )),
-                            },
-                        ),
-                        ("Value".into(), Value::String(e.value.clone())),
-                    ]))))
+                let entry_value = |e: &crate::db::registry::Entry| -> Result<Value, Fault> {
+                    let current = e.current_value(self.data_root.as_deref(), id == reg.root)?;
+                    Ok(Value::ReadOnlyObject(Rc::new(RefCell::new(HashMap::from(
+                        [
+                            ("NameVal".into(), Value::String(e.name.clone())),
+                            (
+                                "NameType".into(),
+                                match e.kind.as_str() {
+                                    "REG_SZ" => Value::Number(1.0),
+                                    "REG_DWORD" => Value::Number(4.0),
+                                    _ => Value::Unavailable(format!(
+                                        "unsupported registry type {}",
+                                        e.kind
+                                    )),
+                                },
+                            ),
+                            ("Value".into(), Value::String(current)),
+                        ],
+                    )))))
                 };
                 match method.as_str() {
                     "OpenKey" | "CreateKey" => {
@@ -2825,6 +2937,7 @@ impl<'a> Runtime<'a> {
                             key.values
                                 .get(*n as usize)
                                 .map(entry_value)
+                                .transpose()?
                                 .unwrap_or(Value::Null)
                         })
                     }
@@ -2832,7 +2945,11 @@ impl<'a> Runtime<'a> {
                         let [Value::String(name)] = values.as_slice() else {
                             return Err("QueryValue expects one name".into());
                         };
-                        Ok(reg.query(id, name)?.map(entry_value).unwrap_or(Value::Null))
+                        Ok(reg
+                            .query(id, name)?
+                            .map(entry_value)
+                            .transpose()?
+                            .unwrap_or(Value::Null))
                     }
                     "SetValue" => {
                         let [Value::String(name), Value::Number(kind), value] = values.as_slice()
@@ -2844,11 +2961,13 @@ impl<'a> Runtime<'a> {
                             4 if *kind == 4.0 => "REG_DWORD",
                             _ => return Err("unsupported registry value type".into()),
                         };
-                        if reg
-                            .query(id, name)?
-                            .is_some_and(|old| old.kind == kind && old.value == value.text())
-                        {
-                            return Ok(Value::Null);
+                        if let Some(old) = reg.query(id, name)? {
+                            if old.kind == kind
+                                && old.current_value(self.data_root.as_deref(), id == reg.root)?
+                                    == value.text()
+                            {
+                                return Ok(Value::Null);
+                            }
                         }
                         Err(format!("RegistryRoot.SetValue({name}): value would change; persistent registry writes are not implemented").into())
                     }
@@ -3359,8 +3478,12 @@ impl<'a> Runtime<'a> {
                         Ok(Value::Array(Rc::new(RefCell::new(map))))
                     }
                     "split" => {
-                        if values.len() > 1 {
-                            return Err("split limit argument not implemented".into());
+                        // The /99 SQL formatter supplies an empty string as
+                        // its optional second argument and reads the second part.
+                        if values.len() > 1
+                            && !matches!(values.as_slice(), [_, Value::String(s)] if s.is_empty())
+                        {
+                            return Err("unsupported KS split arguments".into());
                         }
                         let mut map = HashMap::new();
                         let mut count = 0;
@@ -3517,12 +3640,8 @@ impl<'a> Runtime<'a> {
                         if bad {
                             return Err("stream encoding".into());
                         }
-                        if s.data.len() + bytes.len() > 16 * 1024 * 1024 {
-                            return Err("stream size limit".into());
-                        }
-                        s.data.extend_from_slice(&bytes);
+                        s.insert_text(&bytes)?;
                     }
-                    s.position = s.data.len();
                     return Ok(Value::Null);
                 }
                 if method == "copyTo" {
@@ -3740,7 +3859,15 @@ impl<'a> Runtime<'a> {
                         .map_err(|e| Fault::Script(Value::String(e)))?;
                     return Ok(Value::Number(date.millis));
                 }
-                if method == "toGMTString" || method == "toUTCString" {
+                if method == "toString" && values.is_empty() {
+                    let date = d.borrow();
+                    date.get("getFullYear")?;
+                    let [year, month, day, ..] = date.parts();
+                    Ok(Value::String(format!(
+                        "{day:02}.{:02}.{year:04}",
+                        month + 1
+                    )))
+                } else if method == "toGMTString" || method == "toUTCString" {
                     if !values.is_empty() {
                         return Err("Date formatter expects no arguments".into());
                     }
@@ -4041,6 +4168,21 @@ impl<'a> Runtime<'a> {
                 Ok(Value::Object(object))
             }
             Value::ListMethod(list, method) => {
+                if method == "IsInArray" {
+                    let [value] = values.as_slice() else {
+                        return Err("List.IsInArray expects a document id".into());
+                    };
+                    let id = value.number()?;
+                    if !(0.0..=u32::MAX as f64).contains(&id) || id.fract() != 0.0 {
+                        return Err("List.IsInArray invalid OID".into());
+                    }
+                    let list = list.borrow();
+                    let id = id as u32;
+                    if let Some(ids) = list.ids.borrow().as_ref() {
+                        return Ok(Value::Bool(ids.contains(&id)));
+                    }
+                    return Ok(Value::Bool(self.list_ids(&list)?.contains(&id)));
+                }
                 if method == "Delete" {
                     let [Value::List(other)] = values.as_slice() else {
                         return Err(
@@ -4311,7 +4453,9 @@ impl<'a> Runtime<'a> {
                     };
                     let s = value.text();
                     Ok(Value::String(if n == "unescape" {
-                        crate::server::percent_decode(&s)?
+                        // The Word transfer component encodes spaces as '+'.
+                        // A literal plus arrives as %2B and is decoded once.
+                        crate::server::percent_decode(&s.replace('+', " "))?
                     } else {
                         let (bytes, _, bad) = encoding_rs::WINDOWS_1251.encode(&s);
                         if bad {

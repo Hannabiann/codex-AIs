@@ -20,6 +20,8 @@ pub(super) fn delete(
     }
 }
 
+pub(super) const REBUILD_NUMERIC: &str = "numeric index needs a complete merge";
+
 fn compare(kind: u16, a: &[u8], b: &[u8]) -> Result<Ordering, String> {
     let min = match kind {
         0 => 10,
@@ -72,6 +74,11 @@ impl Tree<'_> {
         let node = self.load_native(id)?;
         for pair in node.keys.windows(2) {
             if compare(self.kind, &pair[0], &pair[1])? != Ordering::Less {
+                if self.kind == 3 {
+                    // Native inserts can append a 13-digit barcode after a
+                    // larger 14-digit value. Binary search cannot insert here.
+                    return Err(REBUILD_NUMERIC.into());
+                }
                 return Err(format!(
                     "unordered insert index node {id}, area {}, attribute {}, kind {}",
                     self.area, self.attr, self.kind

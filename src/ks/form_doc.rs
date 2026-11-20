@@ -376,6 +376,10 @@ impl Runtime<'_> {
         }
     }
     pub(super) fn make_form(&mut self, args: Vec<Value>) -> Result<Value, Fault> {
+        self.try_make_form(args)?
+            .ok_or_else(|| "FormDoc: default form missing".into())
+    }
+    fn try_make_form(&mut self, args: Vec<Value>) -> Result<Option<Value>, Fault> {
         let Some(Value::Document(oid, scope)) = args.first().cloned() else {
             return Err("FormDoc expects a document".into());
         };
@@ -413,6 +417,9 @@ impl Runtime<'_> {
             }
             live.sort_unstable();
             live.dedup();
+            if live.is_empty() {
+                return Ok(None);
+            }
             if live.len() != 1 {
                 return Err(format!(
                     "FormDoc: expected one default form for area {}, got {}",
@@ -540,7 +547,7 @@ impl Runtime<'_> {
             entry.1 += elapsed;
             entry.2 += elapsed;
         }
-        Ok(object([
+        Ok(Some(object([
             ("doc".into(), Value::Document(oid, scope)),
             (
                 "abstract".into(),
@@ -550,7 +557,7 @@ impl Runtime<'_> {
             ("holder".into(), array(tabs)),
             ("reserved".into(), object([])),
             ("\0type".into(), Value::String("HashFormDoc".into())),
-        ]))
+        ])))
     }
     pub(super) fn doc_object(&self, oid: u32, scope: u32) -> Object {
         self.document_vars
@@ -727,7 +734,14 @@ impl Runtime<'_> {
             })
             .collect::<Vec<_>>();
         let result = (|| {
-            let form = self.make_form(vec![Value::Document(oid, scope)])?;
+            let Some(form) = self.try_make_form(vec![Value::Document(oid, scope)])? else {
+                let r = self.read_document(oid, scope)?;
+                return Ok(r
+                    .string(1)
+                    .map(crate::db::decode)
+                    .map(|name| crate::monitor::escape(&name))
+                    .unwrap_or_default());
+            };
             let definition = self.member(form, "\0definition".into())?.number()? as u32;
             let record = self.read_document(definition, scope)?;
             if let Some(f) = record.fields.iter().find(|f| f.id == 5 && f.wire_type == 4) {

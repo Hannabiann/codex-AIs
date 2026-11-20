@@ -2,6 +2,8 @@ use crate::{
     db::{decode, fields::Record},
     ks,
 };
+#[path = "distribution.rs"]
+mod distribution;
 #[derive(Debug)]
 pub struct VmError(pub String);
 pub fn named_with_startup(
@@ -155,7 +157,7 @@ impl Sessions {
                 }
             }
         }
-        self.ensure_runtime(engine, dir)?;
+        self.ensure_runtime(engine.clone(), dir)?;
         if dir.mapped_to.eq_ignore_ascii_case("admin.dbs") && object == "pref" {
             let descriptors = self
                 .runtimes
@@ -175,6 +177,19 @@ impl Sessions {
                 .unwrap()
                 .begin_request(request)
                 .map_err(VmError)?;
+            if dir.path.trim_end_matches('/') == "/20a"
+                && object == "raspred_settings"
+                && record.source().is_none_or(|s| s.is_empty())
+                && record.code().is_some()
+            {
+                return distribution::page(
+                    &engine,
+                    dir,
+                    self.runtimes.get_mut(&dir.path).unwrap(),
+                    request,
+                )
+                .map_err(VmError);
+            }
             let body = self.render_record(dir, record, object)?;
             let (code, headers) = self.runtimes[&dir.path]
                 .response_headers()
@@ -239,21 +254,26 @@ impl Sessions {
                     .try_send(dir.clone())
                     .map_err(|_| VmError("Catalog owner unavailable".into()))?;
             }
-            let mut runtime = match create_runtime_mode(engine, dir.clone(), self.owner.is_some()) {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("KS initialization failed for {}: {}", dir.path, e.0);
-                    if !crate::execution::cancelled() {
-                        self.failures.insert(dir.path.clone(), e.0.clone());
+            let mut runtime =
+                match create_runtime_mode(engine.clone(), dir.clone(), self.owner.is_some()) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("KS initialization failed for {}: {}", dir.path, e.0);
+                        if !crate::execution::cancelled() {
+                            self.failures.insert(dir.path.clone(), e.0.clone());
+                        }
+                        return Err(e);
                     }
-                    return Err(e);
-                }
-            };
+                };
             if self.owner.is_some() {
                 runtime.make_http_replica();
             }
             // Failed startup never activates its pending At tasks.
             self.runtimes.insert(dir.path.clone(), runtime);
+        }
+        if dir.path.trim_end_matches('/') == "/20a" && crate::db::writer::epoch() != 0 {
+            distribution::refresh(&engine, dir, self.runtimes.get_mut(&dir.path).unwrap())
+                .map_err(VmError)?;
         }
         Ok(())
     }
@@ -319,6 +339,11 @@ impl Sessions {
             return Ok(bytes);
         }
         let html = crate::classifier_html::adapt(html, object);
+        let html = if dir.path.trim_end_matches('/') == "/20a" && object == "adminsettings" {
+            crate::server::registration::controls(html).map_err(VmError)?
+        } else {
+            html
+        };
         let (bytes, _, bad) = encoding_rs::WINDOWS_1251.encode(&html);
         if bad {
             return Err(VmError("output cannot be encoded as Windows-1251".into()));

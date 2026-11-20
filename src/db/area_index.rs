@@ -210,6 +210,17 @@ impl MainKey {
         oid: u32,
         limit: usize,
     ) -> Result<Vec<u32>, String> {
+        if matches!(u16at(&self.header, 5), 0x611 | 0x612) {
+            let mut result = Vec::new();
+            for member in self.area_candidates(area, limit)? {
+                let entry = self.lookup(member)?.ok_or("legacy area member missing")?;
+                let (_, links) = self.record_links(entry)?;
+                if links.contains(&(attribute, oid)) {
+                    result.push(member);
+                }
+            }
+            return Ok(result);
+        }
         self.compressed_candidates((area, attribute), oid, limit)
     }
 

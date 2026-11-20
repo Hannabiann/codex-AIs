@@ -74,6 +74,26 @@ impl Runtime<'_> {
         area: u16,
         key: &Value,
     ) -> Result<Option<(u16, u16)>, Fault> {
+        // The Word attributes dialog posts the selected case under this
+        // classifier alias. Some court schemas declare only the case link.
+        if self.document_write_allowed
+            && self.path.trim_end_matches('/') == "/99"
+            && area == 7341
+            && matches!(key, Value::String(s) if s=="Наим.классиф.")
+        {
+            if let Some(host) = &self.dbhost {
+                let schema = host.borrow().shared_schema(scope)?;
+                if let Some(fields) = schema.areas.get(&area).map(|a| &a.fields) {
+                    if !fields.values().any(|f| f.name == "Наим.классиф.") {
+                        if let Some(f) = fields.values().find(|f| {
+                            f.kind == 5 && f.reference == 7340 && f.name == "Дело (1; Ndela)"
+                        }) {
+                            return Ok(Some((f.id, f.kind)));
+                        }
+                    }
+                }
+            }
+        }
         let structure = self.member(self.database_for(scope)?, "Struct".into())?;
         let area = self.member(structure, area.to_string())?;
         if matches!(area, Value::Null) {

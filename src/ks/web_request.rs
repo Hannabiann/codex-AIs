@@ -405,6 +405,24 @@ impl Runtime<'_> {
                 .insert(key.clone(), Value::String(value.clone()));
             self.request_parameters.push(key.clone());
         }
+        // readVar(Connection) in the Word library assigns the keys of its
+        // first input line to the request object, just like query parameters.
+        if dir
+            .borrow()
+            .get("overfile")
+            .is_some_and(|value| !matches!(value, Value::Null))
+        {
+            let line = request
+                .body
+                .split(|b| matches!(b, b'\r' | b'\n'))
+                .next()
+                .unwrap_or_default();
+            for pair in line.split(|b| *b == b'&') {
+                if let Some(at) = pair.iter().position(|b| *b == b'=') {
+                    self.check_request_key(&crate::db::decode(&pair[..at]))?;
+                }
+            }
+        }
         let user = if let Some(user) = &request.user {
             if self.user_scope.is_none() {
                 let mut host = self
