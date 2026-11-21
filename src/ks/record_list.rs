@@ -6,7 +6,7 @@ use std::cell::RefCell;
 pub(super) struct RecordList {
     pub scope: u32,
     pub area: u16,
-    pub order: Option<u16>,
+    pub order: Option<Vec<u16>>,
     pub conditions: Vec<String>,
     pub query_all: bool,
     pub ids: RefCell<Option<Vec<u32>>>,
@@ -15,6 +15,44 @@ fn quoted(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 impl Runtime<'_> {
+    pub(super) fn list_set(
+        &self,
+        list: &mut RecordList,
+        key: &str,
+        value: Value,
+    ) -> Result<(), Fault> {
+        fn field(value: &Value) -> Result<u16, Fault> {
+            let n = value.number()?;
+            if !n.is_finite() || n < 0.0 || n > u16::MAX as f64 || n.fract() != 0.0 {
+                return Err("Invalid List field or area number".into());
+            }
+            Ok(n as u16)
+        }
+        match key {
+            "Area" => {
+                list.area = field(&value)?;
+                *list.ids.borrow_mut() = None;
+            }
+            "Order" => {
+                let fields = if let Value::Array(a) = &value {
+                    let a = a.borrow();
+                    let len = a.get("length").ok_or("Array length missing")?.number()? as usize;
+                    (0..len)
+                        .map(|i| field(a.get(&i.to_string()).unwrap_or(&Value::Null)))
+                        .collect::<Result<Vec<_>, _>>()?
+                } else {
+                    vec![field(&value)?]
+                };
+                // Stable sorts from last to first implement native multi-field ordering.
+                for &attr in fields.iter().rev() {
+                    self.list_sort(list, attr)?;
+                }
+                list.order = Some(fields);
+            }
+            _ => return Err("Unsupported List property".into()),
+        }
+        Ok(())
+    }
     pub(super) fn list_sort(&self, list: &mut RecordList, attr: u16) -> Result<(), Fault> {
         // Setting the order on a newly constructed list must not search the
         // entire area. Native 00794120 only invalidates the sort; 00795120
@@ -92,8 +130,9 @@ impl Runtime<'_> {
         if let Some(ids) = list.ids.borrow().as_ref() {
             return Ok(ids.clone());
         }
-        // Area zero is an initially empty mixed list, not the system-script area.
-        if list.area == 0 || (list.conditions.is_empty() && !list.query_all) {
+        // Area zero also contains named service documents. A blank mixed list
+        // stays empty; explicit conditions search the service area.
+        if list.conditions.is_empty() && (list.area == 0 || !list.query_all) {
             return Ok(Vec::new());
         }
         let host = self
@@ -115,11 +154,12 @@ impl Runtime<'_> {
         }
         let ids = host.query(list.scope, &sql)?;
         drop(host);
-        let ids = if let Some(attr) = list.order {
-            self.ordered_ids(ids, list.scope, attr)?
-        } else {
-            ids
-        };
+        let mut ids = ids;
+        if let Some(attrs) = &list.order {
+            for &attr in attrs.iter().rev() {
+                ids = self.ordered_ids(ids, list.scope, attr)?;
+            }
+        }
         *list.ids.borrow_mut() = Some(ids.clone());
         Ok(ids)
     }

@@ -315,6 +315,11 @@ impl Runtime<'_> {
         // Startup libraries keep references to the virtual directory. A request
         // is a distinct Connection, never a mutation of that persistent object.
         let path_object = directory.clone();
+        if path.trim_end_matches('/') == "/20a" && command == "raspred_settings" {
+            path_object
+                .borrow_mut()
+                .insert("SaveState".into(), Value::Native("path.SaveState".into()));
+        }
         let directory = Rc::new(RefCell::new(directory.borrow().clone()));
         directory
             .borrow_mut()
@@ -404,6 +409,21 @@ impl Runtime<'_> {
                 .borrow_mut()
                 .insert(key.clone(), Value::String(value.clone()));
             self.request_parameters.push(key.clone());
+        }
+        if command == "raspred_settings" && request.method == "POST" {
+            // Unchecked controls are absent HTTP arguments. Do not inherit the
+            // previous directory value through Connection's global lookup.
+            for name in crate::vm::distribution::setting_names() {
+                if !request
+                    .form
+                    .iter()
+                    .any(|(k, _)| k.eq_ignore_ascii_case(name))
+                {
+                    dir.borrow_mut().insert(name.into(), Value::Null);
+                    self.scopes[0].borrow_mut().insert(name.into(), Value::Null);
+                    self.request_parameters.push(name.into());
+                }
+            }
         }
         // readVar(Connection) in the Word library assigns the keys of its
         // first input line to the request object, just like query parameters.

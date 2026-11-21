@@ -821,6 +821,72 @@ impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
         self.refresh_writes();
         self.query_select(scope, &crate::ks::sql::parse(sql)?)
     }
+    fn distribution_judges(&self, scope: u32, sql: &str) -> Result<Vec<u32>, String> {
+        self.refresh_writes();
+        let q = crate::ks::sql::parse(sql)?;
+        let schema = self.shared_schema(scope)?;
+        let area = schema.area(&q.area).ok_or("Distribution catalog absent")?;
+        if area.id != 7345
+            || !matches!(
+                q.projection.0.as_slice(),
+                [crate::ks::host::Column::Oid | crate::ks::host::Column::Object]
+            )
+        {
+            return Err("Distribution query must select judge identities".into());
+        }
+        let predicate = q.predicate.bind(area)?;
+        fn current_judge(p: &crate::ks::sql::BoundPredicate) -> crate::ks::sql::BoundPredicate {
+            use crate::ks::sql::BoundPredicate as P;
+            match p {
+                P::Link { attribute: 2, .. } => P::All,
+                P::And(a, b) => P::And(Box::new(current_judge(a)), Box::new(current_judge(b))),
+                _ => p.clone(),
+            }
+        }
+        fn work_section(
+            p: &crate::ks::sql::BoundPredicate,
+        ) -> Option<crate::ks::sql::BoundPredicate> {
+            use crate::ks::sql::BoundPredicate as P;
+            match p {
+                P::Link { attribute: 2, .. } => Some(p.clone()),
+                P::And(a, b) => work_section(a).or_else(|| work_section(b)),
+                _ => None,
+            }
+        }
+        let section = work_section(&predicate).ok_or("Distribution work section missing")?;
+        let current = current_judge(&predicate);
+        let mut candidates = std::collections::BTreeSet::new();
+        for mount in self.mounts(scope)? {
+            let ids = match self.engine.indexed_volume(&mount.key, area.id, &section)? {
+                Some(ids) => ids,
+                None => self
+                    .extra
+                    .indexed_volume(&mount.key, area.id, &section)?
+                    .unwrap_or_default(),
+            };
+            candidates.extend(ids);
+        }
+        // The native category editor retains judges whose work-section link
+        // survives in an older classifier volume. Keep this catalog view local
+        // to that editor; ordinary SQL still resolves the latest matching copy.
+        // Read through the normal overlay so tombstones and current fields win.
+        let mut live = Vec::new();
+        for oid in candidates {
+            if let Some(record) = self.read(scope, oid)? {
+                if record.area == area.id && current.matches_record(oid, &record) {
+                    let name = record
+                        .string(1)
+                        .map(super::decode)
+                        .unwrap_or_default()
+                        .to_lowercase();
+                    let key = encoding_rs::WINDOWS_1251.encode(&name).0.into_owned();
+                    live.push((key, oid));
+                }
+            }
+        }
+        live.sort();
+        Ok(live.into_iter().map(|(_, oid)| oid).collect())
+    }
 }
 impl<E: Deref<Target = Db4Engine>> Contexts<E> {
     fn indexed_query(

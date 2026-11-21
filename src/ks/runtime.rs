@@ -5,6 +5,10 @@ use super::parser::{self, Expr, Part, Stmt};
 mod array_search;
 #[path = "base64.rs"]
 mod base64;
+#[path = "compiled_runtime.rs"]
+mod compiled_runtime;
+#[path = "path_settings.rs"]
+mod path_settings;
 
 #[path = "context_mark.rs"]
 mod context_mark;
@@ -576,6 +580,11 @@ impl<'a> Runtime<'a> {
         }
         Ok(())
     }
+    pub(crate) fn clear_directory_setting(&mut self, name: &str) {
+        if let Some(Value::Object(this)) = self.scopes[0].borrow().get("this") {
+            this.borrow_mut().insert(name.into(), Value::Null);
+        }
+    }
     pub fn with_database_host(mut self, host: impl super::database::DatabaseHost + 'a) -> Self {
         self.dbhost = Some(RefCell::new(Box::new(host)));
         self
@@ -675,7 +684,7 @@ impl<'a> Runtime<'a> {
         }
     }
     fn assign_member(&mut self, obj: Value, key: String, v: Value) -> Result<(), Fault> {
-        match obj{Value::EditDocument(d)=>self.edit_set(d,&key,v),Value::WritableField(f)=>self.writable_set(f,&key,v),Value::List(l)=>{if key!="Area"&&key!="Order"{return Err("unsupported List property".into());}let n=v.number()?;if n<0.0||n>65535.0||n.fract()!=0.0{return Err("invalid List.Area".into());}let mut list=l.borrow_mut(); if key=="Area"{list.area=n as u16; *list.ids.borrow_mut()=None;}else{self.list_sort(&mut list,n as u16)?;list.order=Some(n as u16);} Ok(())},Value::Array(o)=>{
+        match obj{Value::EditDocument(d)=>self.edit_set(d,&key,v),Value::WritableField(f)=>self.writable_set(f,&key,v),Value::List(l)=>self.list_set(&mut l.borrow_mut(), &key, v),Value::Array(o)=>{
  self.numeric_arrays.invalidate(&o);
  let mut map=o.borrow_mut();
  if key=="length" {let n=v.number()?;if !n.is_finite()||n<0.0||n.fract()!=0.0||n>u32::MAX as f64{return Err("invalid or excessive array length".into());}map.retain(|k,_|k.parse::<usize>().map(|i|i<(n as usize)).unwrap_or(true));map.insert(key,Value::Number(n));}
@@ -769,7 +778,14 @@ impl<'a> Runtime<'a> {
             _ => Err("В базе несколько документов «Настройка распределения»".into()),
         }
     }
-    pub(crate) fn distribution_choices(&self, id: u16) -> Result<String, String> {
+    pub(crate) fn allow_distribution_writes(&mut self, allowed: bool) {
+        self.document_write_allowed = allowed;
+    }
+    pub(crate) fn distribution_choices_where(
+        &self,
+        id: u16,
+        condition: &str,
+    ) -> Result<String, String> {
         let host = self
             .dbhost
             .as_ref()
@@ -778,7 +794,7 @@ impl<'a> Runtime<'a> {
         let schema = host.shared_schema(0)?;
         let area = schema.areas.get(&id).ok_or("Справочник отсутствует")?;
         let area_name = area.name.replace('"', "\"\"");
-        let ids = host.query(0, &format!("SELECT OID FROM \"{area_name}\""))?;
+        let ids = host.query(0, &format!("SELECT OID FROM \"{area_name}\" {condition}"))?;
         let mut rows = Vec::new();
         for oid in ids {
             crate::execution::check()?;
@@ -796,32 +812,6 @@ impl<'a> Runtime<'a> {
             .into_iter()
             .map(|(s, oid)| format!("{oid}\t{s}\n"))
             .collect())
-    }
-    pub(crate) fn save_distribution_xml(
-        &self,
-        expected: &crate::db::fields::Record,
-        bytes: Vec<u8>,
-    ) -> Result<(), String> {
-        if expected.area != 0
-            || expected.string(1).map(crate::db::decode).as_deref()
-                != Some("Настройка распределения")
-        {
-            return Err("Неверный служебный документ".into());
-        }
-        let mut next = expected.clone();
-        let mut fields = std::sync::Arc::make_mut(&mut next.fields)
-            .iter_mut()
-            .filter(|f| f.id == 4);
-        let f = fields.next().ok_or("Поле XML отсутствует")?;
-        if fields.next().is_some() || f.wire_type != 4 {
-            return Err("Неизвестный формат поля XML".into());
-        }
-        f.value = crate::db::writer::plain_text(bytes)?;
-        self.dbhost
-            .as_ref()
-            .ok_or("database host missing")?
-            .borrow_mut()
-            .write_document(0, &next, Some(expected))
     }
     fn execute_document(
         &mut self,
@@ -1064,6 +1054,7 @@ impl<'a> Runtime<'a> {
             "false" => Ok(Value::Bool(false)),
             "StartProfile"
             | "__codex_LinkFields"
+            | "__codex_DistributionJudges"
             | "StopProfile"
             | "escape"
             | "unescape"
@@ -1147,6 +1138,7 @@ impl<'a> Runtime<'a> {
     fn stmt(&mut self, s: &Stmt) -> Result<Flow, Fault> {
         self.tick()?;
         match s {
+            Stmt::Compiled(program, entry) => return self.compiled(program, *entry),
             Stmt::With(e, body) => {
                 let value = self.eval(e)?;
                 let Value::Object(o) = value else {
@@ -1498,6 +1490,24 @@ impl<'a> Runtime<'a> {
         Ok(keys.into_iter().collect())
     }
     fn member(&self, base: Value, key: String) -> Result<Value, Fault> {
+        // HTTP argument names are case-insensitive on Connection objects,
+        // including bracket access used by compiled KS (mp_g_this["name"]).
+        if let Value::Object(object) = &base {
+            let map = object.borrow();
+            if !map.contains_key(&key)
+                && matches!(map.get("\0typename"),Some(Value::String(n)) if n=="Connection")
+            {
+                if let Some(name) = self
+                    .request_parameters
+                    .iter()
+                    .find(|n| n.eq_ignore_ascii_case(&key))
+                {
+                    if let Some(value) = map.get(name) {
+                        return Ok(value.clone());
+                    }
+                }
+            }
+        }
         match (base, key.as_str()) {
             (Value::EditDocument(d), _) => self.edit_property(d, key),
             (Value::WritableField(f), _) => self.writable_property(f, key),
@@ -2294,6 +2304,10 @@ impl<'a> Runtime<'a> {
                                 return Ok(Value::Object(Rc::new(RefCell::new(HashMap::from([
                                     ("\0stream".into(), stream),
                                     ("Parse".into(), Value::Native("xml.Parse".into())),
+                                    (
+                                        "SetEncoding".into(),
+                                        Value::Native("xml.SetEncoding".into()),
+                                    ),
                                 ])))));
                             }
                             "Document" => {
@@ -4335,7 +4349,27 @@ impl<'a> Runtime<'a> {
                     let fonts = o.borrow().get("\0fonts").cloned().unwrap_or(Value::Null);
                     Ok(fonts)
                 }
+                "path.SaveState" => self.save_path_settings(receiver, &values),
+                "field.InsertText" => self.writable_insert_text(receiver, &values),
                 "xml.Parse" => self.xml_parse(receiver, &values),
+                "xml.SetEncoding" => {
+                    let [value] = values.as_slice() else {
+                        return Err("XML.SetEncoding expects charset".into());
+                    };
+                    let charset = value.text().to_ascii_lowercase();
+                    if !matches!(charset.as_str(), "windows-1251" | "utf-8") {
+                        return Err("unsupported XML charset".into());
+                    }
+                    let Some(Value::Object(parser)) = receiver else {
+                        return Err("XML parser receiver missing".into());
+                    };
+                    let stream = parser.borrow().get("\0stream").cloned();
+                    let Some(Value::ReadStream(stream)) = stream else {
+                        return Err("XML stream missing".into());
+                    };
+                    stream.borrow_mut().charset = charset;
+                    Ok(Value::Null)
+                }
                 name if name.starts_with("xml.report.") => {
                     self.report_xml_call(&name[11..], receiver, values)
                 }
@@ -4406,6 +4440,23 @@ impl<'a> Runtime<'a> {
                     };
                     let value = info.borrow().get(&key).cloned().unwrap_or(Value::Null);
                     Ok(value)
+                }
+                "__codex_DistributionJudges" => {
+                    if values.len() != 1 {
+                        return Err("Distribution query expects SQL".into());
+                    }
+                    let host = self
+                        .dbhost
+                        .as_ref()
+                        .ok_or("Database host missing")?
+                        .borrow();
+                    let ids = host.distribution_judges(0, &values[0].text())?;
+                    Ok(Value::Host(super::host::Handle::identities(
+                        0,
+                        7345,
+                        ids,
+                        &values[0].text(),
+                    )?))
                 }
                 "FindOrCreateHashObject" => {
                     if values.len() < 2 || values.len() > 4 {

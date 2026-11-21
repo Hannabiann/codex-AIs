@@ -3,6 +3,8 @@ use super::fields::{Field, Record, Value, MAX_FIELD};
 use std::io::Write;
 #[path = "writer_counters.rs"]
 pub(crate) mod counters;
+#[path = "writer_settings.rs"]
+pub(crate) mod settings;
 
 /// VirtualText containing one unformatted run. Native ToStream requires
 /// the object descriptor even when there are no styles or embedded images.

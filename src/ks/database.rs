@@ -8,6 +8,9 @@ pub struct Volume {
     pub update: u16,
 }
 pub trait DatabaseHost {
+    fn distribution_judges(&self, _scope: u32, _sql: &str) -> Result<Vec<u32>, String> {
+        Err("Historical distribution catalog is not configured".into())
+    }
     fn delete_document(
         &mut self,
         _scope: u32,

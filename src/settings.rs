@@ -185,7 +185,7 @@ pub(crate) fn replace_file(source: &Path, destination: &Path) -> std::io::Result
         std::fs::rename(source, destination)
     }
 }
-fn atomic_write(path: &Path, text: &[u8]) -> std::io::Result<()> {
+pub(crate) fn atomic_write(path: &Path, text: &[u8]) -> std::io::Result<()> {
     let temporary = path.with_extension(format!("tmp-{}", nonce()?));
     let result = (|| {
         let mut options = std::fs::OpenOptions::new();

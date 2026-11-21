@@ -1,4 +1,5 @@
 //! Source KS frontend. Independent of the binary KS instruction format.
+pub(crate) mod compiled;
 pub mod parser;
 pub mod runtime;
 pub(crate) mod source_compat;

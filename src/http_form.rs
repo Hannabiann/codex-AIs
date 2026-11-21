@@ -3,7 +3,12 @@ const MAX_FIELDS: usize = 16_384;
 fn text(bytes: &[u8]) -> String {
     String::from_utf8(bytes.to_vec()).unwrap_or_else(|_| crate::db::decode(bytes))
 }
-fn add(out: &mut Vec<(String, String)>, key: String, value: String) -> Result<(), String> {
+fn add(
+    out: &mut Vec<(String, String)>,
+    key: String,
+    value: String,
+    command: &str,
+) -> Result<(), String> {
     if out.len() >= MAX_FIELDS
         || key.is_empty()
         || key.len() > 256
@@ -12,11 +17,26 @@ fn add(out: &mut Vec<(String, String)>, key: String, value: String) -> Result<()
     {
         return Err("form field limit/invalid name".into());
     }
+    // The blocking editor uses independent rows, not a semicolon-delimited value.
+    if command == "RaspredSettingsBlockedInnForJudges"
+        && matches!(key.as_str(), "nm__judge_inn" | "nm__judge_orgname")
+    {
+        out.push((key, value));
+        return Ok(());
+    }
     if let Some((_, previous)) = out.iter_mut().find(|(k, _)| *k == key) {
         // Native multi-selection controls submit several values of one field.
         // Keep command/control parameters singular.
         let attribute = key.strip_prefix('a').and_then(|s| s.split_once("attr"));
-        let multi = key == "tipdoc"
+        let category = command == "raspredkategory"
+            && key.parse::<u32>().is_ok_and(|n| n != 0)
+            && key.bytes().all(|c| c.is_ascii_digit())
+            && value.parse::<u32>().is_ok_and(|n| n != 0)
+            && previous
+                .split(';')
+                .all(|v| v.parse::<u32>().is_ok_and(|n| n != 0));
+        let multi = category
+            || key == "tipdoc"
             || key == "prevdoc"
                 && value.parse::<u32>().is_ok_and(|n| n != 0)
                 && previous
@@ -43,6 +63,20 @@ fn add(out: &mut Vec<(String, String)>, key: String, value: String) -> Result<()
     Ok(())
 }
 pub fn decode(content_type: &str, bytes: &[u8]) -> Result<Vec<(String, String)>, String> {
+    decode_for("", content_type, bytes)
+}
+pub fn decode_for(
+    target: &str,
+    content_type: &str,
+    bytes: &[u8],
+) -> Result<Vec<(String, String)>, String> {
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    let command = if query.is_empty() {
+        path.rsplit('/').next().unwrap_or("")
+    } else {
+        query.split('&').next().unwrap_or("")
+    };
+    let command = crate::server::percent_decode(command)?;
     if bytes.len() > 1024 * 1024 {
         return Err("form body limit".into());
     }
@@ -55,6 +89,7 @@ pub fn decode(content_type: &str, bytes: &[u8]) -> Result<Vec<(String, String)>,
                 &mut out,
                 crate::server::percent_decode(&k.replace('+', " "))?,
                 crate::server::percent_decode(&v.replace('+', " "))?,
+                &command,
             )?;
         }
     } else if kind.eq_ignore_ascii_case("multipart/form-data") {
@@ -104,7 +139,7 @@ pub fn decode(content_type: &str, bytes: &[u8]) -> Result<Vec<(String, String)>,
             let (value, next) = part
                 .split_once(&format!("\r\n{marker}"))
                 .ok_or("multipart closing boundary missing")?;
-            add(&mut out, name.into(), value.into())?;
+            add(&mut out, name.into(), value.into(), &command)?;
             if next == "--" || next == "--\r\n" {
                 break;
             }

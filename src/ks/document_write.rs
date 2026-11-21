@@ -43,7 +43,12 @@ impl Draft {
                 .filter_map(|(i, f)| {
                     let mut field = f.clone()?;
                     if let Some(stream) = self.streams.get(&i) {
-                        if let Data::Binary { data, .. } = &mut field.value {
+                        if field.wire_type == 4 {
+                            // InputStream caps writes at 16 MiB, below the u32 run length.
+                            field.value =
+                                crate::db::writer::plain_text(stream.borrow().data.clone())
+                                    .expect("bounded text stream");
+                        } else if let Data::Binary { data, .. } = &mut field.value {
                             *data = stream.borrow().data.clone();
                         }
                     }
@@ -284,6 +289,9 @@ impl Runtime<'_> {
         field: WritableField,
         key: String,
     ) -> Result<Value, Fault> {
+        if key == "InsertText" {
+            return Ok(Value::Native("field.InsertText".into()));
+        }
         if key == "Stream" {
             let mut d = field.doc.borrow_mut();
             d.check_lock()?;
@@ -302,6 +310,36 @@ impl Runtime<'_> {
             return Ok(Value::ReadStream(stream));
         }
         self.member(Value::StoredField(field.snapshot()?), key)
+    }
+    pub(super) fn writable_insert_text(
+        &self,
+        receiver: Option<Value>,
+        args: &[Value],
+    ) -> Result<Value, Fault> {
+        self.allow_document_write()?;
+        let Some(Value::WritableField(field)) = receiver else {
+            return Err("InsertText requires a writable field".into());
+        };
+        if !args.is_empty() {
+            return Err("field.InsertText currently expects no arguments".into());
+        }
+        let mut d = field.doc.borrow_mut();
+        d.check_lock()?;
+        let empty = match &d.field(field.index)?.value {
+            Data::Text(v) => v.is_empty(),
+            Data::TextWithMetadata { data, .. } => data.is_empty(),
+            _ => false,
+        };
+        if !empty || d.streams.contains_key(&field.index) {
+            return Err("InsertText requires an empty text field".into());
+        }
+        let Value::ReadStream(stream) = InputStream::value(&[]) else {
+            unreachable!()
+        };
+        d.streams.insert(field.index, stream.clone());
+        Ok(Value::ReadOnlyObject(Rc::new(RefCell::new(HashMap::from(
+            [("Text".into(), Value::ReadStream(stream))],
+        )))))
     }
     pub(super) fn edit_existing(
         &mut self,
@@ -441,6 +479,7 @@ impl Runtime<'_> {
                     4 => Data::Text(vec![]),
                     1 => Data::Date([0; 4]),
                     12 => Data::Timestamp([0; 8]),
+                    13 => Data::Decimal(super::decimal::Decimal::parse("0")?.to_native()),
                     8 | 14 => Data::Binary {
                         data: vec![],
                         kind: Some(0),

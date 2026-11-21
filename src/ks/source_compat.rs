@@ -74,7 +74,37 @@ function getJudOfKol(kol){
 }
 "#;
 
+const DISTRIBUTION_CATEGORIES_ID: (usize, [u8; 32]) = (
+    38567,
+    [
+        119, 200, 221, 48, 118, 239, 159, 248, 249, 200, 87, 27, 60, 206, 246, 46, 209, 100, 165,
+        27, 136, 57, 3, 198, 33, 80, 227, 253, 91, 74, 233, 95,
+    ],
+);
+
 pub fn request_source<'a>(name: &str, source: &'a str) -> Cow<'a, str> {
+    // Match the native category editor's historical classifier membership.
+    if name == "raspredkategory" && matches_source(source, DISTRIBUTION_CATEGORIES_ID) {
+        let mut updated = source
+            .replace(
+                "mp_dosql( sReqJudes )",
+                "__codex_DistributionJudges( sReqJudes )",
+            )
+            .replace("mp_dosql (txtReq)", "__codex_DistributionJudges(txtReq)");
+        for name in ["updateSostavsKategory", "createArrayOfCheckedKategory"] {
+            if let Some(start) = updated.find(&format!("function {name}(")) {
+                let end = updated[start + 1..]
+                    .find("\nfunction ")
+                    .map_or(updated.len(), |n| start + 1 + n);
+                let function = updated[start..end].replace(
+                    "mp_dosql ( sQuery_2 )",
+                    "__codex_DistributionJudges( sQuery_2 )",
+                );
+                updated.replace_range(start..end, &function);
+            }
+        }
+        return Cow::Owned(updated);
+    }
     if name.eq_ignore_ascii_case("getdelo") && source.contains("SELECT * FROM \"Дело\"") {
         return Cow::Owned(source.replace(
             "SELECT * FROM \"Дело\"",

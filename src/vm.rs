@@ -3,7 +3,7 @@ use crate::{
     ks,
 };
 #[path = "distribution.rs"]
-mod distribution;
+pub(crate) mod distribution;
 #[derive(Debug)]
 pub struct VmError(pub String);
 pub fn named_with_startup(
@@ -178,7 +178,7 @@ impl Sessions {
                 .begin_request(request)
                 .map_err(VmError)?;
             if dir.path.trim_end_matches('/') == "/20a"
-                && object == "raspred_settings"
+                && object == "RaspredSettingsBlockedInnForJudges"
                 && record.source().is_none_or(|s| s.is_empty())
                 && record.code().is_some()
             {
@@ -190,10 +190,41 @@ impl Sessions {
                 )
                 .map_err(VmError);
             }
-            let body = self.render_record(dir, record, object)?;
-            let (code, headers) = self.runtimes[&dir.path]
+            if dir.path.trim_end_matches('/') == "/20a"
+                && matches!(
+                    object,
+                    "raspred_settings" | "raspredkategory" | "change_difficult_katsp" | "restorekp"
+                )
+            {
+                let runtime = self.runtimes.get_mut(&dir.path).unwrap();
+                if let Some(reply) = distribution::guard_child(&engine, request).map_err(VmError)? {
+                    return Ok(reply);
+                }
+                runtime.allow_distribution_writes(request.method == "POST");
+                if object == "raspred_settings" {
+                    if let Some(reply) =
+                        distribution::guard_compiled(&engine, runtime, request).map_err(VmError)?
+                    {
+                        return Ok(reply);
+                    }
+                }
+            }
+            let mut body = self.render_record(dir, record, object)?;
+            if object == "raspred_settings" {
+                body = distribution::decorate_compiled(
+                    &engine,
+                    &self.runtimes[&dir.path],
+                    request,
+                    body,
+                )
+                .map_err(VmError)?;
+            }
+            let (code, mut headers) = self.runtimes[&dir.path]
                 .response_headers()
                 .map_err(VmError)?;
+            if object == "raspred_settings" {
+                headers.push(("Cache-Control".into(), "no-store".into()));
+            }
             Ok((body, code, headers))
         })();
         // Also restore on script/host errors, before any scheduled task can run.
@@ -284,6 +315,25 @@ impl Sessions {
         object: &str,
     ) -> Result<Vec<u8>, VmError> {
         let runtime = self.runtimes.get_mut(&dir.path).unwrap();
+        if object == "raspred_settings" && record.source().is_none_or(|s| s.is_empty()) {
+            let ast = ks::compiled::parse(
+                record
+                    .code()
+                    .ok_or_else(|| VmError("compiled settings missing".into()))?,
+            )
+            .map_err(VmError)?;
+            let html = runtime
+                .render(&ast)
+                .map_err(|e| VmError(format!("{object}: {e}")))?;
+            let html = crate::classifier_html::adapt(html, object);
+            let (bytes, _, bad) = encoding_rs::WINDOWS_1251.encode(&html);
+            if bad {
+                return Err(VmError(
+                    "compiled output cannot be encoded as Windows-1251".into(),
+                ));
+            }
+            return Ok(bytes.into_owned());
+        }
         // Work size is determined by the connected court database. Ordinary
         // requests, cascades and reports have no instruction-count quota.
         let source = record

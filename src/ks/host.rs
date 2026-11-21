@@ -129,6 +129,26 @@ pub fn script_query(sql: &str) -> Result<ScriptQuery, String> {
     result
 }
 impl Handle {
+    pub(super) fn identities(
+        scope: u32,
+        area: u16,
+        oids: Vec<u32>,
+        sql: &str,
+    ) -> Result<Self, String> {
+        Ok(Self::Rows(Rc::new(RefCell::new(Rows {
+            area: Some(area),
+            connection: Rc::new(RefCell::new(Connection {
+                closed: false,
+                scope,
+            })),
+            oids,
+            projection: script_query(sql)?.projection,
+            cells: Vec::new(),
+            fulltext: Default::default(),
+            position: -1,
+            closed: false,
+        }))))
+    }
     pub fn call(
         &self,
         method: &str,

@@ -47,6 +47,7 @@ pub enum Part {
 }
 #[derive(Debug, Clone)]
 pub enum Stmt {
+    Compiled(Rc<super::compiled::Program>, usize),
     With(Expr, Box<Stmt>),
     Empty,
     Expression(Expr),
