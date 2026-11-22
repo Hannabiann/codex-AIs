@@ -6,6 +6,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 pub(super) type Edit = Rc<RefCell<Draft>>;
 #[derive(Debug)]
 pub(super) struct Draft {
+    pub imported: bool,
     pub scope: u32,
     pub oid: u32,
     pub area: u16,
@@ -17,8 +18,9 @@ pub(super) struct Draft {
     streams: HashMap<usize, Rc<RefCell<InputStream>>>,
 }
 impl Draft {
-    fn new(scope: u32, record: Option<Record>) -> Self {
+    pub(super) fn new(scope: u32, record: Option<Record>) -> Self {
         Self {
+            imported: false,
             scope,
             oid: record.as_ref().and_then(|r| r.integer(1024)).unwrap_or(0),
             area: record.as_ref().map_or(0, |r| r.area),
@@ -136,9 +138,7 @@ fn scalar(kind: u16, value: &Value) -> Result<Data, Fault> {
             // KS uses signed sentinels such as -1 for an unset specialization.
             // DB4 stores their two's-complement representation in a DWORD.
             let n = value.number()?;
-            if !n.is_finite() || n.fract() != 0.0
-                || n < i32::MIN as f64 || n > u32::MAX as f64
-            {
+            if !n.is_finite() || n.fract() != 0.0 || n < i32::MIN as f64 || n > u32::MAX as f64 {
                 return Err("invalid document integer".into());
             }
             Data::Integer(n as i64 as u32)
@@ -154,7 +154,9 @@ fn scalar(kind: u16, value: &Value) -> Result<Data, Fault> {
             if !(100..=9999).contains(&p[0]) {
                 // Invalid user/form dates are a native script exception; the
                 // distribution template catches an absent optional hearing date.
-                return Err(Fault::Script(Value::String("invalid stored calendar date".into())));
+                return Err(Fault::Script(Value::String(
+                    "invalid stored calendar date".into(),
+                )));
             }
             if kind == 1 {
                 let y = (p[0] as i16).to_le_bytes();
@@ -193,7 +195,6 @@ impl Runtime<'_> {
         self.new_edit_document_in(0)
     }
     pub(super) fn new_edit_document_in(&self, scope: u32) -> Result<Value, Fault> {
-        self.allow_document_write()?;
         Ok(Value::EditDocument(Rc::new(RefCell::new(Draft::new(
             scope, None,
         )))))
@@ -240,15 +241,14 @@ impl Runtime<'_> {
                 return self.member(a, "Name".into());
             }
             "Lock" | "Unlock" | "Write" | "NewField" | "DeleteField" | "Attr" | "Next"
-            | "Compile" | "Execute" => {
-                Value::EditMethod(doc.clone(), key)
+            | "Compile" | "Execute" => Value::EditMethod(doc.clone(), key),
+            _ if d.oid != 0 && !d.imported => {
+                return self.member(Value::Document(d.oid, d.scope), key)
             }
-            _ if d.oid != 0 => return self.member(Value::Document(d.oid, d.scope), key),
             _ => Value::Null,
         })
     }
     pub(super) fn edit_set(&self, doc: Edit, key: &str, value: Value) -> Result<(), Fault> {
-        self.allow_document_write()?;
         let mut d = doc.borrow_mut();
         if d.oid != 0 || d.locked {
             return Err("A stored document's area cannot be changed".into());
@@ -309,8 +309,18 @@ impl Runtime<'_> {
         if key == "InsertText" {
             return Ok(Value::Native("field.InsertText".into()));
         }
+        if key == "FromStream" {
+            return Ok(Value::Native("field.FromStream".into()));
+        }
         if key == "Stream" {
             let mut d = field.doc.borrow_mut();
+            if d.imported {
+                // Preview is detached from the database and needs no write lock.
+                return match &d.field(field.index)?.value {
+                    Data::Binary { data, .. } => Ok(InputStream::value(data)),
+                    _ => Ok(Value::Null),
+                };
+            }
             d.check_lock()?;
             let data = match &d.field(field.index)?.value {
                 Data::Binary { data, .. } => data.clone(),
@@ -358,6 +368,33 @@ impl Runtime<'_> {
             [("Text".into(), Value::ReadStream(stream))],
         )))))
     }
+    pub(super) fn writable_from_stream(
+        &self,
+        receiver: Option<Value>,
+        args: &[Value],
+    ) -> Result<Value, Fault> {
+        self.allow_document_write()?;
+        let Some(Value::WritableField(field)) = receiver else {
+            return Err("FromStream requires a writable field".into());
+        };
+        let [Value::ReadStream(source)] = args else {
+            return Err("FromStream expects a readable text stream".into());
+        };
+        let mut doc = field.doc.borrow_mut();
+        doc.check_lock()?;
+        if doc.imported || doc.field(field.index)?.wire_type != 4 {
+            return Err("FromStream requires an editable text field".into());
+        }
+        let mut source = source.borrow_mut();
+        if source.closed { return Err("stream closed".into()); }
+        let bytes = source.data.get(source.position..).ok_or("invalid stream position")?;
+        if bytes.len() > 16 * 1024 * 1024 { return Err("text stream size limit".into()); }
+        let text = crate::db::writer::plain_text(bytes.to_vec())?;
+        doc.streams.remove(&field.index);
+        doc.fields[field.index].as_mut().unwrap().value = text;
+        source.position = source.data.len();
+        Ok(Value::Null)
+    }
     pub(super) fn edit_existing(
         &mut self,
         oid: u32,
@@ -390,14 +427,24 @@ impl Runtime<'_> {
         method: &str,
         args: &[Value],
     ) -> Result<Value, Fault> {
-        self.allow_document_write()?;
         if method == "Attr" || method == "Next" {
             return self.edit_attr(doc, method, args);
+        }
+        self.allow_document_write()?;
+        if doc.borrow().imported {
+            return Err("Imported snapshots must be saved through the KOD import form".into());
         }
         if matches!(method, "Lock" | "Unlock" | "Write") && !args.is_empty() {
             return Err("Document lock/write expects no arguments".into());
         }
         if method == "Lock" {
+            let d = doc.borrow();
+            if d.oid != 0 && self.p_edit_guard_required
+                && self.p_edit_checked != Some((d.scope, d.oid))
+            {
+                return Err("Карточка устарела. Откройте объект заново перед сохранением.".into());
+            }
+            drop(d);
             let mut d = doc.borrow_mut();
             if d.locked {
                 return Ok(Value::Bool(true));
@@ -425,7 +472,7 @@ impl Runtime<'_> {
                     .as_ref()
                     != Some(expected)
                 {
-                    return Err("Документ изменён. Откройте актуальную редакцию.".into());
+                    return Err(self.p_edit_fault("Документ изменён. Откройте актуальную редакцию.".into()));
                 }
             }
             if self
@@ -465,7 +512,8 @@ impl Runtime<'_> {
                 .as_ref()
                 .ok_or("Document writer missing")?
                 .borrow_mut()
-                .write_document(d.scope, &record, d.expected.as_ref())?;
+                .write_document(d.scope, &record, d.expected.as_ref())
+                .map_err(|e| self.p_edit_fault(e))?;
             d.expected = Some(record);
             return Ok(Value::Null);
         }
@@ -475,16 +523,35 @@ impl Runtime<'_> {
             }
             let source = {
                 let d = doc.borrow();
-                if d.oid != 0 { return Err("temporary script must not have a persistent identity".into()); }
-                let (id, kind) = self.field_definition(d.scope, d.area, &args[0])?
+                if d.oid != 0 {
+                    return Err("temporary script must not have a persistent identity".into());
+                }
+                let (id, kind) = self
+                    .field_definition(d.scope, d.area, &args[0])?
                     .ok_or("temporary script field missing")?;
-                if kind != 4 { return Err("temporary script requires a text field".into()); }
-                let index = d.fields.iter().position(|f| f.as_ref().is_some_and(|f| f.id == id && f.wire_type == kind))
+                if kind != 4 {
+                    return Err("temporary script requires a text field".into());
+                }
+                let index = d
+                    .fields
+                    .iter()
+                    .position(|f| {
+                        f.as_ref()
+                            .is_some_and(|f| f.id == id && f.wire_type == kind)
+                    })
                     .ok_or("temporary script field missing")?;
-                let stream = d.streams.get(&index).ok_or("temporary script text missing")?.borrow();
+                let stream = d
+                    .streams
+                    .get(&index)
+                    .ok_or("temporary script text missing")?
+                    .borrow();
                 if stream.charset == "utf-8" {
-                    std::str::from_utf8(&stream.data).map_err(|_| "invalid UTF-8 script")?.to_owned()
-                } else { crate::db::decode(&stream.data) }
+                    std::str::from_utf8(&stream.data)
+                        .map_err(|_| "invalid UTF-8 script")?
+                        .to_owned()
+                } else {
+                    crate::db::decode(&stream.data)
+                }
             };
             if method == "Compile" {
                 super::parser::parse(&source).map_err(|e| format!("temporary KS syntax: {e}"))?;

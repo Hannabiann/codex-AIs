@@ -1,6 +1,9 @@
 //! Native DocTextField objects (0062dbc0, 0062ded0, 0062a830).
 //! Offsets are lengths in the original CP1251 text, not UTF-8 offsets.
 use crate::{db::fields::Field, document};
+#[path = "rich_text_rtf.rs"]
+mod rtf_writer;
+pub use rtf_writer::rtf;
 
 #[derive(Clone, Debug)]
 pub enum Item {

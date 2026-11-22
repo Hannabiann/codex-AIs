@@ -4,6 +4,8 @@
 mod area_index;
 #[path = "date_index.rs"]
 mod date_index;
+#[path = "name_cursor.rs"]
+pub(crate) mod name_cursor;
 #[path = "timestamp_index.rs"]
 pub(crate) mod timestamp_index;
 #[path = "word_index.rs"]
@@ -652,6 +654,57 @@ impl MainKey {
             )?;
         }
         Ok(())
+    }
+    /// Sort keys for the scalar object name, without reading document streams.
+    /// `ids` are sorted live identities already resolved through mount overlays.
+    pub(super) fn name_sort_keys(
+        &mut self,
+        area: u16,
+        ids: &[u32],
+        descending: bool,
+    ) -> Result<Vec<(u32, Option<Vec<u8>>)>, String> {
+        if ids.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err("name sort identities must be sorted and unique".into());
+        }
+        let root = self
+            .directory
+            .chunks_exact(10)
+            .find(|c| u16at(c, 6) == area && u16at(c, 8) == 1)
+            .map(|c| u32at(c, 2))
+            .ok_or("name sort index missing")?;
+        let keys = std::cell::RefCell::new(vec![None; ids.len()]);
+        if root != 0 && !ids.is_empty() {
+            self.walk_names(
+                root,
+                area,
+                1,
+                0,
+                self.bytes,
+                &|oid, key| {
+                    if let Ok(i) = ids.binary_search(&oid) {
+                        let mut keys = keys.borrow_mut();
+                        let lower = super::decode(key).to_lowercase();
+                        let key = encoding_rs::WINDOWS_1251.encode(&lower).0.into_owned();
+                        if keys[i].as_ref().is_none_or(|previous| {
+                            if descending {
+                                &key > previous
+                            } else {
+                                &key < previous
+                            }
+                        }) {
+                            keys[i] = Some(key);
+                        }
+                    }
+                    false
+                },
+                None,
+                &mut Vec::new(),
+                &mut HashSet::new(),
+            )?;
+        }
+        // Native indexed ordering starts with the first key in the requested
+        // direction, including empty secondary names retained in old volumes.
+        Ok(ids.iter().copied().zip(keys.into_inner()).collect())
     }
     pub(super) fn indexed_strings(
         &mut self,

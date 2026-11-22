@@ -208,6 +208,7 @@ impl Runtime<'_> {
         let methods: &[&str] = match kind {
             "KodeksFormatParser" => &["parse", "setHandler", "setErrorHandler"],
             "KodeksDOMParser" => &["parse", "setHandler", "setErrorHandler"],
+            "KodeksFormatRTFWriter" => &[],
             "KodeksFormatHTMLWriter" => &[
                 "setHyperlinkConverter",
                 "setPictureConverter",
@@ -225,6 +226,15 @@ impl Runtime<'_> {
             _ => return Err("Unknown format object".into()),
         };
         let mut fields = HashMap::from([("\0kind".into(), Value::String(kind.into()))]);
+        if kind == "KodeksFormatRTFWriter" {
+            if !matches!(values.as_slice(), [Value::HttpOutput]) {
+                return Err("RTF writer requires HTTP Output()".into());
+            }
+            fields.insert(
+                "documentArea".into(),
+                object([("propertiesWords".into(), Value::String(String::new()))]),
+            );
+        }
         for method in methods {
             fields.insert((*method).into(), Value::Native(format!("format.{method}")));
         }
@@ -306,6 +316,27 @@ impl Runtime<'_> {
                 let handler = o.borrow().get("\0setHandler").cloned();
                 // Preserve the node-returning form without an explicit handler.
                 if let Some(Value::Object(writer)) = handler {
+                    if writer.borrow().get("\0kind").map(Value::text).as_deref()
+                        == Some("KodeksFormatRTFWriter")
+                    {
+                        let page = match writer.borrow().get("documentArea") {
+                            Some(Value::Object(o)) => o
+                                .borrow()
+                                .get("propertiesWords")
+                                .map(Value::text)
+                                .unwrap_or_default(),
+                            _ => String::new(),
+                        };
+                        let field = match &values[0] {
+                            Value::StoredField(f) => f.clone(),
+                            Value::WritableField(f) => f.snapshot()?,
+                            _ => return Err("RTF export requires a stored text field".into()),
+                        };
+                        let bytes = crate::rich_text::rtf(field.data(), &page)?;
+                        self.binary_output = Some(bytes);
+                        self.output.clear();
+                        return self.format_object("node", values);
+                    }
                     let html = self.rich_html(&values[0])?;
                     let target = writer.borrow().get("\0field").cloned();
                     if let Some(stream) = target {

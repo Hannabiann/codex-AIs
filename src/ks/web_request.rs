@@ -295,6 +295,8 @@ impl Runtime<'_> {
             .split_once('?')
             .unwrap_or((&request.target, ""));
         let command = query.split('&').next().unwrap_or("");
+        self.p_edit_guard_required = path.trim_end_matches('/') == "/20a"
+            && command == "ispravlenieForm";
         let mut participant_mode = String::new();
         for (key, value) in query.split('&').filter_map(|p| p.split_once('=')) {
             if crate::server::percent_decode(key)?.eq_ignore_ascii_case("mode") {
@@ -302,7 +304,9 @@ impl Runtime<'_> {
             }
         }
         for (key, value) in &request.form {
-            if key.eq_ignore_ascii_case("mode") { participant_mode = value.clone(); }
+            if key.eq_ignore_ascii_case("mode") {
+                participant_mode = value.clone();
+            }
         }
         // Native registration reserves a case and its number while opening the
         // form; subsequent POSTs attach parties and complete the registration.
@@ -311,7 +315,9 @@ impl Runtime<'_> {
             && matches!(path, "/20a" | "/20a/")
             && matches!(command, "regdelo" | "regdoc");
         self.attachment_write_allowed = self.registration_write_allowed
-            || !scheduled && request.user.is_some() && matches!(path, "/20a" | "/20a/")
+            || !scheduled
+                && request.user.is_some()
+                && matches!(path, "/20a" | "/20a/")
                 && command == "savetempfile";
         self.document_write_allowed = !scheduled
             && request.user.is_some()
@@ -325,6 +331,10 @@ impl Runtime<'_> {
                 // Vacation edits are submitted by its separate staff form.
                 || matches!(path, "/20a" | "/20a/")
                     && (command == "newJudAndHoliday"
+                        // The bankruptcy schedule initializes its column settings
+                        // on first opening; both native forms persist them in DB4.
+                        || command == "bankrotanshlag"
+                        || request.method == "POST" && command == "anshlag"
                         || request.method == "POST" && matches!(command, "makeVacation" | "regassessors")
                         // The original assessor form removes a period by AJAX GET.
                         || command == "regassessors" && request.method == "GET" && participant_mode == "5")
@@ -333,6 +343,9 @@ impl Runtime<'_> {
                 || matches!(path, "/20a" | "/20a/")
                     && request.method == "POST"
                     && matches!(command, "ispravlenieForm" | "DeleteObject"));
+        self.schedule_export_allowed = self.document_write_allowed
+            && matches!(path, "/20a" | "/20a/") && command == "anshlag"
+            && request.method == "POST";
         self.http_input = InputStream::value(&request.body);
         let Value::Object(directory) = self.get("this").map_err(|e| e.to_string())? else {
             return Err("catalog object missing".into());
@@ -355,7 +368,8 @@ impl Runtime<'_> {
         }
         if path.trim_end_matches('/') == "/20a" && command == "makeVacation" {
             path_object.borrow_mut().insert(
-                "SaveState".into(), Value::Native("path.SaveCalendarAccess".into()),
+                "SaveState".into(),
+                Value::Native("path.SaveCalendarAccess".into()),
             );
         }
         let directory = Rc::new(RefCell::new(directory.borrow().clone()));
@@ -448,11 +462,17 @@ impl Runtime<'_> {
                 .insert(key.clone(), Value::String(value.clone()));
             self.request_parameters.push(key.clone());
         }
+        if self.p_edit_guard_required {
+            self.p_edit_submitted = request.form.iter().filter(|(key, _)|
+                super::p_edit::draft_key(key)).cloned().collect();
+        }
         for upload in &request.uploads {
             self.check_request_key(&upload.name)?;
             let value = InputStream::value(&upload.data);
             dir.borrow_mut().insert(upload.name.clone(), value.clone());
-            self.scopes[0].borrow_mut().insert(upload.name.clone(), value);
+            self.scopes[0]
+                .borrow_mut()
+                .insert(upload.name.clone(), value);
             self.request_parameters.push(upload.name.clone());
         }
         if command == "raspred_settings" && request.method == "POST" {
@@ -646,6 +666,12 @@ impl Runtime<'_> {
         self.numeric_arrays.clear();
         self.schema_links.clear();
         self.document_write_allowed = false;
+        self.schedule_export_allowed = false;
+        self.kod_snapshot_loaded = false;
+        self.p_edit_guard_required = false;
+        self.p_edit_submitted.clear();
+        self.p_edit_checked = None;
+        self.p_edit_snapshot = None;
         self.scheduled_request = false;
         self.registration_write_allowed = false;
         self.attachment_write_allowed = false;
@@ -678,14 +704,19 @@ impl Runtime<'_> {
         self.request_parameters.clear();
         self.profile = None;
         self.output_stream = None;
+        self.release_unused_databases();
     }
     /// Only the native queue's authenticated calendar-creation job may write
     /// while executing without an HTTP connection. Other timers stay read-only.
     pub(super) fn calendar_job_principal(&self) -> bool {
-        let Ok(Value::Object(principal)) = self.get("mp_g_ascJobPrincipal") else { return false };
+        let Ok(Value::Object(principal)) = self.get("mp_g_ascJobPrincipal") else {
+            return false;
+        };
         let principal = principal.borrow();
         matches!(principal.get("sJobUrlName"), Some(Value::String(name)) if name == "newJudAndHoliday")
-            && principal.get("nJobPagemode").is_some_and(|mode| mode.text() == "3")
+            && principal
+                .get("nJobPagemode")
+                .is_some_and(|mode| mode.text() == "3")
             && matches!(principal.get("oidJobCreator"), Some(Value::Number(oid)) if oid.is_finite() && *oid > 0.0)
     }
     /// The catalog owner cannot block waiting for its own At queue. Run the
@@ -693,11 +724,24 @@ impl Runtime<'_> {
     /// native job's status, completion signal and exception handling. Other
     /// queued work is left to the scheduler; HTTP metadata is restored even
     /// when the job fails.
-    pub(super) fn run_waited_calendar_job(&mut self, args: &[Value], receiver: Option<&Value>) -> Result<Option<Value>, Fault> {
-        if !self.document_write_allowed || self.scheduled_request
-            || args.len() != 2 || args[1].number()? != -1.0 { return Ok(None); }
-        let Some(Value::Object(queue)) = receiver else { return Ok(None) };
-        let Some(Value::Array(jobs)) = queue.borrow().get("aJobs").cloned() else { return Ok(None) };
+    pub(super) fn run_waited_calendar_job(
+        &mut self,
+        args: &[Value],
+        receiver: Option<&Value>,
+    ) -> Result<Option<Value>, Fault> {
+        if !self.document_write_allowed
+            || self.scheduled_request
+            || args.len() != 2
+            || args[1].number()? != -1.0
+        {
+            return Ok(None);
+        }
+        let Some(Value::Object(queue)) = receiver else {
+            return Ok(None);
+        };
+        let Some(Value::Array(jobs)) = queue.borrow().get("aJobs").cloned() else {
+            return Ok(None);
+        };
         let id = args[0].number()?;
         let job = jobs.borrow().values().find_map(|value| {
             let Value::Object(job) = value else { return None };
@@ -709,8 +753,14 @@ impl Runtime<'_> {
         });
         let Some(job) = job else { return Ok(None) };
         let pending = self.get("MP_AT_JOB_STATE_PENDING")?.number()?;
-        if !matches!(job.borrow().get("nJobState"), Some(Value::Number(n)) if *n == pending) { return Ok(None); }
-        let execute = job.borrow().get("_executeJob").cloned().ok_or("calendar job has no executor")?;
+        if !matches!(job.borrow().get("nJobState"), Some(Value::Number(n)) if *n == pending) {
+            return Ok(None);
+        }
+        let execute = job
+            .borrow()
+            .get("_executeJob")
+            .cloned()
+            .ok_or("calendar job has no executor")?;
         let request = self.get("Request")?;
         let mut fields = match &request {
             Value::ReadOnlyObject(fields) | Value::Object(fields) => fields.borrow().clone(),
@@ -730,12 +780,22 @@ impl Runtime<'_> {
         fields.insert("method".into(), Value::Null);
         let running = self.get("MP_AT_JOB_STATE_EXECUTES")?;
         job.borrow_mut().insert("nJobState".into(), running);
-        job.borrow_mut().insert("sJobStatus".into(), Value::String("выполняется".into()));
+        job.borrow_mut()
+            .insert("sJobStatus".into(), Value::String("выполняется".into()));
         let mutable_request = Value::Object(Rc::new(RefCell::new(fields)));
-        self.scopes[0].borrow_mut().insert("Request".into(), mutable_request.clone());
-        directory.borrow_mut().insert("Request".into(), mutable_request);
+        self.scopes[0]
+            .borrow_mut()
+            .insert("Request".into(), mutable_request.clone());
+        directory
+            .borrow_mut()
+            .insert("Request".into(), mutable_request);
         self.scheduled_request = true;
-        let result = self.call_host(execute, vec![], Some(Value::Object(job)), "_executeJob".into());
+        let result = self.call_host(
+            execute,
+            vec![],
+            Some(Value::Object(job)),
+            "_executeJob".into(),
+        );
         self.scheduled_request = false;
         *self.scopes[0].borrow_mut() = saved_globals;
         *directory.borrow_mut() = saved_directory;

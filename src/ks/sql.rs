@@ -622,7 +622,7 @@ impl Select {
                     .values()
                     .find(|f| f.name == *name)
                     .ok_or_else(|| format!("SQL field {name} absent from area {}", area.name))?;
-                if !matches!(f.kind, 1 | 2 | 3 | 5 | 8 | 12 | 13 | 14) {
+                if !matches!(f.kind, 1 | 2 | 3 | 4 | 5 | 8 | 12 | 13 | 14) {
                     return Err(format!(
                         "SQL projection for {name}, native type {}, is not implemented",
                         f.kind

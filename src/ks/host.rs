@@ -7,6 +7,16 @@ pub enum Handle {
     Statement(Rc<RefCell<Statement>>),
     Rows(Rc<RefCell<Rows>>),
 }
+impl Handle {
+    pub(crate) fn database_scope(&self) -> Option<u32> {
+        match self {
+            Self::Manager => None,
+            Self::Connection(c) => Some(c.borrow().scope),
+            Self::Statement(s) => Some(s.borrow().connection.borrow().scope),
+            Self::Rows(r) => Some(r.borrow().connection.borrow().scope),
+        }
+    }
+}
 #[derive(Debug)]
 pub struct Connection {
     closed: bool,
@@ -28,6 +38,7 @@ pub struct Rows {
     cells: Vec<Vec<ColumnValues>>,
     pub fulltext: crate::db::free_text::ResultData,
     position: i64,
+    page: Option<(usize, usize)>, // global start and native estimated row count
     closed: bool,
 }
 pub enum Arg {
@@ -129,6 +140,17 @@ pub fn script_query(sql: &str) -> Result<ScriptQuery, String> {
     result
 }
 impl Handle {
+    pub(super) fn object_page(
+        scope: u32,
+        page: super::database::ObjectPage,
+        sql: &str,
+    ) -> Result<Self, String> {
+        let result = Self::identities(scope, page.area, page.ids, sql)?;
+        if let Self::Rows(rows) = &result {
+            rows.borrow_mut().page = Some((page.start, page.estimated));
+        }
+        Ok(result)
+    }
     pub(super) fn identities(
         scope: u32,
         area: u16,
@@ -146,6 +168,7 @@ impl Handle {
             cells: Vec::new(),
             fulltext: Default::default(),
             position: -1,
+            page: None,
             closed: false,
         }))))
     }
@@ -218,7 +241,9 @@ impl Handle {
                             cells,
                             fulltext,
                         } = query(s.connection.borrow().scope, &s.sql)?;
-                        if oids.len() > super::sql::MAX_SQL_ROWS {
+                        // Identity-only cursors do not materialize cell arrays.
+                        // Area P paginates these even for millions of objects.
+                        if !cells.is_empty() && oids.len() > super::sql::MAX_SQL_ROWS {
                             return Err("SQL row limit".into());
                         }
                         if let Some(r) = s.result.take() {
@@ -232,6 +257,7 @@ impl Handle {
                             fulltext,
                             projection: script_query(&s.sql)?.projection,
                             position: -1,
+                            page: None,
                             closed: false,
                         }));
                         s.result = Some(r.clone());
@@ -279,7 +305,7 @@ impl Handle {
                             if !n.is_finite() || n.fract() != 0.0 || n.abs() > i32::MAX as f64 {
                                 return Err("invalid row index".into());
                             }
-                            *n as i64
+                            *n as i64 - r.page.map_or(0, |(start, _)| start as i64)
                         } else {
                             return Err("invalid cursor arguments".into());
                         };
@@ -511,7 +537,9 @@ impl Handle {
                             }
                         })
                     }
-                    "_getEstimatedSize" if args.is_empty() => Ok(V::Number(r.oids.len() as f64)),
+                    "_getEstimatedSize" if args.is_empty() => Ok(V::Number(
+                        r.page.map_or(r.oids.len(), |(_, total)| total) as f64,
+                    )),
                     _ => Err(format!("unsupported result method: {method}")),
                 }
             }

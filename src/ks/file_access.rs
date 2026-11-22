@@ -3,6 +3,17 @@ use super::*;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug)]
+pub(super) struct WriteFile {
+    pub name: String,
+    pub file: Rc<RefCell<std::fs::File>>,
+}
+impl WriteFile {
+    fn new(name: &str, file: std::fs::File) -> Rc<Self> {
+        Rc::new(Self { name: name.into(), file: Rc::new(RefCell::new(file)) })
+    }
+}
+
+#[derive(Debug)]
 pub(super) struct ReadFile {
     pub path: PathBuf,
     pub charset: RefCell<String>,
@@ -187,14 +198,55 @@ impl Runtime<'_> {
         Ok(destination)
     }
 
+    fn schedule_destination(&self, root: &Path, name: &str) -> Result<Option<PathBuf>, Fault> {
+        if self.schedule_export_allowed {
+            // XMLpath comes from the configured catalog snapshot, never from
+            // submitted form fields. Only the native daily schedule is writable.
+            let configured = self.request_baseline.as_ref()
+                .and_then(|(_,_,settings)| settings.get("XMLpath")).map(Value::text)
+                .filter(|s| !s.is_empty());
+            if let Some(configured) = configured {
+                let directory = root.join(configured.replace('\\', "/"));
+                let requested = root.join(name.replace('\\', "/"));
+                let leaf = requested.file_name().and_then(|s|s.to_str()).unwrap_or("");
+                if leaf.len() == 11 && leaf.starts_with("sud") && leaf.ends_with(".xml")
+                    && leaf.as_bytes()[3..7].iter().all(u8::is_ascii_digit)
+                    && !requested.components().any(|p|matches!(p,Component::ParentDir)) {
+                    let directory = directory.canonicalize().map_err(|e|script_io("XMLpath",&directory,e))?;
+                    let parent = requested.parent().ok_or("schedule file has no parent")?
+                        .canonicalize().map_err(|e|script_io("Schedule",&requested,e))?;
+                    if parent == directory && directory.is_dir() {
+                        let destination = directory.join(leaf);
+                        if let Ok(meta) = std::fs::symlink_metadata(&destination) {
+                            if !meta.is_file() || meta.file_type().is_symlink()
+                                || destination.canonicalize().map_err(|e|script_io("Schedule",&destination,e))?.parent() != Some(directory.as_path()) {
+                                return Err("Schedule destination is not a regular file".into());
+                            }
+                        }
+                        return Ok(Some(destination));
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
     pub(super) fn open_file(&self, name: &str, create: bool) -> Result<Value, Fault> {
         let root = self.file_root()?;
+        if create {
+            if let Some(destination) = self.schedule_destination(&root, name)? {
+                let file = std::fs::OpenOptions::new().read(true).write(true)
+                    .create(true).truncate(true).open(&destination)
+                    .map_err(|e|script_io("Schedule",&destination,e))?;
+                return Ok(Value::LogFile(WriteFile::new(name, file)));
+            }
+        }
         if let Some(path) = self.attachment_destination(name)? {
             if create {
                 if !self.attachment_write_allowed { return Err("attachment writes require authenticated registration".into()); }
                 let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true)
                     .open(&path).map_err(|e| script_io("Attachment",&path,e))?;
-                return Ok(Value::LogFile(Rc::new(RefCell::new(file))));
+                return Ok(Value::LogFile(WriteFile::new(name, file)));
             }
             let _ = std::fs::metadata(&path).map_err(|e|script_io("Attachment",&path,e))?;
             return Ok(Value::File(ReadFile::new(path)));
@@ -214,7 +266,7 @@ impl Runtime<'_> {
                     .truncate(true)
                     .open(&path)
                     .map_err(|e| script_io("Deletion archive", &path, e))?;
-                return Ok(Value::LogFile(Rc::new(RefCell::new(file))));
+                return Ok(Value::LogFile(WriteFile::new(name, file)));
             }
         }
         if let Some(relative) = log_relative(&root, name) {
@@ -242,7 +294,7 @@ impl Runtime<'_> {
                     .truncate(create)
                     .open(&destination)
                     .map_err(|e| script_io("log File", &destination, e))?;
-                return Ok(Value::LogFile(Rc::new(RefCell::new(file))));
+                return Ok(Value::LogFile(WriteFile::new(name, file)));
             }
         }
         if create {
@@ -282,6 +334,11 @@ impl Runtime<'_> {
         }
         let name = value.text();
         let root = self.file_root()?;
+        if operation == "Unlink" {
+            if let Some(path) = self.schedule_destination(&root, &name)? {
+                return Ok(Value::Bool(std::fs::remove_file(path).is_ok()));
+            }
+        }
         if let Some(path) = self.attachment_destination(&name)? {
             if !self.attachment_write_allowed { return Err("attachment changes require authenticated registration".into()); }
             let result = match operation {

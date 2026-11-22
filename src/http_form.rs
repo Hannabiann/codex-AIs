@@ -13,7 +13,7 @@ pub fn upload_route(target: &str) -> bool {
     matches!(path, "/20a" | "/20a/")
         && matches!(
             query.split('&').next(),
-            Some("savetempfile" | "regdelo" | "regdoc")
+            Some("savetempfile" | "regdelo" | "regdoc" | "ispravlenieForm")
         )
 }
 
@@ -100,7 +100,12 @@ pub fn decode_request(
         let value = &body[..end];
         if let Some(filename) = parameter("filename=") {
             if !filename.is_empty() {
-                if name != "datum"
+                if name
+                    != if command == "ispravlenieForm" {
+                        "filekod"
+                    } else {
+                        "datum"
+                    }
                     || uploads.iter().any(|f| f.name == name)
                     || fields.iter().any(|(k, _)| k == name)
                 {
@@ -178,11 +183,18 @@ fn add(
         let vacation = matches!(command, "makeVacation" | "newJudAndHoliday")
             && matches!(key.as_str(), "nm_numdoc" | "nm_deldoc")
             && value.parse::<u32>().is_ok_and(|n| n != 0)
-            && previous.split(';').all(|v| v.parse::<u32>().is_ok_and(|n| n != 0));
-        let user_groups = command == "users" && key == "grp"
+            && previous
+                .split(';')
+                .all(|v| v.parse::<u32>().is_ok_and(|n| n != 0));
+        let user_groups = command == "users"
+            && key == "grp"
             && value.parse::<u32>().is_ok_and(|n| n != 0)
-            && previous.split(';').all(|v| v.parse::<u32>().is_ok_and(|n| n != 0));
-        let multi = category || vacation || user_groups
+            && previous
+                .split(';')
+                .all(|v| v.parse::<u32>().is_ok_and(|n| n != 0));
+        let multi = category
+            || vacation
+            || user_groups
             || key == "tipdoc"
             || key == "prevdoc"
                 && value.parse::<u32>().is_ok_and(|n| n != 0)

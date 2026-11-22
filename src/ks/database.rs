@@ -7,17 +7,42 @@ pub struct Volume {
     pub title: String,
     pub update: u16,
 }
+pub struct ObjectPage {
+    pub area: u16,
+    pub ids: Vec<u32>,
+    pub start: usize,
+    pub estimated: usize,
+}
 pub enum DeleteError {
     Missing,
     ReadOnly,
     Failed(String),
 }
 impl From<String> for DeleteError {
-    fn from(message: String) -> Self { Self::Failed(message) }
+    fn from(message: String) -> Self {
+        Self::Failed(message)
+    }
 }
 pub trait DatabaseHost {
-    fn delete_document_from_volume(&mut self, _scope: u32, _oid: u32, _hole: bool, _volume: u32) -> Result<(), DeleteError> {
-        Err(DeleteError::Failed("Volume-specific document deletion is not configured".into()))
+    fn object_page(
+        &self,
+        _scope: u32,
+        _sql: &str,
+        _start: usize,
+        _size: usize,
+    ) -> Result<ObjectPage, String> {
+        Err("Paged object query is not configured".into())
+    }
+    fn delete_document_from_volume(
+        &mut self,
+        _scope: u32,
+        _oid: u32,
+        _hole: bool,
+        _volume: u32,
+    ) -> Result<(), DeleteError> {
+        Err(DeleteError::Failed(
+            "Volume-specific document deletion is not configured".into(),
+        ))
     }
     fn distribution_judges(&self, _scope: u32, _sql: &str) -> Result<Vec<u32>, String> {
         Err("Historical distribution catalog is not configured".into())
@@ -33,6 +58,17 @@ pub trait DatabaseHost {
     }
     fn volume_writable(&self, _scope: u32, _volume: u32) -> Result<bool, String> {
         Ok(false)
+    }
+    fn volume_schema(&self, _scope: u32, _volume: u32) -> Result<Schema, String> {
+        Err("Volume schema requires a mounted database".into())
+    }
+    fn import_document(
+        &mut self,
+        _scope: u32,
+        _volume: u32,
+        _record: &Record,
+    ) -> Result<(), String> {
+        Err("KOD import requires a writable database".into())
     }
     fn select_indexed(
         &self,
@@ -53,6 +89,9 @@ pub trait DatabaseHost {
         Err("Persistent document writes are not configured".into())
     }
     fn finish_profile(&self) {}
+    /// Detach contexts no longer reachable from the interpreter. Scope zero
+    /// belongs to the catalog and must always survive request cleanup.
+    fn retain_scopes(&mut self, _live: &std::collections::BTreeSet<u32>) {}
     fn schema_revision(&self) -> u64 {
         0
     }
@@ -150,7 +189,7 @@ pub trait DatabaseHost {
                     row.push(ColumnValues::Identity);
                     continue;
                 };
-                if matches!(kind, 8 | 14) {
+                if matches!(kind, 4 | 8 | 14) {
                     row.push(ColumnValues::StreamRef {
                         oid: *oid,
                         field: id,

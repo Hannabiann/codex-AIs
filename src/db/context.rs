@@ -1,4 +1,6 @@
 //! A mount table per KS DataBase. Remove detaches a mount, never deletes a file.
+#[path = "context_pages.rs"]
+mod context_pages;
 use super::{fields::Record, schema::Schema, Db4Engine, RecordLookup, VirtualDir};
 use crate::ks::{
     database::{DatabaseHost, Volume},
@@ -79,6 +81,7 @@ pub struct Contexts<E> {
     timings: Timings,
     schemas: RefCell<BTreeMap<u32, std::sync::Arc<Schema>>>,
     queries: RefCell<BTreeMap<(u32, String), Vec<u32>>>,
+    object_pages: RefCell<BTreeMap<(u32, String), context_pages::ObjectPages>>,
     records: RefCell<RecordCache>,
     fulltext: RefCell<BTreeMap<(u32, String), super::free_text::ResultData>>,
     word_statistics: RefCell<BTreeMap<(u32, String), u64>>,
@@ -180,6 +183,7 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
             timings: Timings::default(),
             schemas: RefCell::new(BTreeMap::new()),
             queries: RefCell::new(BTreeMap::new()),
+            object_pages: RefCell::new(BTreeMap::new()),
             fulltext: RefCell::new(BTreeMap::new()),
             word_statistics: RefCell::new(BTreeMap::new()),
             records: RefCell::new(RecordCache::default()),
@@ -226,6 +230,9 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
             .borrow_mut()
             .insert(scope, std::sync::Arc::new(schema));
         self.queries.borrow_mut().retain(|(s, _), _| *s != scope);
+        self.object_pages
+            .borrow_mut()
+            .retain(|(s, _), _| *s != scope);
         self.fulltext.borrow_mut().retain(|(s, _), _| *s != scope);
         self.word_statistics
             .borrow_mut()
@@ -379,6 +386,7 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
             self.record_mounts.borrow_mut().clear();
             *self.records.borrow_mut() = RecordCache::default();
             self.queries.borrow_mut().clear();
+            self.object_pages.borrow_mut().clear();
             self.fulltext.borrow_mut().clear();
             self.word_statistics.borrow_mut().clear();
         }
@@ -399,11 +407,69 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
     }
 }
 impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
+    fn volume_schema(&self, scope: u32, volume: u32) -> Result<Schema, String> {
+        self.mounts(scope)?
+            .iter()
+            .find(|m| m.volume.id == volume)
+            .map(|m| m.schema.clone())
+            .ok_or_else(|| "Volume is detached".into())
+    }
+    fn import_document(&mut self, scope: u32, volume: u32, record: &Record) -> Result<(), String> {
+        let mount = self
+            .mounts(scope)?
+            .iter()
+            .find(|m| m.volume.id == volume)
+            .ok_or("KOD target volume is not mounted")?;
+        if !mount.writable {
+            return Err("Выбранный том доступен только для чтения".into());
+        }
+        let area = mount
+            .schema
+            .areas
+            .get(&record.area)
+            .ok_or("Область объекта отсутствует в выбранном томе")?;
+        for field in record.fields.iter() {
+            // 1024 and 1100 are native metadata, not user-defined attributes.
+            if matches!(field.id, 1024 | 1100) && field.wire_type == 5 {
+                continue;
+            }
+            if !area
+                .fields
+                .get(&field.id)
+                .is_some_and(|f| f.kind == field.wire_type)
+            {
+                return Err(format!(
+                    "KOD: атрибут {} типа {} не соответствует структуре тома",
+                    field.id, field.wire_type
+                ));
+            }
+        }
+        let path = super::script_volume_path(&self.root, &mount.key);
+        if !path
+            .canonicalize()
+            .map_err(|e| e.to_string())?
+            .starts_with(self.root.canonicalize().map_err(|e| e.to_string())?)
+        {
+            return Err("DB4 write outside data root".into());
+        }
+        super::writer::kod::import(&path, record)?;
+        self.refresh_writes();
+        Ok(())
+    }
     fn volume_writable(&self, scope: u32, volume: u32) -> Result<bool, String> {
         Ok(self
             .mounts(scope)?
             .iter()
             .any(|m| m.volume.id == volume && m.writable))
+    }
+    fn object_page(
+        &self,
+        scope: u32,
+        sql: &str,
+        start: usize,
+        size: usize,
+    ) -> Result<crate::ks::database::ObjectPage, String> {
+        self.object_page_impl(scope, sql, start, size)
     }
     fn select_indexed(
         &self,
@@ -620,22 +686,42 @@ impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
         self.refresh_writes();
         Ok(())
     }
-    fn delete_document_from_volume(&mut self, scope: u32, oid: u32, hole: bool, volume: u32) -> Result<(), crate::ks::database::DeleteError> {
+    fn delete_document_from_volume(
+        &mut self,
+        scope: u32,
+        oid: u32,
+        hole: bool,
+        volume: u32,
+    ) -> Result<(), crate::ks::database::DeleteError> {
         use crate::ks::database::DeleteError;
         self.refresh_writes();
-        let mount = self.mounts(scope)?.iter().find(|m| m.volume.id == volume)
+        let mount = self
+            .mounts(scope)?
+            .iter()
+            .find(|m| m.volume.id == volume)
             .ok_or_else(|| DeleteError::Failed("Volume is not attached to this DataBase".into()))?;
         let path = super::script_volume_path(&self.root, &mount.key);
-        if !path.canonicalize().map_err(|e| e.to_string())?
-            .starts_with(self.root.canonicalize().map_err(|e| e.to_string())?) {
+        if !path
+            .canonicalize()
+            .map_err(|e| e.to_string())?
+            .starts_with(self.root.canonicalize().map_err(|e| e.to_string())?)
+        {
             return Err(DeleteError::Failed("DB4 deletion outside data root".into()));
         }
         // The KS helper probes every mount, including read-only archives. An
         // absent OID is different from an OID found in a read-only volume.
         let mut index = super::mainkey::MainKey::open(&path)?;
-        let entry = index.lookup_including_deleted(oid)?.ok_or(DeleteError::Missing)?;
-        if !mount.writable { return Err(DeleteError::ReadOnly); }
-        let expected = if entry.block == u32::MAX { None } else { Some(index.record(entry)?) };
+        let entry = index
+            .lookup_including_deleted(oid)?
+            .ok_or(DeleteError::Missing)?;
+        if !mount.writable {
+            return Err(DeleteError::ReadOnly);
+        }
+        let expected = if entry.block == u32::MAX {
+            None
+        } else {
+            Some(index.record(entry)?)
+        };
         drop(index);
         super::writer::delete(&path, oid, hole, expected.as_ref())?;
         self.refresh_writes();
@@ -654,12 +740,45 @@ impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
             );
         }
     }
+    fn retain_scopes(&mut self, live: &std::collections::BTreeSet<u32>) {
+        let keep = |scope: &u32| *scope == 0 || live.contains(scope);
+        let before = self.scopes.len();
+        self.scopes.retain(|scope, _| keep(scope));
+        if before == self.scopes.len() {
+            return;
+        }
+        self.schemas.borrow_mut().retain(|scope, _| keep(scope));
+        self.record_mounts
+            .borrow_mut()
+            .retain(|(scope, _), _| keep(scope));
+        self.queries
+            .borrow_mut()
+            .retain(|(scope, _), _| keep(scope));
+        self.object_pages
+            .borrow_mut()
+            .retain(|(scope, _), _| keep(scope));
+        self.fulltext
+            .borrow_mut()
+            .retain(|(scope, _), _| keep(scope));
+        self.word_statistics
+            .borrow_mut()
+            .retain(|(scope, _), _| keep(scope));
+        let mut records = self.records.borrow_mut();
+        if records.items.keys().any(|(scope, _)| !keep(scope))
+            || records.metadata.keys().any(|(scope, _)| !keep(scope))
+        {
+            *records = RecordCache::default();
+        }
+    }
     fn create(&mut self) -> Result<u32, String> {
         if self.scopes.len() >= 128 {
             return Err("DataBase context limit".into());
         }
         let id = self.next_scope;
-        self.next_scope += 1;
+        self.next_scope = self
+            .next_scope
+            .checked_add(1)
+            .ok_or("DataBase identity exhausted")?;
         self.scopes.insert(id, vec![]);
         Ok(id)
     }
@@ -689,7 +808,8 @@ impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
             scope,
             Mount {
                 writable: self.writable.contains(&super::volume_key(&key))
-                    || scope != 0 && (self.user_administration || !self.writable.is_empty())
+                    || scope != 0
+                        && (self.user_administration || !self.writable.is_empty())
                         && flags.first() == Some(&true),
                 volume: volume.clone(),
                 key,
@@ -714,6 +834,9 @@ impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
         mounts.remove(i);
         self.schemas.borrow_mut().remove(&scope);
         self.queries.borrow_mut().retain(|(s, _), _| *s != scope);
+        self.object_pages
+            .borrow_mut()
+            .retain(|(s, _), _| *s != scope);
         self.fulltext.borrow_mut().retain(|(s, _), _| *s != scope);
         self.word_statistics
             .borrow_mut()
@@ -921,6 +1044,7 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
         scope: u32,
         area: u16,
         predicate: &crate::ks::sql::BoundPredicate,
+        name_order: Option<bool>,
     ) -> Result<Vec<u32>, String> {
         use std::collections::{BTreeMap, BTreeSet};
         let mut by_mount = BTreeMap::new();
@@ -937,6 +1061,7 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
             by_mount.insert(mount.volume.id, ids);
         }
         let mut live = Vec::new();
+        let mut names = Vec::new();
         // Resolve the union in reverse mount order, including deletion markers.
         // A match from an old volume must not survive a newer nonmatching copy.
         for mount in self.mounts(scope)?.iter().rev() {
@@ -952,18 +1077,46 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
                     .ok_or("mounted volume missing from indexed readers")?,
             };
             let hits = &by_mount[&mount.volume.id];
+            let mut local = Vec::new();
             for entry in entries {
                 pending.remove(&entry.oid);
                 if entry.block != u32::MAX && hits.binary_search(&entry.oid).is_ok() {
                     live.push(entry.oid);
+                    if name_order.is_some() {
+                        local.push(entry.oid);
+                    }
                     self.cache_record_mount(scope, entry.oid, Some(mount.volume.id));
                 }
             }
+            if !local.is_empty() {
+                let path = super::script_volume_path(&self.root, &mount.key);
+                names.extend(super::mainkey::MainKey::open(&path)?.name_sort_keys(
+                    area,
+                    &local,
+                    name_order.unwrap(),
+                )?);
+            }
+        }
+        if let Some(descending) = name_order {
+            names.sort_unstable_by(|(a, ak), (b, bk)| {
+                let order = match (ak, bk) {
+                    (None, None) => std::cmp::Ordering::Equal,
+                    (None, _) => std::cmp::Ordering::Greater,
+                    (_, None) => std::cmp::Ordering::Less,
+                    (Some(a), Some(b)) => {
+                        let cmp = a.cmp(b);
+                        if descending {
+                            cmp.reverse()
+                        } else {
+                            cmp
+                        }
+                    }
+                };
+                order.then_with(|| a.cmp(b))
+            });
+            return Ok(names.into_iter().map(|(oid, _)| oid).collect());
         }
         live.sort_unstable();
-        if live.len() > crate::ks::sql::MAX_SQL_ROWS {
-            return Err("SQL row limit (1000000)".into());
-        }
         Ok(live)
     }
     fn query_select(&self, scope: u32, q: &crate::ks::sql::Select) -> Result<Vec<u32>, String> {
@@ -985,7 +1138,11 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
         }
         let ids = result?;
         let mut cache = self.queries.borrow_mut();
-        if cache.len() < 512 && cache.values().map(Vec::len).sum::<usize>() + ids.len() <= 2_000_000
+        // Admission budget in compact u32 identities, not a result-row limit.
+        // One full P-area list fits without rebuilding the sort on every page.
+        if cache.len() < 512
+            && cache.values().map(Vec::len).sum::<usize>() + ids.len()
+                <= 64 * 1024 * 1024 / std::mem::size_of::<u32>()
         {
             cache.insert(key, ids.clone());
         }
@@ -1149,13 +1306,40 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
             predicate
         }
         .bind(area)?;
+        // Area P requests SELECT OBJECT ORDER BY the name. Keep only identities
+        // and index keys; materialize the records that the KS cursor visits.
+        let name_order = q
+            .order
+            .first()
+            .filter(|(name, _)| {
+                !q.predicate.has_context()
+                    && q.order.len() == 1
+                    && area
+                        .fields
+                        .get(&1)
+                        .is_some_and(|f| f.name == *name && f.kind == 2)
+                    && self.mounts(scope).is_ok_and(|mounts| {
+                        mounts
+                            .iter()
+                            .filter_map(|m| m.schema.areas.get(&area.id))
+                            .all(|a| {
+                                a.fields
+                                    .get(&1)
+                                    .is_some_and(|f| f.kind == 2 && f.flags & 1 != 0)
+                            })
+                    })
+            })
+            .map(|(_, desc)| *desc);
         let (ids, indexed) = if let Some(ids) = predicate.oid_candidates() {
             (ids, false)
         } else {
-            (self.indexed_query(scope, area.id, &predicate)?, true)
+            (
+                self.indexed_query(scope, area.id, &predicate, name_order)?,
+                true,
+            )
         };
-        if ids.len() > crate::ks::sql::MAX_SQL_ROWS {
-            return Err("SQL row limit".into());
+        if indexed && name_order.is_some() {
+            return Ok(ids);
         }
         if indexed
             && q.order
@@ -1167,6 +1351,9 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
                 ids.reverse();
             }
             return Ok(ids);
+        }
+        if ids.len() > crate::ks::sql::MAX_SQL_ROWS {
+            return Err("SQL materialized row limit".into());
         }
         // Old index hits cannot override an updated record or a tombstone.
         let mut live = Vec::new();

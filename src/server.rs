@@ -411,11 +411,17 @@ fn route_inner(
         return Ok(match execute(dir, &record, &name) {
             Ok(html) => Response {
                 status: "200 OK",
-                mime: if name.to_ascii_lowercase().ends_with(".js") || name.eq_ignore_ascii_case("mp_js") {
+                mime: if name.to_ascii_lowercase().ends_with(".js")
+                    || name.eq_ignore_ascii_case("mp_js")
+                {
                     "application/javascript; charset=windows-1251"
-                } else if name.to_ascii_lowercase().ends_with(".css") || name.eq_ignore_ascii_case("mp_css") {
+                } else if name.to_ascii_lowercase().ends_with(".css")
+                    || name.eq_ignore_ascii_case("mp_css")
+                {
                     "text/css; charset=windows-1251"
-                } else { "text/html; charset=windows-1251" },
+                } else {
+                    "text/html; charset=windows-1251"
+                },
                 body: html,
                 location: None,
                 headers: Vec::new(),
@@ -503,6 +509,8 @@ fn lane(target: &str, method: &str) -> Lane {
     };
     // Only routes whose request-local state has been verified are replicated.
     // Job queues, custom scripts and the complete Word protocol keep one owner.
+    // User administration (/99 and /users) also stays on that owner: duplicate
+    // checks and the following DB4 writes must not interleave across workers.
     if matches!(
         name.as_str(),
         "DeleteObject"
@@ -1121,7 +1129,10 @@ async fn connection_request(
                         &content_type,
                         &request[header_end..header_end + content_length],
                     ) {
-                        Ok((fields, uploads)) => { context.uploads = uploads; fields },
+                        Ok((fields, uploads)) => {
+                            context.uploads = uploads;
+                            fields
+                        }
                         Err(e) => break message("400 Bad Request", e),
                     }
                 };

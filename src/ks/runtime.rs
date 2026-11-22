@@ -10,18 +10,24 @@ mod compiled_runtime;
 #[path = "path_settings.rs"]
 mod path_settings;
 
+#[path = "attachment_files.rs"]
+mod attachment_files;
 #[path = "context_mark.rs"]
 mod context_mark;
+#[path = "database_lifetime.rs"]
+mod database_lifetime;
 #[path = "decimal.rs"]
 pub(crate) mod decimal;
 #[path = "document_fields.rs"]
 mod document_fields;
+#[path = "p_edit.rs"]
+mod p_edit;
+#[path = "document_kod.rs"]
+mod document_kod;
 #[path = "document_write.rs"]
 mod document_write;
 #[path = "file_access.rs"]
 mod file_access;
-#[path = "attachment_files.rs"]
-mod attachment_files;
 #[path = "kjson.rs"]
 mod kjson;
 
@@ -111,7 +117,7 @@ enum Value {
     Signal(std::sync::Arc<super::signal::Signal>),
     SignalMethod(std::sync::Arc<super::signal::Signal>, String),
     HttpOutput,
-    LogFile(Rc<RefCell<std::fs::File>>),
+    LogFile(Rc<file_access::WriteFile>),
     LogMethod(Rc<RefCell<std::fs::File>>, String),
     Regex(regex::Regex),
     Mutex(Rc<RefCell<super::mutex::NamedMutex>>),
@@ -199,6 +205,7 @@ impl Value {
             Self::Volume(_, v) => v.name.clone(),
             Self::DirStat(e) => e.name.clone(),
             Self::File(p) => p.path.to_string_lossy().into_owned(),
+            Self::LogFile(p) => p.name.clone(),
             Self::AncestorDirectory(p) => p.to_string_lossy().into_owned(),
             Self::FilePath(s) => s.borrow().clone(),
             Self::Null => "".into(),
@@ -295,6 +302,12 @@ pub struct Runtime<'a> {
     document_vars: RefCell<HashMap<(u32, u32), Object>>,
     document_edits: RefCell<HashMap<(u32, u32), document_write::Edit>>,
     document_write_allowed: bool,
+    schedule_export_allowed: bool,
+    kod_snapshot_loaded: bool,
+    p_edit_guard_required: bool,
+    p_edit_submitted: std::collections::BTreeMap<String, String>,
+    p_edit_checked: Option<(u32, u32)>,
+    p_edit_snapshot: Option<(u32, u32, crate::db::fields::Record)>,
     scheduled_request: bool,
     registration_write_allowed: bool,
     attachment_write_allowed: bool,
@@ -362,6 +375,12 @@ impl<'a> Runtime<'a> {
             document_vars: Default::default(),
             document_edits: Default::default(),
             document_write_allowed: false,
+            schedule_export_allowed: false,
+            kod_snapshot_loaded: false,
+            p_edit_guard_required: false,
+            p_edit_submitted: Default::default(),
+            p_edit_checked: None,
+            p_edit_snapshot: None,
             scheduled_request: false,
             registration_write_allowed: false,
             attachment_write_allowed: false,
@@ -704,14 +723,18 @@ impl<'a> Runtime<'a> {
         if let Value::Function(f) = &obj {
             if key != "prototype" && !key.starts_with('\0') {
                 if let Some(Value::Object(prototype)) = f.properties.borrow().get("prototype") {
-                    if prototype.borrow().len() >= 10000 { return Err("function property limit".into()); }
+                    if prototype.borrow().len() >= 10000 {
+                        return Err("function property limit".into());
+                    }
                     prototype.borrow_mut().insert(key, v);
                     return Ok(());
                 }
             }
         }
         if let Value::File(file) = &obj {
-            if key != "CharSet" { return Err("file stream property is read-only".into()); }
+            if key != "CharSet" {
+                return Err("file stream property is read-only".into());
+            }
             let charset = v.text().to_lowercase();
             if !matches!(charset.as_str(), "windows-1251" | "utf-8") {
                 return Err("unsupported input stream charset".into());
@@ -728,6 +751,9 @@ impl<'a> Runtime<'a> {
     fn read_document(&self, oid: u32, scope: u32) -> Result<crate::db::fields::Record, Fault> {
         if let Some(d) = self.document_edits.borrow().get(&(scope, oid)) {
             return Ok(d.borrow().record());
+        }
+        if let Some((owner, id, record)) = &self.p_edit_snapshot {
+            if (*owner, *id) == (scope, oid) { return Ok(record.clone()); }
         }
         (if let Some(host) = &self.dbhost {
             host.borrow().read(scope, oid)?
@@ -752,7 +778,8 @@ impl<'a> Runtime<'a> {
     ) -> Result<crate::db::fields::RecordMetadata, Fault> {
         // Pending edits take precedence over the mounted snapshot, just as for
         // a full read. The metadata type cannot be saved as a full document.
-        if self.document_edits.borrow().contains_key(&(scope, oid)) || self.dbhost.is_none() {
+        if self.document_edits.borrow().contains_key(&(scope, oid)) || self.dbhost.is_none()
+            || self.p_edit_snapshot.as_ref().is_some_and(|(owner, id, _)| (*owner, *id) == (scope, oid)) {
             return Ok((&self.read_document(oid, scope)?).into());
         }
         self.dbhost
@@ -878,8 +905,13 @@ impl<'a> Runtime<'a> {
             let Some(field) = fields.next() else {
                 // Classifier entries may have no optional SignScript. Native
                 // Execute returns null for an absent attribute (e.g. letters).
-                if !rec.fields.iter().any(|f| f.id == attr) { return Ok(Value::Null); }
-                return Err("Document.Execute attribute has no source text; compiled KS execution required".into());
+                if !rec.fields.iter().any(|f| f.id == attr) {
+                    return Ok(Value::Null);
+                }
+                return Err(
+                    "Document.Execute attribute has no source text; compiled KS execution required"
+                        .into(),
+                );
             };
             if fields.next().is_some() {
                 return Err("Document.Execute source field is ambiguous".into());
@@ -1076,7 +1108,11 @@ impl<'a> Runtime<'a> {
             }
         }
         // Execute(source, this) may import members during a constructor.
-        if let Some(Value::Object(receiver)) = self.scopes.last().and_then(|s| s.borrow().get("this").cloned()) {
+        if let Some(Value::Object(receiver)) = self
+            .scopes
+            .last()
+            .and_then(|s| s.borrow().get("this").cloned())
+        {
             if let Some(value) = Self::property(&receiver, n)? {
                 return Ok(value);
             }
@@ -1100,7 +1136,10 @@ impl<'a> Runtime<'a> {
             }
         }
         match n {
-            "Shell" => Ok(Value::Object(Rc::new(RefCell::new(HashMap::from([("Execute".into(), Value::Native("attachment.shell".into()))]))))),
+            "Shell" => Ok(Value::Object(Rc::new(RefCell::new(HashMap::from([(
+                "Execute".into(),
+                Value::Native("attachment.shell".into()),
+            )]))))),
             "RegistryRoot" => Err(format!("{n}: host binding not configured").into()),
             "DriverManager" => Ok(Value::Host(super::host::Handle::Manager)),
             "null" | "undefined" => Ok(Value::Null),
@@ -1108,7 +1147,13 @@ impl<'a> Runtime<'a> {
             "false" => Ok(Value::Bool(false)),
             "StartProfile"
             | "__codex_LinkFields"
+            | "__codex_PEditVersion"
+            | "__codex_PEditCheck"
+            | "__codex_PEditPrepare"
+            | "__codex_PEditConflict"
+            | "__codex_ImportKod"
             | "__codex_DistributionJudges"
+            | "__codex_PAreaPage"
             | "StopProfile"
             | "escape"
             | "unescape"
@@ -1168,8 +1213,12 @@ impl<'a> Runtime<'a> {
             }
             if let Stmt::Function(n, args, b) = s {
                 let body = if synchronized {
-                    Rc::new(vec![Stmt::Synchronized(Box::new(Stmt::Block(b.as_ref().clone())))])
-                } else { b.clone() };
+                    Rc::new(vec![Stmt::Synchronized(Box::new(Stmt::Block(
+                        b.as_ref().clone(),
+                    )))])
+                } else {
+                    b.clone()
+                };
                 let f = self.function(None, args.clone(), body);
                 if let Value::Function(function) = &f {
                     function
@@ -1210,11 +1259,16 @@ impl<'a> Runtime<'a> {
                 return r;
             }
             Stmt::Synchronized(inner) => {
-                if matches!(inner.as_ref(), Stmt::Function(..)) { return Ok(Flow::Next); }
+                if matches!(inner.as_ref(), Stmt::Function(..)) {
+                    return Ok(Flow::Next);
+                }
                 // Several KS executors share the registry. In particular, the
                 // native incoming-number allocator protects a read/set pair
                 // with synchronized. A per-runtime lock would lose increments.
-                let name = format!("codex-KS-synchronized:{}", self.data_root.as_deref().unwrap_or(""));
+                let name = format!(
+                    "codex-KS-synchronized:{}",
+                    self.data_root.as_deref().unwrap_or("")
+                );
                 let mut lock = super::mutex::NamedMutex::new(&name)?;
                 lock.acquire(None)?;
                 return self.stmt(inner);
@@ -1400,11 +1454,17 @@ impl<'a> Runtime<'a> {
                     }
                     Value::Function(f) => {
                         let properties = f.properties.borrow();
-                        let mut keys = properties.keys().filter(|k| k.as_str() != "prototype" && !k.starts_with('\0')).cloned().collect::<Vec<_>>();
+                        let mut keys = properties
+                            .keys()
+                            .filter(|k| k.as_str() != "prototype" && !k.starts_with('\0'))
+                            .cloned()
+                            .collect::<Vec<_>>();
                         if let Some(Value::Object(prototype)) = properties.get("prototype") {
                             keys.extend(Self::keys(prototype)?);
                         }
-                        keys.sort(); keys.dedup(); keys
+                        keys.sort();
+                        keys.dedup();
+                        keys
                     }
                     Value::Array(o) => o
                         .borrow()
@@ -1419,7 +1479,9 @@ impl<'a> Runtime<'a> {
                         .filter(|(k, v)| !k.starts_with('\0') && !matches!(v, Value::Function(_)))
                         .map(|(k, _)| k.clone())
                         .collect(),
-                    _ => return Err(format!("for-in requires an object or array: {source:?}").into()),
+                    _ => {
+                        return Err(format!("for-in requires an object or array: {source:?}").into())
+                    }
                 };
                 keys.sort_by(|a, b| match (a.parse::<usize>(), b.parse::<usize>()) {
                     (Ok(a), Ok(b)) => a.cmp(&b),
@@ -1578,6 +1640,9 @@ impl<'a> Runtime<'a> {
             }
         }
         match (base, key.as_str()) {
+            (Value::Native(n), "ReadFromStream") if n == "Document" => {
+                Ok(Value::Native("Document.ReadFromStream".into()))
+            }
             (Value::EditDocument(d), _) => self.edit_property(d, key),
             (Value::WritableField(f), _) => self.writable_property(f, key),
             (
@@ -1683,7 +1748,9 @@ impl<'a> Runtime<'a> {
                     "length" => Ok(Value::Number((s.data.len() + s.encoded_extra) as f64)),
                     "CharSet" => Ok(Value::String(s.charset.clone())),
                     "read" | "readByte" | "readLine" | "reset" | "close" | "copyTo" | "Print"
-                    | "PrintS" | "write" | "skip" => Ok(Value::ReadStreamMethod(stream.clone(), key)),
+                    | "PrintS" | "write" | "skip" => {
+                        Ok(Value::ReadStreamMethod(stream.clone(), key))
+                    }
                     _ => Err(format!("unsupported input stream member {key}").into()),
                 }
             }
@@ -1701,7 +1768,7 @@ impl<'a> Runtime<'a> {
                 .get(&key)
                 .cloned()
                 .unwrap_or(Value::Null)),
-            (Value::LogFile(file), _) => Ok(Value::LogMethod(file, key)),
+            (Value::LogFile(file), _) => Ok(Value::LogMethod(file.file.clone(), key)),
             (Value::Document(_, scope), "Base") => self.database_for(scope),
             (Value::Document(oid, scope), "Volume") => Ok(Value::Volume(
                 scope,
@@ -1755,7 +1822,9 @@ impl<'a> Runtime<'a> {
             )),
             (Value::File(p), "CharSet") => Ok(Value::String(p.charset.borrow().clone())),
             (Value::File(p), _) => Ok(Value::FileMethod(p, key)),
-            (Value::AncestorDirectory(p), "isDirectory") => Ok(Value::FileMethod(file_access::ReadFile::new(p), key)),
+            (Value::AncestorDirectory(p), "isDirectory") => {
+                Ok(Value::FileMethod(file_access::ReadFile::new(p), key))
+            }
             (Value::AncestorDirectory(_), _) => Err(format!(
                 "File.{key}: ancestor directory supports only existence and isDirectory probes"
             )
@@ -1772,7 +1841,9 @@ impl<'a> Runtime<'a> {
             (Value::Function(f), "length") => Ok(Value::Number(f.params.len() as f64)),
             (Value::Function(f), _) => {
                 let properties = f.properties.borrow();
-                if let Some(value) = properties.get(&key) { return Ok(value.clone()); }
+                if let Some(value) = properties.get(&key) {
+                    return Ok(value.clone());
+                }
                 // K5 exposes class methods/metadata through both Ctor and
                 // Ctor.prototype. The participant wrappers use both spellings.
                 if let Some(Value::Object(prototype)) = properties.get("prototype") {
@@ -1842,6 +1913,15 @@ impl<'a> Runtime<'a> {
                     .find(|v| v.id == handle.id)
                     .ok_or_else(|| Fault::Script(Value::String("Volume is detached".into())))?;
                 match key.as_str() {
+                    "Struct" => {
+                        let Value::Database(db) =
+                            Self::database(&host.borrow().volume_schema(scope, v.id)?, scope)
+                        else {
+                            unreachable!()
+                        };
+                        let structure = db.borrow()["Struct"].clone();
+                        Ok(structure)
+                    }
                     "FileName" => Ok(Value::String(v.name)),
                     "toString" => Ok(Value::StringMethod(v.name, key)),
                     "name" => Ok(Value::String(v.title)),
@@ -2079,7 +2159,9 @@ impl<'a> Runtime<'a> {
                 if let Some(value) = Self::property(&o, &key)? {
                     return Ok(value);
                 }
-                if o.borrow().contains_key("\0json") { return Ok(Value::Null); }
+                if o.borrow().contains_key("\0json") {
+                    return Ok(Value::Null);
+                }
                 if o.borrow().len() >= 10000 {
                     return Err("KS object member limit".into());
                 }
@@ -2196,7 +2278,11 @@ impl<'a> Runtime<'a> {
                                 } else {
                                     self.eval(&args[0])?
                                 };
-                                let value = if matches!(value, Value::Null) { Value::String(String::new()) } else { value };
+                                let value = if matches!(value, Value::Null) {
+                                    Value::String(String::new())
+                                } else {
+                                    value
+                                };
                                 if !matches!(value, Value::String(_) | Value::FilePath(_)) {
                                     return Err("FilePath requires a string or FilePath".into());
                                 }
@@ -2222,13 +2308,16 @@ impl<'a> Runtime<'a> {
                                         for (i, x) in v.iter().enumerate() {
                                             let n = x.number()?;
                                             if !n.is_finite() || n.abs() > 10_000_000.0 {
-                                                return Err(Fault::Script(Value::String("Date component range".into())));
+                                                return Err(Fault::Script(Value::String(
+                                                    "Date component range".into(),
+                                                )));
                                             }
                                             p[i] = n as i64;
                                         }
                                         let date = super::date::Date::from_parts(p)
                                             .map_err(|e| Fault::Script(Value::String(e)))?;
-                                        date.check_calendar().map_err(|e| Fault::Script(Value::String(e)))?;
+                                        date.check_calendar()
+                                            .map_err(|e| Fault::Script(Value::String(e)))?;
                                         date
                                     }
                                     _ => {
@@ -2276,6 +2365,7 @@ impl<'a> Runtime<'a> {
                             "KodeksFormatParser"
                             | "KodeksDOMParser"
                             | "KodeksFormatHTMLWriter"
+                            | "KodeksFormatRTFWriter"
                             | "KodeksTextSections" => {
                                 let values = args
                                     .iter()
@@ -2435,6 +2525,11 @@ impl<'a> Runtime<'a> {
                                     0
                                 };
                                 let oid = value.number()?;
+                                // Native /users creates an unsaved UserBase
+                                // record with Document(0, UserBase).
+                                if oid == 0.0 && args.len() == 2 {
+                                    return self.new_edit_document_in(scope);
+                                }
                                 if !oid.is_finite()
                                     || oid <= 0.0
                                     || oid > u32::MAX as f64
@@ -2554,7 +2649,9 @@ impl<'a> Runtime<'a> {
                         }
                         Value::Function(f) => {
                             if key != "prototype" {
-                                if let Some(Value::Object(prototype)) = f.properties.borrow().get("prototype") {
+                                if let Some(Value::Object(prototype)) =
+                                    f.properties.borrow().get("prototype")
+                                {
                                     prototype.borrow_mut().remove(&key);
                                 }
                             }
@@ -2714,9 +2811,13 @@ impl<'a> Runtime<'a> {
                         Value::Function(f) => {
                             let properties = f.properties.borrow();
                             let key = x.text();
-                            let inherited = if let Some(Value::Object(prototype)) = properties.get("prototype") {
+                            let inherited = if let Some(Value::Object(prototype)) =
+                                properties.get("prototype")
+                            {
                                 Self::property(prototype, &key)?.is_some()
-                            } else { false };
+                            } else {
+                                false
+                            };
                             Ok(Value::Bool(properties.contains_key(&key) || inherited))
                         }
                         Value::Array(o)
@@ -3072,21 +3173,33 @@ impl<'a> Runtime<'a> {
                             {
                                 return Ok(Value::Null);
                             }
-                            if self.registration_write_allowed && id == reg.root
-                                && crate::db::writer::counters::NAMES.iter().any(|n| n.eq_ignore_ascii_case(name))
+                            if self.registration_write_allowed
+                                && id == reg.root
+                                && crate::db::writer::counters::NAMES
+                                    .iter()
+                                    .any(|n| n.eq_ignore_ascii_case(name))
                                 && old.kind == kind
                             {
                                 let next = value.text();
-                                if !next.parse::<u32>().ok().is_some_and(|n| (1..=i32::MAX as u32).contains(&n)) {
+                                if !next
+                                    .parse::<u32>()
+                                    .ok()
+                                    .is_some_and(|n| (1..=i32::MAX as u32).contains(&n))
+                                {
                                     return Err("Invalid registration counter value".into());
                                 }
-                                let root = self.data_root.as_deref().ok_or("Data directory missing")?;
-                                let path = std::path::Path::new(root).join("config.db4").canonicalize()
+                                let root =
+                                    self.data_root.as_deref().ok_or("Data directory missing")?;
+                                let path = std::path::Path::new(root)
+                                    .join("config.db4")
+                                    .canonicalize()
                                     .map_err(|e| e.to_string())?;
                                 let current = old.current_value(Some(root), true)?;
-                                crate::db::writer::counters::save_values(&path, id, &[
-                                    (old.oid, old.name.as_str(), current, next)
-                                ])?;
+                                crate::db::writer::counters::save_values(
+                                    &path,
+                                    id,
+                                    &[(old.oid, old.name.as_str(), current, next)],
+                                )?;
                                 return Ok(Value::Null);
                             }
                         }
@@ -3105,13 +3218,17 @@ impl<'a> Runtime<'a> {
                     .map_err(|e| Fault::Script(Value::String(e.to_string())))?;
                 match method.as_str() {
                     "copyTo" | "read" | "readByte" | "readLine" | "reset" | "skip" => {
-                        if !meta.is_file() || meta.len() > crate::http_form::MAX_UPLOAD_BODY as u64 {
+                        if !meta.is_file() || meta.len() > crate::http_form::MAX_UPLOAD_BODY as u64
+                        {
                             return Err("file stream size/type limit".into());
                         }
                         if file.stream.borrow().is_none() {
                             let Value::ReadStream(stream) = InputStream::value(
-                                &std::fs::read(path).map_err(|e| Fault::Script(Value::String(e.to_string())))?
-                            ) else { unreachable!() };
+                                &std::fs::read(path)
+                                    .map_err(|e| Fault::Script(Value::String(e.to_string())))?,
+                            ) else {
+                                unreachable!()
+                            };
                             *file.stream.borrow_mut() = Some(stream);
                         }
                         let stream = file.stream.borrow().as_ref().unwrap().clone();
@@ -3179,8 +3296,12 @@ impl<'a> Runtime<'a> {
                 let mut path = path.borrow_mut();
                 match method.as_str() {
                     "GetTempDirectory" if values.is_empty() => {
-                        *path = super::path::script_path(&self.attachment_temp_base()?.to_string_lossy());
-                        if !path.ends_with('/') { path.push('/'); }
+                        *path = super::path::script_path(
+                            &self.attachment_temp_base()?.to_string_lossy(),
+                        );
+                        if !path.ends_with('/') {
+                            path.push('/');
+                        }
                         Ok(Value::Null)
                     }
                     "MakeFullKodeksPath" => {
@@ -3622,9 +3743,10 @@ impl<'a> Runtime<'a> {
                         // Native KS yields no items for an empty list. Calendar
                         // forms split an absent oidsofdays parameter before saving.
                         if s.is_empty() {
-                            return Ok(Value::Array(Rc::new(RefCell::new(HashMap::from([
-                                ("length".into(), Value::Number(0.0)),
-                            ])))));
+                            return Ok(Value::Array(Rc::new(RefCell::new(HashMap::from([(
+                                "length".into(),
+                                Value::Number(0.0),
+                            )])))));
                         }
                         // The /99 SQL formatter supplies an empty string as
                         // its optional second argument and reads the second part.
@@ -3796,9 +3918,13 @@ impl<'a> Runtime<'a> {
                     if let [Value::LogFile(file)] = values.as_slice() {
                         use std::io::Write;
                         let mut source = stream.borrow_mut();
-                        if source.closed { return Err("stream closed".into()); }
-                        let mut file = file.borrow_mut();
-                        file.write_all(&source.data[source.position..]).and_then(|_|file.sync_all()).map_err(|e|e.to_string())?;
+                        if source.closed {
+                            return Err("stream closed".into());
+                        }
+                        let mut file = file.file.borrow_mut();
+                        file.write_all(&source.data[source.position..])
+                            .and_then(|_| file.sync_all())
+                            .map_err(|e| e.to_string())?;
                         source.position = source.data.len();
                         return Ok(Value::Null);
                     }
@@ -3862,7 +3988,7 @@ impl<'a> Runtime<'a> {
                     if b.is_some() {
                         s.position += 1;
                     }
-                    return Ok(Value::Number(b.map(|b| b as i8 as f64).unwrap_or(-1.0)));
+                    return Ok(Value::Number(b.map(|b| b as f64).unwrap_or(-1.0)));
                 }
                 let mut s = stream.borrow_mut();
                 if s.closed {
@@ -3874,7 +4000,11 @@ impl<'a> Runtime<'a> {
                             return Err("skip expects a byte count".into());
                         };
                         let n = count.number()?;
-                        if !n.is_finite() || n < 0.0 || n.fract() != 0.0 || n > 16.0 * 1024.0 * 1024.0 {
+                        if !n.is_finite()
+                            || n < 0.0
+                            || n.fract() != 0.0
+                            || n > 16.0 * 1024.0 * 1024.0
+                        {
                             return Err("stream skip limit".into());
                         }
                         // Stored text length includes encoding markers. Seeking
@@ -4066,20 +4196,25 @@ impl<'a> Runtime<'a> {
                     let record = self.read_document(oid, scope)?;
                     let mut bytes = oid.to_le_bytes().to_vec();
                     bytes.extend(crate::db::writer::encode_record(&record)?);
-                    let mut file = file.borrow_mut();
+                    let mut file = file.file.borrow_mut();
                     file.write_all(&bytes)
                         .and_then(|_| file.sync_all())
                         .map_err(|e| e.to_string())?;
                     return Ok(Value::Null);
                 }
                 if method == "Delete" {
+                    if self.kod_snapshot_loaded {
+                        return Err("KOD replacement requires the atomic import adapter; this stored form revision is unsupported".into());
+                    }
                     if !self.document_write_allowed {
                         return Err(
                             "Document deletion requires an authenticated editing request".into(),
                         );
                     }
                     if values.len() > 2 {
-                        return Err("Document.Delete expects optional marker flag and volume array".into());
+                        return Err(
+                            "Document.Delete expects optional marker flag and volume array".into(),
+                        );
                     }
                     if self.document_edits.borrow().contains_key(&(scope, oid)) {
                         return Err("Cannot delete a locked document".into());
@@ -4089,22 +4224,53 @@ impl<'a> Runtime<'a> {
                             return Err("Document.Delete requires a volume array".into());
                         };
                         let volumes = volumes.borrow();
-                        let count = volumes.get("length").ok_or("Volume array length missing")?.number()? as usize;
-                        if count == 0 { return Err("Document.Delete volume array is empty".into()); }
-                        let ids = (0..count).map(|i| match volumes.get(&i.to_string()) {
-                            Some(Value::Volume(owner, v)) if *owner == scope => Ok(v.id),
-                            _ => Err("Volume belongs to another DataBase or is invalid"),
-                        }).collect::<Result<Vec<_>, _>>()?;
+                        let count = volumes
+                            .get("length")
+                            .ok_or("Volume array length missing")?
+                            .number()? as usize;
+                        if count == 0 {
+                            return Err("Document.Delete volume array is empty".into());
+                        }
+                        let ids = (0..count)
+                            .map(|i| match volumes.get(&i.to_string()) {
+                                Some(Value::Volume(owner, v)) if *owner == scope => Ok(v.id),
+                                _ => Err("Volume belongs to another DataBase or is invalid"),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
                         for id in ids {
                             use super::database::DeleteError;
-                            self.dbhost.as_ref().ok_or("Document writer missing")?.borrow_mut()
+                            self.dbhost
+                                .as_ref()
+                                .ok_or("Document writer missing")?
+                                .borrow_mut()
                                 .delete_document_from_volume(scope, oid, values[0].truth(), id)
                                 .map_err(|e| match e {
                                     DeleteError::Failed(message) => Fault::Host(message),
-                                    e => Fault::Script(Value::Object(Rc::new(RefCell::new(HashMap::from([
-                                        ("Code".into(), Value::Number(if matches!(e, DeleteError::Missing) {695.0} else {785.0})),
-                                        ("errText".into(), Value::String(if matches!(e, DeleteError::Missing) {"Object absent from selected volume"} else {"Selected volume is read-only"}.into())),
-                                    ]))))),
+                                    e => Fault::Script(Value::Object(Rc::new(RefCell::new(
+                                        HashMap::from([
+                                            (
+                                                "Code".into(),
+                                                Value::Number(
+                                                    if matches!(e, DeleteError::Missing) {
+                                                        695.0
+                                                    } else {
+                                                        785.0
+                                                    },
+                                                ),
+                                            ),
+                                            (
+                                                "errText".into(),
+                                                Value::String(
+                                                    if matches!(e, DeleteError::Missing) {
+                                                        "Object absent from selected volume"
+                                                    } else {
+                                                        "Selected volume is read-only"
+                                                    }
+                                                    .into(),
+                                                ),
+                                            ),
+                                        ]),
+                                    )))),
                                 })?;
                         }
                         return Ok(Value::Bool(true));
@@ -4262,6 +4428,17 @@ impl<'a> Runtime<'a> {
                         )?;
                         if matches!(value, Value::Null) {
                             InputStream::value(&[])
+                        } else if kind == 4 {
+                            // JDBC getAsciiStream exposes the text characters,
+                            // not the stored KText formatting delimiters.
+                            let field = match value {
+                                Value::StoredField(field) => field,
+                                Value::WritableField(field) => field.snapshot()?,
+                                _ => return Err("SQL text stream requires a text field".into()),
+                            };
+                            let plain: Vec<u8> = crate::document::bytes(field.data())?
+                                .iter().copied().filter(|b| !matches!(b, 0 | 1)).collect();
+                            InputStream::value(&plain)
                         } else {
                             self.member(value, "Stream".into())?
                         }
@@ -4510,6 +4687,12 @@ impl<'a> Runtime<'a> {
                 }
             }
             Value::Native(n) => match n.as_str() {
+                "Document.ReadFromStream" => self.read_kod_document(&values),
+                "__codex_PEditVersion" => self.p_edit_version(&values),
+                "__codex_PEditCheck" => self.p_edit_check(&values),
+                "__codex_PEditPrepare" => self.p_edit_prepare(&values),
+                "__codex_PEditConflict" => self.p_edit_conflict(&values),
+                "__codex_ImportKod" => self.import_kod_document(&values),
                 "attachment.shell" => self.attachment_shell(&values),
                 "report.text.set_fonts" => self.report_set_font_attributes(receiver, &values),
                 "MkDir" | "Unlink" | "RmDir" => self.log_path_operation(&n, &values),
@@ -4534,6 +4717,7 @@ impl<'a> Runtime<'a> {
                 "path.SaveState" => self.save_path_settings(receiver, &values, false),
                 "path.SaveCalendarAccess" => self.save_path_settings(receiver, &values, true),
                 "field.InsertText" => self.writable_insert_text(receiver, &values),
+                "field.FromStream" => self.writable_from_stream(receiver, &values),
                 "xml.Parse" => self.xml_parse(receiver, &values),
                 "xml.SetEncoding" => {
                     let [value] = values.as_slice() else {
@@ -4623,6 +4807,40 @@ impl<'a> Runtime<'a> {
                     };
                     let value = info.borrow().get(&key).cloned().unwrap_or(Value::Null);
                     Ok(value)
+                }
+                "__codex_PAreaPage" => {
+                    if values.len() != 4 {
+                        return Err(
+                            "P-area query expects database, SQL, offset and page size".into()
+                        );
+                    }
+                    let Value::Database(base) = &values[0] else {
+                        return Err("P-area database missing".into());
+                    };
+                    let scope = Self::db_scope(base)?;
+                    let start = values[2].number()?;
+                    let size = values[3].number()?;
+                    if !start.is_finite()
+                        || start < 0.0
+                        || start > i32::MAX as f64
+                        || start.fract() != 0.0
+                        || !size.is_finite()
+                        || size < 1.0
+                        || size > 500.0
+                        || size.fract() != 0.0
+                    {
+                        return Err("Invalid P-area page range".into());
+                    }
+                    let sql = values[1].text();
+                    let host = self
+                        .dbhost
+                        .as_ref()
+                        .ok_or("Database host missing")?
+                        .borrow();
+                    let page = host.object_page(scope, &sql, start as usize, size as usize)?;
+                    Ok(Value::Host(super::host::Handle::object_page(
+                        scope, page, &sql,
+                    )?))
                 }
                 "__codex_DistributionJudges" => {
                     if values.len() != 1 {
@@ -4899,7 +5117,9 @@ impl<'a> Runtime<'a> {
                     let [value] = values.as_slice() else {
                         return Err("KJSON.stringify expects one value".into());
                     };
-                    kjson::stringify(value).map(Value::String).map_err(Fault::from)
+                    kjson::stringify(value)
+                        .map(Value::String)
+                        .map_err(Fault::from)
                 }
                 "String" => Ok(Value::String(
                     values.first().map(Value::text).unwrap_or_default(),
@@ -5013,7 +5233,10 @@ impl<'a> Runtime<'a> {
             Value::Number(n)
                 if label == "length"
                     && values.is_empty()
-                    && matches!(receiver, Some(Value::File(_))) =>
+                    && matches!(
+                        receiver,
+                        Some(Value::File(_) | Value::ReadStream(_) | Value::HttpOutput)
+                    ) =>
             {
                 Ok(Value::Number(n))
             }

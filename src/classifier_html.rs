@@ -6,8 +6,12 @@ pub fn adapt(html: String, object: &str) -> String {
         // The native helper replaces an existing hidden input by default.
         // Each removed vacation row must append its OID instead.
         regex::Regex::new(r#"js_addFormHidden\(\s*"nm_deldoc"\s*,\s*numdoc\s*\);"#)
-            .unwrap().replace_all(&html, "js_addFormHidden(\"nm_deldoc\",numdoc,false);").into_owned()
-    } else { html };
+            .unwrap()
+            .replace_all(&html, "js_addFormHidden(\"nm_deldoc\",numdoc,false);")
+            .into_owned()
+    } else {
+        html
+    };
     let html = if object == "regassessors" {
         // Native row numbers are also submitted field suffixes. Reusing one
         // after deleting a preceding row loses dates and produces duplicates.
@@ -37,7 +41,9 @@ pub fn adapt(html: String, object: &str) -> String {
                 });
             });
 "#.to_owned()).into_owned()
-    } else { html };
+    } else {
+        html
+    };
     // Match one listener before inspecting its callback. A single regex that
     // searches for a classifier callback across arbitrary text can start at a
     // preceding calendar listener and swallow whole JavaScript functions.
@@ -53,6 +59,33 @@ pub fn adapt(html: String, object: &str) -> String {
     .unwrap();
     let mut html = listener
         .replace_all(&html, |c: &regex::Captures| {
+            if object == "ispravlenieForm" {
+                let editor_calendar = c[0].contains("callbackDialog(childWindow.returnValue, oName, inputInnerId, oSelect, oType)");
+                let editor_classifier = c[0].contains("callbackDialogClassif(childWindow.returnValue, oName, oInnerId, oSelect, childWindow.dialogArguments)");
+                if editor_calendar || editor_classifier {
+                    let (kind, call, extra) = if editor_calendar {
+                        ("calendar", "callbackDialog(event.data.value, name, input, select, args);", "inputInnerId, oSelect, oType")
+                    } else {
+                        ("classifier", "args[2] = event.data.changed ? 1 : 0; callbackDialogClassif(event.data.value, name, input, select, args);", "oInnerId, oSelect, vFeatures")
+                    };
+                    return format!(r#"
+                    (function(child, name, input, select, args) {{
+                        function receive(event) {{
+                            if(event.origin !== location.origin || event.source !== child ||
+                                !event.data || event.data.kind !== 'kodeks-{kind}-result') return;
+                            window.removeEventListener('message', receive); clearInterval(cleanup);
+                            {call}
+                        }}
+                        window.addEventListener('message', receive);
+                        var cleanup=setInterval(function() {{ if(child.closed) {{
+                            clearInterval(cleanup); setTimeout(function() {{
+                                window.removeEventListener('message', receive);
+                            }}, 1000);
+                        }} }}, 1000);
+                    }})(childWindow, oName, {extra});
+                    "#);
+                }
+            }
             let callback_match = callback.captures(&c[0]);
             let (kind, callback_name, argument, changed) =
                 if let Some(callback_match) = &callback_match {

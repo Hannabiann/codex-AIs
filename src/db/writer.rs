@@ -3,6 +3,8 @@ use super::fields::{Field, Record, Value, MAX_FIELD};
 use std::io::Write;
 #[path = "writer_counters.rs"]
 pub(crate) mod counters;
+#[path = "writer_kod.rs"]
+pub(crate) mod kod;
 #[path = "writer_settings.rs"]
 pub(crate) mod settings;
 #[path = "writer_user_index.rs"]
@@ -97,9 +99,7 @@ pub(crate) fn encode_record(record: &Record) -> Result<Vec<u8>, String> {
     }
     let is_scalar = |field: &Field| !matches!(field.wire_type, 4 | 8 | 14);
     let scalars = record.fields.iter().take_while(|f| is_scalar(f)).count();
-    if record.flags as usize != scalars
-        || record.fields[scalars..].iter().any(is_scalar)
-    {
+    if record.flags as usize != scalars || record.fields[scalars..].iter().any(is_scalar) {
         // Native readers use this count independently of the total field count.
         // A stale header can round-trip through our full decoder yet make kodweb
         // read beyond the intended fields. Callers must canonicalize after edits.
@@ -815,7 +815,11 @@ impl Image {
             return Ok(0);
         }
         let largest = items.iter().map(Vec::len).max().unwrap();
-        let capacity = if area == 65535 && attr == 2 { 4085 } else { 4089 };
+        let capacity = if area == 65535 && attr == 2 {
+            4085
+        } else {
+            4089
+        };
         let leaf = (capacity - 7) / (largest + if variable { 2 } else { 0 });
         let branch = (capacity - 11) / (largest + 4 + if variable { 2 } else { 0 });
         if leaf < 2 || branch < 2 {
@@ -925,10 +929,13 @@ impl Image {
         if area == 65535 && attr == 2 {
             // Native word readers require S frames, even for an uncompressed
             // payload. A plain L frame is readable here but rejected by kodweb.
-            if body.len() > 4085 { return Err("DB40 word index node overflow".into()); }
+            if body.len() > 4085 {
+                return Err("DB40 word index node overflow".into());
+            }
             let length = (body.len() as u16).to_le_bytes();
             let mut framed = length.to_vec();
-            framed.extend(length); framed.extend(body);
+            framed.extend(length);
+            framed.extend(body);
             return Ok(self.frame(b'S', &framed)?.0);
         }
         body.resize(4089, 0);
