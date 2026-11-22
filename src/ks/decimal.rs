@@ -229,13 +229,7 @@ impl Decimal {
                 .ok_or_else(overflow)?;
                 Self { coefficient, scale }
             }
-            "*" => Self {
-                coefficient: self
-                    .coefficient
-                    .checked_mul(other.coefficient)
-                    .ok_or_else(overflow)?,
-                scale: self.scale + other.scale,
-            },
+            "*" => self.multiply(other)?,
             "/" => {
                 if other.coefficient == 0 {
                     return Err("LongDouble division by zero".into());
@@ -263,6 +257,41 @@ impl Decimal {
             return Err(overflow());
         }
         Ok(result)
+    }
+    fn multiply(self, other: Self) -> Result<Self, String> {
+        if let Some(coefficient) = self.coefficient.checked_mul(other.coefficient) {
+            let value = Self { coefficient, scale: self.scale + other.scale }.normalize();
+            if value.scale <= 28 { return Ok(value); }
+        }
+        // Keep the complete intermediate product: fractional coefficients can
+        // overflow i128 even when the value (for example a probability) is small.
+        let a = self.coefficient.unsigned_abs().to_string();
+        let b = other.coefficient.unsigned_abs().to_string();
+        let mut digits = vec![0u32; a.len() + b.len()];
+        for (i, x) in a.bytes().rev().enumerate() {
+            for (j, y) in b.bytes().rev().enumerate() {
+                digits[i + j] += u32::from(x - b'0') * u32::from(y - b'0');
+            }
+        }
+        for i in 0..digits.len() - 1 {
+            digits[i + 1] += digits[i] / 10;
+            digits[i] %= 10;
+        }
+        while digits.len() > 1 && digits.last() == Some(&0) { digits.pop(); }
+        let scale = self.scale + other.scale;
+        let drop = scale.saturating_sub(28).max(digits.len().saturating_sub(38) as u32);
+        if drop > scale { return Err("LongDouble precision overflow".into()); }
+        let mut coefficient = 0i128;
+        for &digit in digits.iter().skip(drop as usize).rev() {
+            coefficient = coefficient.checked_mul(10)
+                .and_then(|n| n.checked_add(digit as i128))
+                .ok_or("LongDouble precision overflow")?;
+        }
+        if drop > 0 && digits.get(drop as usize - 1).copied().unwrap_or(0) >= 5 {
+            coefficient = coefficient.checked_add(1).ok_or("LongDouble precision overflow")?;
+        }
+        if (self.coefficient < 0) != (other.coefficient < 0) { coefficient = -coefficient; }
+        Ok(Self { coefficient, scale: scale - drop }.normalize())
     }
     pub fn formatted(self, places: u32) -> Result<String, String> {
         if places > 28 {

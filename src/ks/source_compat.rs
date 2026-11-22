@@ -82,7 +82,18 @@ const DISTRIBUTION_CATEGORIES_ID: (usize, [u8; 32]) = (
     ],
 );
 
+const RESTORE_KP_ID: (usize, [u8; 32]) = (
+    14302,
+    [184, 24, 249, 122, 216, 101, 252, 140, 168, 206, 166, 55, 77, 160, 237, 127,
+     250, 123, 68, 9, 41, 207, 158, 174, 109, 218, 110, 3, 137, 137, 116, 19],
+);
+
 pub fn request_source<'a>(name: &str, source: &'a str) -> Cow<'a, str> {
+    if name == "restorekp" && matches_source(source, RESTORE_KP_ID) {
+        return Cow::Owned(source.replace(
+            "mp_dosql ( sGetJudOids )", "__codex_DistributionJudges( sGetJudOids )",
+        ));
+    }
     // Match the native category editor's historical classifier membership.
     if name == "raspredkategory" && matches_source(source, DISTRIBUTION_CATEGORIES_ID) {
         let mut updated = source

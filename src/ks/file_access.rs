@@ -1,6 +1,18 @@
-//! KS file access: data stays read-only; the logical log subtree is redirected.
+//! KS file access with scoped log, deletion archive and attachment writes.
 use super::*;
 use std::path::{Component, Path, PathBuf};
+
+#[derive(Debug)]
+pub(super) struct ReadFile {
+    pub path: PathBuf,
+    pub charset: RefCell<String>,
+    pub stream: RefCell<Option<Rc<RefCell<InputStream>>>>,
+}
+impl ReadFile {
+    pub fn new(path: PathBuf) -> Rc<Self> {
+        Rc::new(Self { path, charset: RefCell::new("windows-1251".into()), stream: RefCell::new(None) })
+    }
+}
 
 fn script_io(operation: &str, path: &Path, error: std::io::Error) -> Fault {
     Fault::Script(Value::String(format!(
@@ -177,6 +189,16 @@ impl Runtime<'_> {
 
     pub(super) fn open_file(&self, name: &str, create: bool) -> Result<Value, Fault> {
         let root = self.file_root()?;
+        if let Some(path) = self.attachment_destination(name)? {
+            if create {
+                if !self.attachment_write_allowed { return Err("attachment writes require authenticated registration".into()); }
+                let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true)
+                    .open(&path).map_err(|e| script_io("Attachment",&path,e))?;
+                return Ok(Value::LogFile(Rc::new(RefCell::new(file))));
+            }
+            let _ = std::fs::metadata(&path).map_err(|e|script_io("Attachment",&path,e))?;
+            return Ok(Value::File(ReadFile::new(path)));
+        }
         if create {
             if let Some(path) = self.deletion_destination(&root, name)? {
                 if !path
@@ -204,7 +226,7 @@ impl Runtime<'_> {
                     let meta = std::fs::metadata(&destination)
                         .map_err(|e| script_io("log File", &destination, e))?;
                     if meta.is_dir() {
-                        return Ok(Value::File(destination));
+                        return Ok(Value::File(ReadFile::new(destination)));
                     }
                 }
                 if !relative
@@ -244,7 +266,7 @@ impl Runtime<'_> {
             )
             .into());
         }
-        Ok(Value::File(path))
+        Ok(Value::File(ReadFile::new(path)))
     }
 
     pub(super) fn log_path_operation(
@@ -260,6 +282,16 @@ impl Runtime<'_> {
         }
         let name = value.text();
         let root = self.file_root()?;
+        if let Some(path) = self.attachment_destination(&name)? {
+            if !self.attachment_write_allowed { return Err("attachment changes require authenticated registration".into()); }
+            let result = match operation {
+                "MkDir" => std::fs::create_dir(&path),
+                "Unlink" => std::fs::remove_file(&path),
+                "RmDir" => std::fs::remove_dir(&path),
+                _ => unreachable!(),
+            };
+            return Ok(Value::Bool(result.is_ok()));
+        }
         if operation == "MkDir" {
             if let Some(path) = self.deletion_destination(&root, &name)? {
                 return Ok(Value::Bool(std::fs::create_dir(&path).is_ok()));
@@ -274,6 +306,7 @@ impl Runtime<'_> {
         let destination = self.log_destination(&root, &relative)?;
         let result = match operation {
             "MkDir" => std::fs::create_dir(&destination),
+            "RmDir" => std::fs::remove_dir(&destination),
             "Unlink" => {
                 if !relative
                     .extension()

@@ -5,6 +5,8 @@ use std::io::Write;
 pub(crate) mod counters;
 #[path = "writer_settings.rs"]
 pub(crate) mod settings;
+#[path = "writer_user_index.rs"]
+mod user_index;
 
 /// VirtualText containing one unformatted run. Native ToStream requires
 /// the object descriptor even when there are no styles or embedded images.
@@ -92,6 +94,16 @@ fn zlib(out: &mut Vec<u8>, data: &[u8]) -> Result<(), String> {
 pub(crate) fn encode_record(record: &Record) -> Result<Vec<u8>, String> {
     if record.fields.is_empty() || record.fields.len() > u16::MAX as usize {
         return Err("DB40 field count limit".into());
+    }
+    let is_scalar = |field: &Field| !matches!(field.wire_type, 4 | 8 | 14);
+    let scalars = record.fields.iter().take_while(|f| is_scalar(f)).count();
+    if record.flags as usize != scalars
+        || record.fields[scalars..].iter().any(is_scalar)
+    {
+        // Native readers use this count independently of the total field count.
+        // A stale header can round-trip through our full decoder yet make kodweb
+        // read beyond the intended fields. Callers must canonicalize after edits.
+        return Err("DB40 scalar header/order mismatch; canonicalize the edited record".into());
     }
     let mut out = Vec::new();
     out.extend(record.area.to_le_bytes());
@@ -803,8 +815,9 @@ impl Image {
             return Ok(0);
         }
         let largest = items.iter().map(Vec::len).max().unwrap();
-        let leaf = (4089 - 7) / (largest + if variable { 2 } else { 0 });
-        let branch = (4089 - 11) / (largest + 4 + if variable { 2 } else { 0 });
+        let capacity = if area == 65535 && attr == 2 { 4085 } else { 4089 };
+        let leaf = (capacity - 7) / (largest + if variable { 2 } else { 0 });
+        let branch = (capacity - 11) / (largest + 4 + if variable { 2 } else { 0 });
         if leaf < 2 || branch < 2 {
             return Err("DB40 index key exceeds node capacity".into());
         }
@@ -909,6 +922,15 @@ impl Image {
         if body.len() > 4089 {
             return Err("DB40 index node overflow".into());
         }
+        if area == 65535 && attr == 2 {
+            // Native word readers require S frames, even for an uncompressed
+            // payload. A plain L frame is readable here but rejected by kodweb.
+            if body.len() > 4085 { return Err("DB40 word index node overflow".into()); }
+            let length = (body.len() as u16).to_le_bytes();
+            let mut framed = length.to_vec();
+            framed.extend(length); framed.extend(body);
+            return Ok(self.frame(b'S', &framed)?.0);
+        }
         body.resize(4089, 0);
         Ok(self.frame(b'L', &body)?.0)
     }
@@ -991,14 +1013,14 @@ fn oid_map(ids: impl Iterator<Item = u32>) -> Vec<u8> {
     out.resize((out.len() + 7).div_ceil(1024) * 1024 - 7, 0);
     out
 }
-fn decimal_key(value: &[u8; 34]) -> Vec<u8> {
+pub(super) fn decimal_key(value: &[u8; 34]) -> Vec<u8> {
     let mut out = Vec::with_capacity(32);
     for (src, n) in [(&value[..26], 25), (&value[26..], 7)] {
         out.extend((0..n).map(|i| src[if i == n - 1 { i } else { i ^ 1 }]));
     }
     out
 }
-fn decimal_cmp(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
+pub(super) fn decimal_cmp(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
     fn normalized(b: &[u8]) -> (i8, i64, [u8; 24]) {
         let negative = b[0] == 255;
         let mut m: [u8; 24] = b[1..25].try_into().unwrap();

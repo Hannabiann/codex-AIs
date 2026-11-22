@@ -5,6 +5,7 @@ impl Runtime<'_> {
         &mut self,
         receiver: Option<Value>,
         values: &[Value],
+        calendar_access: bool,
     ) -> Result<Value, Fault> {
         if !values.is_empty() || !self.document_write_allowed {
             return Err("SaveState requires authenticated settings POST".into());
@@ -35,7 +36,11 @@ impl Runtime<'_> {
         let path = std::path::Path::new(self.data_root.as_deref().ok_or("data root missing")?)
             .join("config.db4");
         let object = object.borrow();
-        let names = crate::vm::distribution::setting_names();
+        let names = if calendar_access {
+            vec!["AccessByUserForMakeVacation"]
+        } else {
+            crate::vm::distribution::setting_names()
+        };
         let current = crate::db::writer::settings::read(&path, parent, &names)?;
         let mut updates = Vec::new();
         for name in names {

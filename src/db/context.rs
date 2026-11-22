@@ -66,6 +66,7 @@ fn conflict_text<'a>(
 }
 pub struct Contexts<E> {
     writable: std::collections::BTreeSet<String>,
+    user_administration: bool,
     write_epoch: Cell<u64>,
     engine: E,
     extra: Db4Engine,
@@ -147,6 +148,10 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
             .ok_or("data root missing")?
             .to_owned();
         let mut c = Self {
+            // The native /users catalog has no BaseN/RedactN entries. Its
+            // UserBase is opened explicitly in a separate database scope.
+            // Runtime still gates writes on an authenticated users POST.
+            user_administration: dir.path.trim_matches('/') == "users",
             writable: if matches!(dir.path.trim_matches('/'), "99" | "20a") {
                 dir.bases
                     .iter()
@@ -615,6 +620,27 @@ impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
         self.refresh_writes();
         Ok(())
     }
+    fn delete_document_from_volume(&mut self, scope: u32, oid: u32, hole: bool, volume: u32) -> Result<(), crate::ks::database::DeleteError> {
+        use crate::ks::database::DeleteError;
+        self.refresh_writes();
+        let mount = self.mounts(scope)?.iter().find(|m| m.volume.id == volume)
+            .ok_or_else(|| DeleteError::Failed("Volume is not attached to this DataBase".into()))?;
+        let path = super::script_volume_path(&self.root, &mount.key);
+        if !path.canonicalize().map_err(|e| e.to_string())?
+            .starts_with(self.root.canonicalize().map_err(|e| e.to_string())?) {
+            return Err(DeleteError::Failed("DB4 deletion outside data root".into()));
+        }
+        // The KS helper probes every mount, including read-only archives. An
+        // absent OID is different from an OID found in a read-only volume.
+        let mut index = super::mainkey::MainKey::open(&path)?;
+        let entry = index.lookup_including_deleted(oid)?.ok_or(DeleteError::Missing)?;
+        if !mount.writable { return Err(DeleteError::ReadOnly); }
+        let expected = if entry.block == u32::MAX { None } else { Some(index.record(entry)?) };
+        drop(index);
+        super::writer::delete(&path, oid, hole, expected.as_ref())?;
+        self.refresh_writes();
+        Ok(())
+    }
     fn finish_profile(&self) {
         let schema = self.timings.schema.replace((0, 0));
         let record = self.timings.record.replace((0, 0));
@@ -663,7 +689,8 @@ impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
             scope,
             Mount {
                 writable: self.writable.contains(&super::volume_key(&key))
-                    || scope != 0 && !self.writable.is_empty() && flags.first() == Some(&true),
+                    || scope != 0 && (self.user_administration || !self.writable.is_empty())
+                        && flags.first() == Some(&true),
                 volume: volume.clone(),
                 key,
                 schema,
@@ -866,9 +893,9 @@ impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
             };
             candidates.extend(ids);
         }
-        // The native category editor retains judges whose work-section link
-        // survives in an older classifier volume. Keep this catalog view local
-        // to that editor; ordinary SQL still resolves the latest matching copy.
+        // Native distribution catalogs retain judges whose work-section link
+        // survives in an older classifier volume. Use this view for the verified
+        // category and KP selectors; ordinary SQL resolves the latest copy.
         // Read through the normal overlay so tombstones and current fields win.
         let mut live = Vec::new();
         for oid in candidates {
@@ -1167,7 +1194,7 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
                 .values()
                 .find(|f| f.name == *name)
                 .ok_or_else(|| format!("SQL sort field {name} absent"))?;
-            if !matches!(f.kind, 1 | 2 | 3 | 5 | 12) {
+            if !matches!(f.kind, 1 | 2 | 3 | 5 | 12 | 13) {
                 return Err(format!(
                     "SQL sorting native type {} is not implemented",
                     f.kind
@@ -1227,6 +1254,7 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
             Text(Vec<u8>),
             Date(i16, u8, u8),
             Stamp([u8; 8]),
+            Decimal(Vec<u8>),
             Missing,
         }
         let key = |id: u32, r: &Record, attr: Option<u16>| {
@@ -1265,6 +1293,7 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
                 }
                 Some(F::Date(v)) => Key::Date(i16::from_le_bytes([v[0], v[1]]), v[2], v[3]),
                 Some(F::Timestamp(v)) => Key::Stamp(*v),
+                Some(F::Decimal(v)) => Key::Decimal(super::writer::decimal_key(v)),
                 _ => Key::Missing,
             }
         };
@@ -1281,7 +1310,10 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
                         std::cmp::Ordering::Less
                     };
                 }
-                let c = ak.cmp(&bk);
+                let c = match (&ak, &bk) {
+                    (Key::Decimal(a), Key::Decimal(b)) => super::writer::decimal_cmp(a, b),
+                    _ => ak.cmp(&bk),
+                };
                 if !c.is_eq() {
                     return if *desc { c.reverse() } else { c };
                 }

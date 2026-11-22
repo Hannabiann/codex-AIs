@@ -67,7 +67,9 @@ impl Draft {
             .ok_or_else(|| "Document field was deleted".into())
     }
     fn check_lock(&self) -> Result<(), Fault> {
-        if !self.locked {
+        // A new document is also an in-memory container (e.g. generated KS).
+        // Lock is required once it has an identity in a mounted database.
+        if self.oid != 0 && !self.locked {
             return Err("Document must be locked before editing".into());
         }
         Ok(())
@@ -89,6 +91,7 @@ impl WritableField {
         }
         let display = match &field.value {
             Data::String(b) => crate::db::decode(b),
+            Data::Decimal(d) => super::decimal::Decimal::from_native(d)?.text(),
             Data::Integer(n) => n.to_string(),
             Data::Date(d) => format!(
                 "{:02}.{:02}.{}",
@@ -129,16 +132,29 @@ fn scalar(kind: u16, value: &Value) -> Result<Data, Fault> {
                 .0
                 .into_owned(),
         ),
-        5 => Data::Integer(integer(value, u32::MAX)?),
+        5 => {
+            // KS uses signed sentinels such as -1 for an unset specialization.
+            // DB4 stores their two's-complement representation in a DWORD.
+            let n = value.number()?;
+            if !n.is_finite() || n.fract() != 0.0
+                || n < i32::MIN as f64 || n > u32::MAX as f64
+            {
+                return Err("invalid document integer".into());
+            }
+            Data::Integer(n as i64 as u32)
+        }
         13 => Data::Decimal(super::decimal::Decimal::parse(&value.text())?.to_native()),
         1 | 12 => {
             let date = match value {
                 Value::Date(d) => d.borrow().clone(),
+                Value::Number(n) => crate::ks::date::Date::from_number(*n)?,
                 v => crate::ks::date::Date::from_text(&v.text())?,
             };
             let p = date.parts();
             if !(100..=9999).contains(&p[0]) {
-                return Err("invalid stored calendar date".into());
+                // Invalid user/form dates are a native script exception; the
+                // distribution template catches an absent optional hearing date.
+                return Err(Fault::Script(Value::String("invalid stored calendar date".into())));
             }
             if kind == 1 {
                 let y = (p[0] as i16).to_le_bytes();
@@ -223,7 +239,8 @@ impl Runtime<'_> {
                 let a = self.member(s, d.area.to_string())?;
                 return self.member(a, "Name".into());
             }
-            "Lock" | "Unlock" | "Write" | "NewField" | "DeleteField" | "Attr" | "Next" => {
+            "Lock" | "Unlock" | "Write" | "NewField" | "DeleteField" | "Attr" | "Next"
+            | "Compile" | "Execute" => {
                 Value::EditMethod(doc.clone(), key)
             }
             _ if d.oid != 0 => return self.member(Value::Document(d.oid, d.scope), key),
@@ -439,6 +456,9 @@ impl Runtime<'_> {
         }
         if method == "Write" {
             let mut d = doc.borrow_mut();
+            if !d.locked || d.oid == 0 {
+                return Err("Document must be locked before writing".into());
+            }
             d.check_lock()?;
             let record = d.record();
             self.dbhost
@@ -448,6 +468,29 @@ impl Runtime<'_> {
                 .write_document(d.scope, &record, d.expected.as_ref())?;
             d.expected = Some(record);
             return Ok(Value::Null);
+        }
+        if method == "Compile" || method == "Execute" {
+            if args.is_empty() || args.len() > if method == "Execute" { 2 } else { 1 } {
+                return Err("temporary document method arguments".into());
+            }
+            let source = {
+                let d = doc.borrow();
+                if d.oid != 0 { return Err("temporary script must not have a persistent identity".into()); }
+                let (id, kind) = self.field_definition(d.scope, d.area, &args[0])?
+                    .ok_or("temporary script field missing")?;
+                if kind != 4 { return Err("temporary script requires a text field".into()); }
+                let index = d.fields.iter().position(|f| f.as_ref().is_some_and(|f| f.id == id && f.wire_type == kind))
+                    .ok_or("temporary script field missing")?;
+                let stream = d.streams.get(&index).ok_or("temporary script text missing")?.borrow();
+                if stream.charset == "utf-8" {
+                    std::str::from_utf8(&stream.data).map_err(|_| "invalid UTF-8 script")?.to_owned()
+                } else { crate::db::decode(&stream.data) }
+            };
+            if method == "Compile" {
+                super::parser::parse(&source).map_err(|e| format!("temporary KS syntax: {e}"))?;
+                return Ok(Value::Null);
+            }
+            return self.execute_code(&source, args.get(1).cloned());
         }
         if method == "NewField" {
             if !(1..=2).contains(&args.len()) {

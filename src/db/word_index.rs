@@ -19,14 +19,14 @@ fn number(data: &[u8], at: &mut usize) -> Result<u32, String> {
     }
     Err("word index integer overflow".into())
 }
-fn key(data: &[u8]) -> Result<(&[u8], u32), String> {
+pub(crate) fn key(data: &[u8]) -> Result<(&[u8], u32), String> {
     let n = (*data.first().ok_or("empty word index entry")? & 127) as usize;
     if n == 0 || n > 32 || data.len() < n + 6 {
         return Err("invalid word index key".into());
     }
     Ok((&data[1..n + 1], u32at(data, n + 1)))
 }
-fn postings(data: &[u8]) -> Result<Vec<(u32, u32)>, String> {
+pub(crate) fn postings(data: &[u8]) -> Result<Vec<(u32, u32)>, String> {
     let (word, first) = key(data)?;
     let count = data[word.len() + 5] as usize;
     if count == 0 || count > 250 {

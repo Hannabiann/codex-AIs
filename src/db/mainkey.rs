@@ -7,7 +7,7 @@ mod date_index;
 #[path = "timestamp_index.rs"]
 pub(crate) mod timestamp_index;
 #[path = "word_index.rs"]
-mod word_index;
+pub(super) mod word_index;
 use std::{
     collections::{HashMap, HashSet},
     fs::File,

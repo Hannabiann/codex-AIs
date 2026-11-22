@@ -202,6 +202,7 @@ impl Runtime<'_> {
             }
             field.display = match &candidate.value {
                 DbValue::String(s) => crate::db::decode(s),
+                DbValue::Decimal(d) => super::decimal::Decimal::from_native(d)?.text(),
                 DbValue::Date(d) => format!(
                     "{:02}.{:02}.{:04}",
                     d[3],

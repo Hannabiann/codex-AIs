@@ -24,6 +24,7 @@ pub struct RequestContext {
     pub if_modified_since: String,
     pub user: Option<crate::auth::User>,
     pub form: Vec<(String, String)>,
+    pub uploads: Vec<crate::http_form::Upload>,
     pub monitor: Option<(Arc<crate::monitor::Monitor>, u64)>,
     pub user_agent: String,
     pub method: String,
@@ -410,7 +411,11 @@ fn route_inner(
         return Ok(match execute(dir, &record, &name) {
             Ok(html) => Response {
                 status: "200 OK",
-                mime: "text/html; charset=windows-1251",
+                mime: if name.to_ascii_lowercase().ends_with(".js") || name.eq_ignore_ascii_case("mp_js") {
+                    "application/javascript; charset=windows-1251"
+                } else if name.to_ascii_lowercase().ends_with(".css") || name.eq_ignore_ascii_case("mp_css") {
+                    "text/css; charset=windows-1251"
+                } else { "text/html; charset=windows-1251" },
                 body: html,
                 location: None,
                 headers: Vec::new(),
@@ -1066,7 +1071,9 @@ async fn connection_request(
                     "if-modified-since" => context.if_modified_since = value.into(),
                     "content-length" => match value.parse::<usize>() {
                         Ok(n)
-                            if n <= if word_path {
+                            if n <= if crate::http_form::upload_route(&context.target) {
+                                crate::http_form::MAX_UPLOAD_BODY
+                            } else if word_path {
                                 16 * 1024 * 1024
                             } else {
                                 1024 * 1024
@@ -1109,12 +1116,12 @@ async fn connection_request(
                 context.form = if raw_spd {
                     Vec::new()
                 } else {
-                    match crate::http_form::decode_for(
+                    match crate::http_form::decode_request(
                         &context.target,
                         &content_type,
                         &request[header_end..header_end + content_length],
                     ) {
-                        Ok(fields) => fields,
+                        Ok((fields, uploads)) => { context.uploads = uploads; fields },
                         Err(e) => break message("400 Bad Request", e),
                     }
                 };

@@ -9,6 +9,7 @@ pub struct Instruction {
     pub op: u16,
     pub text: String,
     pub number: i32,
+    pub real: f64,
     pub offsets: Vec<u32>,
 }
 #[derive(Clone, Debug)]
@@ -69,6 +70,7 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Stmt>, String> {
             op,
             text: String::new(),
             number: 0,
+            real: 0.0,
             offsets: vec![],
         };
         match op {
@@ -83,7 +85,8 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Stmt>, String> {
                     i.number = r.u32()? as i32;
                 }
             }
-            3 | 0x1a | 0x1b | 0x23 => i.number = r.u32()? as i32,
+            3 | 0x1a | 0x1b | 0x23 | 0x55 => i.number = r.u32()? as i32,
+            0x3f => i.real = f64::from_le_bytes(r.bytes(8)?.try_into().unwrap()),
             0x2a | 0x30 => i.number = r.u8()? as i32,
             0x26 => i.number = r.u16()? as i32,
             0x3a => {
@@ -99,7 +102,7 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Stmt>, String> {
             | 0x29
             | 0x2b..=0x2f
             | 0x31
-            | 0x35..=0x38
+            | 0x35..=0x39
             | 0x3b..=0x3c => {}
             _ => return Err(format!("unsupported KS bytecode opcode {op:#x} at {at:#x}")),
         }
@@ -112,7 +115,7 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Stmt>, String> {
         positions,
     });
     for i in &program.instructions {
-        if matches!(i.op, 0x1a | 0x1b | 0x23) {
+        if matches!(i.op, 0x1a | 0x1b | 0x23 | 0x55) {
             let target = (i.end as i64)
                 .checked_add(i.number as i64)
                 .filter(|n| *n >= 0)

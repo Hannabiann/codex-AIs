@@ -59,7 +59,7 @@ impl Runtime<'_> {
         self.scopes.pop();
         result
     }
-    pub(super) fn compiled(&mut self, program: &Program, entry: usize) -> Result<Flow, Fault> {
+    pub(super) fn compiled(&mut self, program: &Rc<Program>, entry: usize) -> Result<Flow, Fault> {
         let mut stack: Vec<Cell> = Vec::new();
         let mut pc = entry;
         let mut compound = false;
@@ -80,6 +80,7 @@ impl Runtime<'_> {
                     1 => self.write(&i.text)?,
                     2 => stack.push(Cell::Name(i.text.clone())),
                     3 => push = Some(Value::Number(i.number as f64)),
+                    0x3f => push = Some(Value::Number(i.real)),
                     4..=8 | 0xc..=0x14 | 0x16..=0x18 => {
                         let b = pop(&mut stack)?.value(self)?;
                         let target = pop(&mut stack)?;
@@ -142,6 +143,12 @@ impl Runtime<'_> {
                         }
                     }
                     0x1d => push = Some(Value::Bool(!pop(&mut stack)?.value(self)?.truth())),
+                    0x1c => {
+                        let value = pop(&mut stack)?.value(self)?;
+                        push = Some(
+                            self.compiled_expression(vec![value], Expr::Unary("-".into(), arg(0)))?,
+                        );
+                    }
                     0x21 | 0x22 => {
                         let target = pop(&mut stack)?;
                         let old = target.value(self)?;
@@ -219,6 +226,22 @@ impl Runtime<'_> {
                         stack.push(Cell::Member(base, key));
                     }
                     0x34 => push = Some(Value::String(i.text.clone())),
+                    0x39 => return Err(Fault::Script(pop(&mut stack)?.value(self)?)),
+                    0x55 => {
+                        // Verified anonymous function without parameters. Its
+                        // body is skipped here and invoked with the closure.
+                        if ![0x29, 0xb, 0xb].into_iter().enumerate().all(|(n, op)| {
+                            program.instructions.get(pc + n).is_some_and(|x| x.op == op)
+                        }) {
+                            return Err("unsupported anonymous compiled function prologue".into());
+                        }
+                        push = Some(self.function(
+                            None,
+                            vec![],
+                            Rc::new(vec![Stmt::Compiled(program.clone(), pc + 3)]),
+                        ));
+                        pc = program.jump((i.end as i64 + i.number as i64) as usize)?;
+                    }
                     0x3a => {
                         if i.offsets[1] != 0 {
                             return Err("compiled finally requires implementation".into());

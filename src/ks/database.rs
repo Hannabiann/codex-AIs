@@ -7,7 +7,18 @@ pub struct Volume {
     pub title: String,
     pub update: u16,
 }
+pub enum DeleteError {
+    Missing,
+    ReadOnly,
+    Failed(String),
+}
+impl From<String> for DeleteError {
+    fn from(message: String) -> Self { Self::Failed(message) }
+}
 pub trait DatabaseHost {
+    fn delete_document_from_volume(&mut self, _scope: u32, _oid: u32, _hole: bool, _volume: u32) -> Result<(), DeleteError> {
+        Err(DeleteError::Failed("Volume-specific document deletion is not configured".into()))
+    }
     fn distribution_judges(&self, _scope: u32, _sql: &str) -> Result<Vec<u32>, String> {
         Err("Historical distribution catalog is not configured".into())
     }

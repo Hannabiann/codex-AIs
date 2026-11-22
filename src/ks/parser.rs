@@ -640,7 +640,9 @@ impl Parser {
             return Ok(Stmt::For(init, c, step, Box::new(self.stmt()?)));
         }
         if self.eat("return") {
-            let e = if self.is(";") || self.is("}") || self.end() || self.newline() {
+            // KS permits a return expression on the next line (including arrays
+            // and calls). JavaScript's newline rule silently discarded these values.
+            let e = if self.is(";") || self.is("}") || self.end() {
                 None
             } else {
                 Some(self.expr(0)?)

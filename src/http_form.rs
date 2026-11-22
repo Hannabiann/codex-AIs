@@ -1,5 +1,134 @@
 //! Bounded form decoding for the original homepage's URL-encoded/multipart POSTs.
 const MAX_FIELDS: usize = 16_384;
+pub const MAX_UPLOAD_BODY: usize = 64 * 1024 * 1024;
+
+#[derive(Clone, Debug)]
+pub struct Upload {
+    pub name: String,
+    pub data: Vec<u8>,
+}
+
+pub fn upload_route(target: &str) -> bool {
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    matches!(path, "/20a" | "/20a/")
+        && matches!(
+            query.split('&').next(),
+            Some("savetempfile" | "regdelo" | "regdoc")
+        )
+}
+
+/// Split multipart data as bytes. File bodies must never pass through a text decoder.
+pub fn decode_request(
+    target: &str,
+    content_type: &str,
+    bytes: &[u8],
+) -> Result<(Vec<(String, String)>, Vec<Upload>), String> {
+    if !upload_route(target)
+        || !content_type
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .eq_ignore_ascii_case("multipart/form-data")
+    {
+        return decode_for(target, content_type, bytes).map(|f| (f, Vec::new()));
+    }
+    if bytes.len() > MAX_UPLOAD_BODY {
+        return Err("upload body limit (64 MiB)".into());
+    }
+    let boundary = content_type
+        .split(';')
+        .skip(1)
+        .find_map(|s| s.trim().strip_prefix("boundary="))
+        .ok_or("multipart boundary missing")?
+        .trim_matches('"');
+    if boundary.is_empty()
+        || boundary.len() > 70
+        || !boundary
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"'()+_,-./:=?".contains(&b))
+    {
+        return Err("invalid multipart boundary".into());
+    }
+    let marker = format!("\r\n--{boundary}").into_bytes();
+    let opening = format!("--{boundary}\r\n");
+    let mut rest = bytes
+        .strip_prefix(opening.as_bytes())
+        .ok_or("multipart opening boundary missing")?;
+    let command = target.split_once('?').unwrap().1.split('&').next().unwrap();
+    let mut fields = Vec::new();
+    let mut uploads: Vec<Upload> = Vec::new();
+    loop {
+        let end = rest
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .ok_or("multipart headers missing")?;
+        if end > 4096 {
+            return Err("multipart header limit".into());
+        }
+        let headers = text(&rest[..end]);
+        let disposition = headers
+            .split("\r\n")
+            .find_map(|h| {
+                h.split_once(':')
+                    .filter(|(k, _)| k.eq_ignore_ascii_case("content-disposition"))
+                    .map(|(_, v)| v.trim())
+            })
+            .ok_or("multipart disposition missing")?;
+        if !disposition.starts_with("form-data;") {
+            return Err("invalid multipart disposition".into());
+        }
+        let parameter = |name: &str| {
+            disposition
+                .split(';')
+                .skip(1)
+                .find_map(|p| p.trim().strip_prefix(name))
+                .and_then(|s| s.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
+        };
+        let name = parameter("name=").ok_or("multipart field name missing")?;
+        let body = &rest[end + 4..];
+        let end = body
+            .windows(marker.len())
+            .enumerate()
+            .find_map(|(i, w)| {
+                (w == marker
+                    && (body[i + marker.len()..].starts_with(b"--")
+                        || body[i + marker.len()..].starts_with(b"\r\n")))
+                .then_some(i)
+            })
+            .ok_or("multipart closing boundary missing")?;
+        let value = &body[..end];
+        if let Some(filename) = parameter("filename=") {
+            if !filename.is_empty() {
+                if name != "datum"
+                    || uploads.iter().any(|f| f.name == name)
+                    || fields.iter().any(|(k, _)| k == name)
+                {
+                    return Err("invalid or repeated upload field".into());
+                }
+                uploads.push(Upload {
+                    name: name.into(),
+                    data: value.to_vec(),
+                });
+            } else if !value.is_empty() {
+                return Err("unnamed file payload".into());
+            }
+        } else {
+            if uploads.iter().any(|f| f.name == name) {
+                return Err("repeated upload field".into());
+            }
+            add(&mut fields, name.into(), text(value), command)?;
+        }
+        rest = &body[end + marker.len()..];
+        if rest == b"--" || rest == b"--\r\n" {
+            break;
+        }
+        rest = rest
+            .strip_prefix(b"\r\n")
+            .ok_or("invalid multipart boundary suffix")?;
+    }
+    Ok((fields, uploads))
+}
 fn text(bytes: &[u8]) -> String {
     String::from_utf8(bytes.to_vec()).unwrap_or_else(|_| crate::db::decode(bytes))
 }
@@ -25,6 +154,17 @@ fn add(
         return Ok(());
     }
     if let Some((_, previous)) = out.iter_mut().find(|(k, _)| *k == key) {
+        // The native registration templates emit an initial hidden value and
+        // then the current value again near the participant/document controls.
+        if matches!(command, "regdelo" | "regdoc")
+            && matches!(
+                key.as_str(),
+                "inp_number" | "b61" | "b409" | "numdoc" | "oid_jmail"
+            )
+        {
+            *previous = value;
+            return Ok(());
+        }
         // Native multi-selection controls submit several values of one field.
         // Keep command/control parameters singular.
         let attribute = key.strip_prefix('a').and_then(|s| s.split_once("attr"));
@@ -35,7 +175,14 @@ fn add(
             && previous
                 .split(';')
                 .all(|v| v.parse::<u32>().is_ok_and(|n| n != 0));
-        let multi = category
+        let vacation = matches!(command, "makeVacation" | "newJudAndHoliday")
+            && matches!(key.as_str(), "nm_numdoc" | "nm_deldoc")
+            && value.parse::<u32>().is_ok_and(|n| n != 0)
+            && previous.split(';').all(|v| v.parse::<u32>().is_ok_and(|n| n != 0));
+        let user_groups = command == "users" && key == "grp"
+            && value.parse::<u32>().is_ok_and(|n| n != 0)
+            && previous.split(';').all(|v| v.parse::<u32>().is_ok_and(|n| n != 0));
+        let multi = category || vacation || user_groups
             || key == "tipdoc"
             || key == "prevdoc"
                 && value.parse::<u32>().is_ok_and(|n| n != 0)

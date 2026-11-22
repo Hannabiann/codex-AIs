@@ -336,7 +336,7 @@ pub(super) fn delete(
         }
     }
     if roots.get(&(65535, 2)).is_some_and(|r| r.1 != 0) {
-        return Err("DB40 write with a populated global word index is not implemented".into());
+        return Ok(None);
     }
     let new_presence = if hole {
         None

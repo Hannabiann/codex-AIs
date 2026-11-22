@@ -20,6 +20,10 @@ mod document_fields;
 mod document_write;
 #[path = "file_access.rs"]
 mod file_access;
+#[path = "attachment_files.rs"]
+mod attachment_files;
+#[path = "kjson.rs"]
+mod kjson;
 
 #[path = "form_doc.rs"]
 mod form_doc;
@@ -115,11 +119,11 @@ enum Value {
     RegistryKey(u32),
     RegistryMethod(u32, String),
     DirStat(super::file_list::Entry),
-    File(std::path::PathBuf),
+    File(Rc<file_access::ReadFile>),
     // Original KS createPath walks existing parents above the configured root.
     // This is only a directory probe, never a handle for listing or reading them.
     AncestorDirectory(std::path::PathBuf),
-    FileMethod(std::path::PathBuf, String),
+    FileMethod(Rc<file_access::ReadFile>, String),
     FilePath(Rc<RefCell<String>>),
     PathMethod(Rc<RefCell<String>>, String),
     TempDocument(Rc<RefCell<TempDocument>>),
@@ -194,7 +198,8 @@ impl Value {
             Self::StoredField(field) => field.display.clone(),
             Self::Volume(_, v) => v.name.clone(),
             Self::DirStat(e) => e.name.clone(),
-            Self::File(p) | Self::AncestorDirectory(p) => p.to_string_lossy().into_owned(),
+            Self::File(p) => p.path.to_string_lossy().into_owned(),
+            Self::AncestorDirectory(p) => p.to_string_lossy().into_owned(),
             Self::FilePath(s) => s.borrow().clone(),
             Self::Null => "".into(),
             Self::Bool(b) => b.to_string(),
@@ -290,6 +295,9 @@ pub struct Runtime<'a> {
     document_vars: RefCell<HashMap<(u32, u32), Object>>,
     document_edits: RefCell<HashMap<(u32, u32), document_write::Edit>>,
     document_write_allowed: bool,
+    scheduled_request: bool,
+    registration_write_allowed: bool,
+    attachment_write_allowed: bool,
     request_document_scopes: Vec<Object>,
     form_tabs: RefCell<HashMap<(u32, u32, u16), Rc<form_doc::Tab>>>,
     form_fields: RefCell<HashMap<(u32, u32, u16), Value>>,
@@ -354,6 +362,9 @@ impl<'a> Runtime<'a> {
             document_vars: Default::default(),
             document_edits: Default::default(),
             document_write_allowed: false,
+            scheduled_request: false,
+            registration_write_allowed: false,
+            attachment_write_allowed: false,
             request_document_scopes: Vec::new(),
             form_tabs: Default::default(),
             form_fields: Default::default(),
@@ -684,6 +695,30 @@ impl<'a> Runtime<'a> {
         }
     }
     fn assign_member(&mut self, obj: Value, key: String, v: Value) -> Result<(), Fault> {
+        // K5 accepts property assignment on boxed scalar values without
+        // changing the scalar. The participant form submits case as a number,
+        // while its KS normalizes case.oid before accepting either form.
+        if matches!(obj, Value::Number(_) | Value::String(_) | Value::Bool(_)) {
+            return Ok(());
+        }
+        if let Value::Function(f) = &obj {
+            if key != "prototype" && !key.starts_with('\0') {
+                if let Some(Value::Object(prototype)) = f.properties.borrow().get("prototype") {
+                    if prototype.borrow().len() >= 10000 { return Err("function property limit".into()); }
+                    prototype.borrow_mut().insert(key, v);
+                    return Ok(());
+                }
+            }
+        }
+        if let Value::File(file) = &obj {
+            if key != "CharSet" { return Err("file stream property is read-only".into()); }
+            let charset = v.text().to_lowercase();
+            if !matches!(charset.as_str(), "windows-1251" | "utf-8") {
+                return Err("unsupported input stream charset".into());
+            }
+            *file.charset.borrow_mut() = charset;
+            return Ok(());
+        }
         match obj{Value::EditDocument(d)=>self.edit_set(d,&key,v),Value::WritableField(f)=>self.writable_set(f,&key,v),Value::List(l)=>self.list_set(&mut l.borrow_mut(), &key, v),Value::Array(o)=>{
  self.numeric_arrays.invalidate(&o);
  let mut map=o.borrow_mut();
@@ -823,8 +858,13 @@ impl<'a> Runtime<'a> {
         if self.include_depth >= 32 {
             return Err("Document.Execute recursion limit".into());
         }
+        let mut calendar_job = false;
         let source = if self.dbhost.is_some() {
             let rec = self.read_document(oid, scope)?;
+            calendar_job = self.scheduled_request
+                && attr == 3
+                && rec.string(1).map(crate::db::decode).as_deref() == Some("newJudAndHoliday")
+                && self.calendar_job_principal();
             if std::env::var_os("KODEKS_TRACE").is_some_and(|s| s == "1") {
                 eprintln!(
                     "KS DataBase({scope}) Document({oid}).Execute({attr}): {}",
@@ -835,9 +875,12 @@ impl<'a> Runtime<'a> {
                 .fields
                 .iter()
                 .filter(|f| f.id == attr && f.wire_type == 4);
-            let field = fields
-                .next()
-                .ok_or("Document.Execute source field missing; compiled KS execution required")?;
+            let Some(field) = fields.next() else {
+                // Classifier entries may have no optional SignScript. Native
+                // Execute returns null for an absent attribute (e.g. letters).
+                if !rec.fields.iter().any(|f| f.id == attr) { return Ok(Value::Null); }
+                return Err("Document.Execute attribute has no source text; compiled KS execution required".into());
+            };
             if fields.next().is_some() {
                 return Err("Document.Execute source field is ambiguous".into());
             }
@@ -848,7 +891,11 @@ impl<'a> Runtime<'a> {
                 .ok_or("Document.Execute requires database context")?(oid, attr)?
         };
         let source = super::source_compat::document_source(oid, attr, &source);
-        self.execute_code(&source, context).map_err(|e| match e {
+        let previous_write = self.document_write_allowed;
+        self.document_write_allowed |= calendar_job;
+        let result = self.execute_code(&source, context);
+        self.document_write_allowed = previous_write;
+        result.map_err(|e| match e {
             Fault::Host(s) => Fault::Host(format!("Document({oid}).Execute({attr}): {s}")),
             e => e,
         })
@@ -1028,6 +1075,12 @@ impl<'a> Runtime<'a> {
                 return Ok(v.clone());
             }
         }
+        // Execute(source, this) may import members during a constructor.
+        if let Some(Value::Object(receiver)) = self.scopes.last().and_then(|s| s.borrow().get("this").cloned()) {
+            if let Some(value) = Self::property(&receiver, n)? {
+                return Ok(value);
+            }
+        }
         // The directory's dynamic properties (e.g. report add-clause values)
         // are visible as globals while lexical locals still take precedence.
         if let Some(Value::Object(directory)) = self.scopes[0].borrow().get("this") {
@@ -1047,6 +1100,7 @@ impl<'a> Runtime<'a> {
             }
         }
         match n {
+            "Shell" => Ok(Value::Object(Rc::new(RefCell::new(HashMap::from([("Execute".into(), Value::Native("attachment.shell".into()))]))))),
             "RegistryRoot" => Err(format!("{n}: host binding not configured").into()),
             "DriverManager" => Ok(Value::Host(super::host::Handle::Manager)),
             "null" | "undefined" => Ok(Value::Null),
@@ -1071,6 +1125,7 @@ impl<'a> Runtime<'a> {
             | "Array"
             | "Object"
             | "Math"
+            | "KJSON"
             | "char"
             | "String"
             | "Number"
@@ -1078,6 +1133,7 @@ impl<'a> Runtime<'a> {
             | "InetConnection"
             | "toLog"
             | "MkDir"
+            | "RmDir"
             | "Unlink"
             | "FindOrCreateHashObject" => Ok(Value::Native(n.into())),
             _ => Ok(Value::Null),
@@ -1101,6 +1157,7 @@ impl<'a> Runtime<'a> {
     }
     fn hoist(&mut self, stmts: &[Stmt]) {
         for s in stmts {
+            let synchronized = matches!(s, Stmt::Synchronized(_));
             let s = if let Stmt::Synchronized(inner) = s {
                 inner.as_ref()
             } else {
@@ -1110,7 +1167,10 @@ impl<'a> Runtime<'a> {
                 self.hoist(body);
             }
             if let Stmt::Function(n, args, b) = s {
-                let f = self.function(None, args.clone(), b.clone());
+                let body = if synchronized {
+                    Rc::new(vec![Stmt::Synchronized(Box::new(Stmt::Block(b.as_ref().clone())))])
+                } else { b.clone() };
+                let f = self.function(None, args.clone(), body);
                 if let Value::Function(function) = &f {
                     function
                         .properties
@@ -1149,8 +1209,16 @@ impl<'a> Runtime<'a> {
                 self.with_objects.pop();
                 return r;
             }
-            // Runtime is !Send; the server dispatches all KS calls through one worker.
-            Stmt::Synchronized(inner) => return self.stmt(inner),
+            Stmt::Synchronized(inner) => {
+                if matches!(inner.as_ref(), Stmt::Function(..)) { return Ok(Flow::Next); }
+                // Several KS executors share the registry. In particular, the
+                // native incoming-number allocator protects a read/set pair
+                // with synchronized. A per-runtime lock would lose increments.
+                let name = format!("codex-KS-synchronized:{}", self.data_root.as_deref().unwrap_or(""));
+                let mut lock = super::mutex::NamedMutex::new(&name)?;
+                lock.acquire(None)?;
+                return self.stmt(inner);
+            }
             Stmt::Empty | Stmt::Function(..) => {}
             Stmt::Expression(e) => {
                 self.eval(e)?;
@@ -1330,13 +1398,14 @@ impl<'a> Runtime<'a> {
                             .cloned()
                             .collect()
                     }
-                    Value::Function(f) => f
-                        .properties
-                        .borrow()
-                        .keys()
-                        .filter(|k| k.as_str() != "prototype" && !k.starts_with('\0'))
-                        .cloned()
-                        .collect(),
+                    Value::Function(f) => {
+                        let properties = f.properties.borrow();
+                        let mut keys = properties.keys().filter(|k| k.as_str() != "prototype" && !k.starts_with('\0')).cloned().collect::<Vec<_>>();
+                        if let Some(Value::Object(prototype)) = properties.get("prototype") {
+                            keys.extend(Self::keys(prototype)?);
+                        }
+                        keys.sort(); keys.dedup(); keys
+                    }
                     Value::Array(o) => o
                         .borrow()
                         .keys()
@@ -1350,7 +1419,7 @@ impl<'a> Runtime<'a> {
                         .filter(|(k, v)| !k.starts_with('\0') && !matches!(v, Value::Function(_)))
                         .map(|(k, _)| k.clone())
                         .collect(),
-                    _ => return Err("for-in requires an object or array".into()),
+                    _ => return Err(format!("for-in requires an object or array: {source:?}").into()),
                 };
                 keys.sort_by(|a, b| match (a.parse::<usize>(), b.parse::<usize>()) {
                     (Ok(a), Ok(b)) => a.cmp(&b),
@@ -1518,6 +1587,9 @@ impl<'a> Runtime<'a> {
             (Value::ScriptException(text), "errText") => Ok(Value::String(text)),
             (Value::ScriptException(_), "Code") => Ok(Value::Number(668.0)),
             (Value::ScriptException(_), _) => Ok(Value::Null),
+            (Value::Native(n), "stringify" | "parse") if n == "KJSON" => {
+                Ok(Value::Native(format!("KJSON.{key}")))
+            }
             (Value::Native(n), _) if n == "Math" => match key.as_str() {
                 "random" | "floor" | "ceil" | "round" | "abs" | "sqrt" | "min" | "max" | "pow" => {
                     Ok(Value::Native(format!("Math.{key}")))
@@ -1611,7 +1683,7 @@ impl<'a> Runtime<'a> {
                     "length" => Ok(Value::Number((s.data.len() + s.encoded_extra) as f64)),
                     "CharSet" => Ok(Value::String(s.charset.clone())),
                     "read" | "readByte" | "readLine" | "reset" | "close" | "copyTo" | "Print"
-                    | "PrintS" | "write" => Ok(Value::ReadStreamMethod(stream.clone(), key)),
+                    | "PrintS" | "write" | "skip" => Ok(Value::ReadStreamMethod(stream.clone(), key)),
                     _ => Err(format!("unsupported input stream member {key}").into()),
                 }
             }
@@ -1677,12 +1749,13 @@ impl<'a> Runtime<'a> {
             (Value::DirStat(e), "lastModified") => Ok(Value::Number(e.modified)),
             (Value::DirStat(e), "length") => Ok(Value::Number(e.size as f64)),
             (Value::File(p), "length") => Ok(Value::Number(
-                std::fs::metadata(&p)
+                std::fs::metadata(&p.path)
                     .map_err(|e| Fault::Script(Value::String(e.to_string())))?
                     .len() as f64,
             )),
+            (Value::File(p), "CharSet") => Ok(Value::String(p.charset.borrow().clone())),
             (Value::File(p), _) => Ok(Value::FileMethod(p, key)),
-            (Value::AncestorDirectory(p), "isDirectory") => Ok(Value::FileMethod(p, key)),
+            (Value::AncestorDirectory(p), "isDirectory") => Ok(Value::FileMethod(file_access::ReadFile::new(p), key)),
             (Value::AncestorDirectory(_), _) => Err(format!(
                 "File.{key}: ancestor directory supports only existence and isDirectory probes"
             )
@@ -1697,12 +1770,16 @@ impl<'a> Runtime<'a> {
                 .map(|(_, a)| Value::Array(a.clone()))
                 .unwrap_or(Value::Null)),
             (Value::Function(f), "length") => Ok(Value::Number(f.params.len() as f64)),
-            (Value::Function(f), _) => Ok(f
-                .properties
-                .borrow()
-                .get(&key)
-                .cloned()
-                .unwrap_or(Value::Null)),
+            (Value::Function(f), _) => {
+                let properties = f.properties.borrow();
+                if let Some(value) = properties.get(&key) { return Ok(value.clone()); }
+                // K5 exposes class methods/metadata through both Ctor and
+                // Ctor.prototype. The participant wrappers use both spellings.
+                if let Some(Value::Object(prototype)) = properties.get("prototype") {
+                    return Ok(Self::property(prototype, &key)?.unwrap_or(Value::Null));
+                }
+                Ok(Value::Null)
+            }
             (Value::TempDocument(d), "NewField" | "Compile" | "Execute") => {
                 Ok(Value::TempMethod(d, key))
             }
@@ -2002,6 +2079,7 @@ impl<'a> Runtime<'a> {
                 if let Some(value) = Self::property(&o, &key)? {
                     return Ok(value);
                 }
+                if o.borrow().contains_key("\0json") { return Ok(Value::Null); }
                 if o.borrow().len() >= 10000 {
                     return Err("KS object member limit".into());
                 }
@@ -2118,6 +2196,7 @@ impl<'a> Runtime<'a> {
                                 } else {
                                     self.eval(&args[0])?
                                 };
+                                let value = if matches!(value, Value::Null) { Value::String(String::new()) } else { value };
                                 if !matches!(value, Value::String(_) | Value::FilePath(_)) {
                                     return Err("FilePath requires a string or FilePath".into());
                                 }
@@ -2143,11 +2222,14 @@ impl<'a> Runtime<'a> {
                                         for (i, x) in v.iter().enumerate() {
                                             let n = x.number()?;
                                             if !n.is_finite() || n.abs() > 10_000_000.0 {
-                                                return Err("Date component range".into());
+                                                return Err(Fault::Script(Value::String("Date component range".into())));
                                             }
                                             p[i] = n as i64;
                                         }
-                                        super::date::Date::from_parts(p)?
+                                        let date = super::date::Date::from_parts(p)
+                                            .map_err(|e| Fault::Script(Value::String(e)))?;
+                                        date.check_calendar().map_err(|e| Fault::Script(Value::String(e)))?;
+                                        date
                                     }
                                     _ => {
                                         return Err("unsupported Date constructor arguments".into())
@@ -2212,14 +2294,11 @@ impl<'a> Runtime<'a> {
                                 if args.len() > 2 {
                                     return Err("List expects [area[, database]]".into());
                                 }
-                                let area = if args.is_empty() {
-                                    0.0
+                                let area_value = if args.is_empty() {
+                                    Value::Number(0.0)
                                 } else {
-                                    self.eval(&args[0])?.number()?
+                                    self.eval(&args[0])?
                                 };
-                                if area < 0.0 || area > 65535.0 || area.fract() != 0.0 {
-                                    return Err("List area invalid".into());
-                                }
                                 let scope = if let Some(arg) = args.get(1) {
                                     let value = self.eval(arg)?;
                                     match value {
@@ -2233,13 +2312,14 @@ impl<'a> Runtime<'a> {
                                 } else {
                                     0
                                 };
+                                let area = self.list_area(&area_value, scope)?;
                                 return Ok(Value::List(Rc::new(RefCell::new(
                                     record_list::RecordList {
                                         scope,
-                                        area: area as u16,
+                                        area,
                                         order: None,
                                         conditions: Vec::new(),
-                                        query_all: area != 0.0,
+                                        query_all: area != 0,
                                         ids: RefCell::new(None),
                                     },
                                 ))));
@@ -2473,6 +2553,11 @@ impl<'a> Runtime<'a> {
                             o.borrow_mut().remove(&key);
                         }
                         Value::Function(f) => {
+                            if key != "prototype" {
+                                if let Some(Value::Object(prototype)) = f.properties.borrow().get("prototype") {
+                                    prototype.borrow_mut().remove(&key);
+                                }
+                            }
                             f.properties.borrow_mut().remove(&key);
                         }
                         _ => return Err("delete requires a writable object".into()),
@@ -2627,7 +2712,12 @@ impl<'a> Runtime<'a> {
                             Ok(Value::Bool(Self::property(&o, &x.text())?.is_some()))
                         }
                         Value::Function(f) => {
-                            Ok(Value::Bool(f.properties.borrow().contains_key(&x.text())))
+                            let properties = f.properties.borrow();
+                            let key = x.text();
+                            let inherited = if let Some(Value::Object(prototype)) = properties.get("prototype") {
+                                Self::property(prototype, &key)?.is_some()
+                            } else { false };
+                            Ok(Value::Bool(properties.contains_key(&key) || inherited))
                         }
                         Value::Array(o)
                         | Value::ReadOnlyObject(o)
@@ -2982,6 +3072,23 @@ impl<'a> Runtime<'a> {
                             {
                                 return Ok(Value::Null);
                             }
+                            if self.registration_write_allowed && id == reg.root
+                                && crate::db::writer::counters::NAMES.iter().any(|n| n.eq_ignore_ascii_case(name))
+                                && old.kind == kind
+                            {
+                                let next = value.text();
+                                if !next.parse::<u32>().ok().is_some_and(|n| (1..=i32::MAX as u32).contains(&n)) {
+                                    return Err("Invalid registration counter value".into());
+                                }
+                                let root = self.data_root.as_deref().ok_or("Data directory missing")?;
+                                let path = std::path::Path::new(root).join("config.db4").canonicalize()
+                                    .map_err(|e| e.to_string())?;
+                                let current = old.current_value(Some(root), true)?;
+                                crate::db::writer::counters::save_values(&path, id, &[
+                                    (old.oid, old.name.as_str(), current, next)
+                                ])?;
+                                return Ok(Value::Null);
+                            }
                         }
                         Err(format!("RegistryRoot.SetValue({name}): value would change; persistent registry writes are not implemented").into())
                     }
@@ -2992,20 +3099,33 @@ impl<'a> Runtime<'a> {
                     _ => Err(format!("RegistryRoot.{method} is not implemented").into()),
                 }
             }
-            Value::FileMethod(path, method) => {
-                let meta = std::fs::metadata(&path)
+            Value::FileMethod(file, method) => {
+                let path = &file.path;
+                let meta = std::fs::metadata(path)
                     .map_err(|e| Fault::Script(Value::String(e.to_string())))?;
                 match method.as_str() {
-                    "copyTo" => {
-                        if !meta.is_file() || meta.len() > 16 * 1024 * 1024 {
+                    "copyTo" | "read" | "readByte" | "readLine" | "reset" | "skip" => {
+                        if !meta.is_file() || meta.len() > crate::http_form::MAX_UPLOAD_BODY as u64 {
                             return Err("file stream size/type limit".into());
                         }
-                        let input =
-                            InputStream::value(&std::fs::read(&path).map_err(|e| e.to_string())?);
-                        let f = self.member(input.clone(), "copyTo".into())?;
-                        self.call_host(f, values, Some(input), "File.copyTo".into())
+                        if file.stream.borrow().is_none() {
+                            let Value::ReadStream(stream) = InputStream::value(
+                                &std::fs::read(path).map_err(|e| Fault::Script(Value::String(e.to_string())))?
+                            ) else { unreachable!() };
+                            *file.stream.borrow_mut() = Some(stream);
+                        }
+                        let stream = file.stream.borrow().as_ref().unwrap().clone();
+                        stream.borrow_mut().charset = file.charset.borrow().clone();
+                        let input = Value::ReadStream(stream);
+                        let f = self.member(input.clone(), method.clone())?;
+                        self.call_host(f, values, Some(input), format!("File.{method}"))
                     }
-                    "close" if values.is_empty() => Ok(Value::Null),
+                    "close" if values.is_empty() => {
+                        if let Some(stream) = file.stream.borrow().as_ref() {
+                            stream.borrow_mut().closed = true;
+                        }
+                        Ok(Value::Null)
+                    }
                     "list" => {
                         if values.len() > 3 {
                             return Err("File.list expects [mask[, mode[, flag]]]".into());
@@ -3058,6 +3178,11 @@ impl<'a> Runtime<'a> {
             Value::PathMethod(path, method) => {
                 let mut path = path.borrow_mut();
                 match method.as_str() {
+                    "GetTempDirectory" if values.is_empty() => {
+                        *path = super::path::script_path(&self.attachment_temp_base()?.to_string_lossy());
+                        if !path.ends_with('/') { path.push('/'); }
+                        Ok(Value::Null)
+                    }
                     "MakeFullKodeksPath" => {
                         if values.len() > 1
                             || values.first().is_some_and(|v| !matches!(v, Value::Bool(_)))
@@ -3485,13 +3610,22 @@ impl<'a> Runtime<'a> {
                                 captures
                                     .get(i + 1)
                                     .map(|m| Value::String(m.as_str().into()))
-                                    .unwrap_or(Value::Null),
+                                    // Native optional captures are empty strings.
+                                    // mp_CFsPath splits an absent path component.
+                                    .unwrap_or_else(|| Value::String(String::new())),
                             );
                         }
                         map.insert("length".into(), Value::Number(count as f64));
                         Ok(Value::Array(Rc::new(RefCell::new(map))))
                     }
                     "split" => {
+                        // Native KS yields no items for an empty list. Calendar
+                        // forms split an absent oidsofdays parameter before saving.
+                        if s.is_empty() {
+                            return Ok(Value::Array(Rc::new(RefCell::new(HashMap::from([
+                                ("length".into(), Value::Number(0.0)),
+                            ])))));
+                        }
                         // The /99 SQL formatter supplies an empty string as
                         // its optional second argument and reads the second part.
                         if values.len() > 1
@@ -3557,7 +3691,7 @@ impl<'a> Runtime<'a> {
                             return Err("String.isDigit expects no arguments".into());
                         }
                         Ok(Value::Bool(
-                            s.len() == 1 && s.as_bytes()[0].is_ascii_digit(),
+                            !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()),
                         ))
                     }
                     "trim" => Ok(Value::String(s.trim().into())),
@@ -3659,6 +3793,15 @@ impl<'a> Runtime<'a> {
                     return Ok(Value::Null);
                 }
                 if method == "copyTo" {
+                    if let [Value::LogFile(file)] = values.as_slice() {
+                        use std::io::Write;
+                        let mut source = stream.borrow_mut();
+                        if source.closed { return Err("stream closed".into()); }
+                        let mut file = file.borrow_mut();
+                        file.write_all(&source.data[source.position..]).and_then(|_|file.sync_all()).map_err(|e|e.to_string())?;
+                        source.position = source.data.len();
+                        return Ok(Value::Null);
+                    }
                     if let [Value::ReadStream(target)] = values.as_slice() {
                         if Rc::ptr_eq(&stream, target) {
                             return Err("cannot copy a stream into itself".into());
@@ -3697,7 +3840,7 @@ impl<'a> Runtime<'a> {
                         + prefix.len()
                         + s.data.len()
                         - s.position;
-                    if size > 16 * 1024 * 1024 {
+                    if size > crate::http_form::MAX_UPLOAD_BODY {
                         return Err("binary output size limit".into());
                     }
                     let bytes = self.binary_output.get_or_insert_with(Vec::new);
@@ -3726,6 +3869,19 @@ impl<'a> Runtime<'a> {
                     return Err("stream closed".into());
                 }
                 match method.as_str() {
+                    "skip" => {
+                        let [count] = values.as_slice() else {
+                            return Err("skip expects a byte count".into());
+                        };
+                        let n = count.number()?;
+                        if !n.is_finite() || n < 0.0 || n.fract() != 0.0 || n > 16.0 * 1024.0 * 1024.0 {
+                            return Err("stream skip limit".into());
+                        }
+                        // Stored text length includes encoding markers. Seeking
+                        // that length advances to the end of the decoded stream.
+                        s.position = s.position.saturating_add(n as usize).min(s.data.len());
+                        Ok(Value::Null)
+                    }
                     "readLine" => {
                         if !values.is_empty() {
                             return Err("readLine expects no arguments".into());
@@ -3922,11 +4078,36 @@ impl<'a> Runtime<'a> {
                             "Document deletion requires an authenticated editing request".into(),
                         );
                     }
-                    if values.len() > 1 {
-                        return Err("Document.Delete expects optional marker flag".into());
+                    if values.len() > 2 {
+                        return Err("Document.Delete expects optional marker flag and volume array".into());
                     }
                     if self.document_edits.borrow().contains_key(&(scope, oid)) {
                         return Err("Cannot delete a locked document".into());
+                    }
+                    if let Some(volumes) = values.get(1) {
+                        let Value::Array(volumes) = volumes else {
+                            return Err("Document.Delete requires a volume array".into());
+                        };
+                        let volumes = volumes.borrow();
+                        let count = volumes.get("length").ok_or("Volume array length missing")?.number()? as usize;
+                        if count == 0 { return Err("Document.Delete volume array is empty".into()); }
+                        let ids = (0..count).map(|i| match volumes.get(&i.to_string()) {
+                            Some(Value::Volume(owner, v)) if *owner == scope => Ok(v.id),
+                            _ => Err("Volume belongs to another DataBase or is invalid"),
+                        }).collect::<Result<Vec<_>, _>>()?;
+                        for id in ids {
+                            use super::database::DeleteError;
+                            self.dbhost.as_ref().ok_or("Document writer missing")?.borrow_mut()
+                                .delete_document_from_volume(scope, oid, values[0].truth(), id)
+                                .map_err(|e| match e {
+                                    DeleteError::Failed(message) => Fault::Host(message),
+                                    e => Fault::Script(Value::Object(Rc::new(RefCell::new(HashMap::from([
+                                        ("Code".into(), Value::Number(if matches!(e, DeleteError::Missing) {695.0} else {785.0})),
+                                        ("errText".into(), Value::String(if matches!(e, DeleteError::Missing) {"Object absent from selected volume"} else {"Selected volume is read-only"}.into())),
+                                    ]))))),
+                                })?;
+                        }
+                        return Ok(Value::Bool(true));
                     }
                     let record = self.read_document(oid, scope)?;
                     self.dbhost
@@ -4329,8 +4510,9 @@ impl<'a> Runtime<'a> {
                 }
             }
             Value::Native(n) => match n.as_str() {
+                "attachment.shell" => self.attachment_shell(&values),
                 "report.text.set_fonts" => self.report_set_font_attributes(receiver, &values),
-                "MkDir" | "Unlink" => self.log_path_operation(&n, &values),
+                "MkDir" | "Unlink" | "RmDir" => self.log_path_operation(&n, &values),
                 "SetOutput" => {
                     match values.as_slice() {
                         [Value::HttpOutput] => self.output_stream = None,
@@ -4349,7 +4531,8 @@ impl<'a> Runtime<'a> {
                     let fonts = o.borrow().get("\0fonts").cloned().unwrap_or(Value::Null);
                     Ok(fonts)
                 }
-                "path.SaveState" => self.save_path_settings(receiver, &values),
+                "path.SaveState" => self.save_path_settings(receiver, &values, false),
+                "path.SaveCalendarAccess" => self.save_path_settings(receiver, &values, true),
                 "field.InsertText" => self.writable_insert_text(receiver, &values),
                 "xml.Parse" => self.xml_parse(receiver, &values),
                 "xml.SetEncoding" => {
@@ -4706,6 +4889,18 @@ impl<'a> Runtime<'a> {
                     }
                     Ok(Value::String(crate::db::decode(&[n as u8])))
                 }
+                "KJSON.parse" => {
+                    let [Value::String(source)] = values.as_slice() else {
+                        return Err("KJSON.parse expects one string".into());
+                    };
+                    kjson::parse(source).map_err(|e| Fault::Script(Value::String(e)))
+                }
+                "KJSON.stringify" => {
+                    let [value] = values.as_slice() else {
+                        return Err("KJSON.stringify expects one value".into());
+                    };
+                    kjson::stringify(value).map(Value::String).map_err(Fault::from)
+                }
                 "String" => Ok(Value::String(
                     values.first().map(Value::text).unwrap_or_default(),
                 )),
@@ -4835,6 +5030,13 @@ impl<'a> Runtime<'a> {
         receiver: Option<Value>,
         _label: String,
     ) -> Result<Value, Fault> {
+        if _label == "waitForJobEnd"
+            && matches!(f.properties.borrow().get("\0name"), Some(Value::String(name)) if name == "mp_at_CJobsQueue_waitForJobEnd")
+        {
+            if let Some(value) = self.run_waited_calendar_job(&values, receiver.as_ref())? {
+                return Ok(value);
+            }
+        }
         if _label == "formRegistry" || f.name.as_deref() == Some("CRegGenerator_formRegistry") {
             let owner = receiver.clone().unwrap_or(self.get("this")?);
             if self.registry_is_filter_only(&owner)? {
@@ -4875,6 +5077,14 @@ impl<'a> Runtime<'a> {
         let outer_with = std::mem::take(&mut self.with_objects);
         if let Some(name) = &f.name {
             scope.insert(name.clone(), Value::Function(f.clone()));
+        } else if let Some(Value::String(name)) = f.properties.borrow().get("\0name") {
+            // A queued job can retain a generated function after the HTTP
+            // request's globals have been restored. Its own name must still
+            // resolve for the native Function.arguments idiom. Preserve an
+            // existing (possibly reassigned) declaration binding.
+            if !f.env.iter().any(|env| env.borrow().contains_key(name)) {
+                scope.insert(name.clone(), Value::Function(f.clone()));
+            }
         }
         let outer_scopes = std::mem::replace(&mut self.scopes, f.env.clone());
         self.scopes.push(Rc::new(RefCell::new(scope)));
@@ -5001,6 +5211,9 @@ fn field_equal(a: &Value, b: &Value) -> bool {
             field_equal(a, &Value::Document(d.oid, d.scope))
         }
         (Value::Date(a), Value::Date(b)) => a.borrow().millis == b.borrow().millis,
+        (Value::Date(date), Value::Number(n)) | (Value::Number(n), Value::Date(date)) => {
+            date.borrow().millis as f64 == *n
+        }
         (Value::Number(n), Value::String(s)) | (Value::String(s), Value::Number(n)) => {
             s.trim().parse::<f64>().ok() == Some(*n)
         }

@@ -2,6 +2,42 @@
 //! unload handshake. The initial about:blank unload listener is discarded
 //! during navigation in modern browsers. Results use same-origin postMessage.
 pub fn adapt(html: String, object: &str) -> String {
+    let html = if matches!(object, "makeVacation" | "newJudAndHoliday") {
+        // The native helper replaces an existing hidden input by default.
+        // Each removed vacation row must append its OID instead.
+        regex::Regex::new(r#"js_addFormHidden\(\s*"nm_deldoc"\s*,\s*numdoc\s*\);"#)
+            .unwrap().replace_all(&html, "js_addFormHidden(\"nm_deldoc\",numdoc,false);").into_owned()
+    } else { html };
+    let html = if object == "regassessors" {
+        // Native row numbers are also submitted field suffixes. Reusing one
+        // after deleting a preceding row loses dates and produces duplicates.
+        // Keep the counter monotonic and remove a saved row only after the
+        // server confirms deletion, so an AJAX error cannot look successful.
+        regex::Regex::new(r#"(?s)\$\('\.delvac'\)\.live\('click',\s*function\(\)\{.*?\n\s*\}\);"#)
+            .unwrap().replace(&html, |_: &regex::Captures| r#"
+            $('.delvac').live('click', function(){
+                var button=$(this), oid=button.attr('oid');
+                var row=$('#id__regularrow_' + button.attr('id').replace('id__delvac_', ''));
+                function removed(){
+                    row.remove(); js_redrawZebra(sRegularTrClassName);
+                    if (!$('.' + sRegularTrClassName).length) {
+                        $('.' + sHaederTrClassName).remove(); bRowHaeder=false;
+                    }
+                }
+                if (!oid) { removed(); return; }
+                if (button.attr('disabled')) return;
+                button.attr('disabled', 'disabled'); $('#id__save').attr('disabled','disabled');
+                $.ajax({url:sURL, type:'GET', data:{mode:5,oid:oid},
+                    success:removed,
+                    error:function(){alert('Не удалось удалить период. Обновите страницу и повторите попытку.');},
+                    complete:function(){
+                        button.removeAttr('disabled');
+                        if (!$('.delvac[disabled]').length) $('#id__save').removeAttr('disabled');
+                    }
+                });
+            });
+"#.to_owned()).into_owned()
+    } else { html };
     // Match one listener before inspecting its callback. A single regex that
     // searches for a classifier callback across arbitrary text can start at a
     // preceding calendar listener and swallow whole JavaScript functions.

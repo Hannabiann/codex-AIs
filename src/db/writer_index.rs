@@ -77,6 +77,9 @@ pub(super) fn candidate_from_image(
     deletions: &[(u32, bool)],
     base: std::sync::Arc<Vec<u8>>,
 ) -> Result<Vec<u8>, String> {
+    if base.len() >= 7 && u16at(&base, 5) == 0x612 {
+        return user_index::legacy_candidate(path, changes, deletions, base);
+    }
     if changes.is_empty() && deletions.len() == 1 {
         let (oid, hole) = deletions[0];
         if let Some(image) = insert::delete(path, oid, hole, base.clone())? {
@@ -102,9 +105,6 @@ pub(super) fn candidate_from_image(
         {
             return Err("duplicate DB40 index directory entry".into());
         }
-    }
-    if roots.get(&(65535, 2)).is_some_and(|r| r.1 != 0) {
-        return Err("DB40 write with a populated global word index is not implemented".into());
     }
     let schema = super::super::schema::Schema::read(path)?;
     let mut image = Image::new(base.as_ref().clone())?;
@@ -147,6 +147,9 @@ pub(super) fn candidate_from_image(
                 before.insert(oid, index.record(entry)?);
             }
         }
+    }
+    if roots.get(&(65535, 2)).is_some_and(|r| r.1 != 0) {
+        user_index::update(&mut index, &mut image, &mut roots, &schema, &before, &replacements, &affected)?;
     }
     let mut fields = BTreeSet::new();
     for &oid in &affected {

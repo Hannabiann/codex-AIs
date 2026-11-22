@@ -33,6 +33,31 @@ impl Date {
             .split(|c: char| c.is_whitespace() || c == ',')
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>();
+        // The duration calculator clones dates through toUTCString(). Dates
+        // internally use local calendar milliseconds, so invert gmt_string's
+        // offset after parsing the explicit GMT representation.
+        if words.len() == 6 && words[5].eq_ignore_ascii_case("GMT") {
+            let month = [
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            ]
+            .iter()
+            .position(|m| m.eq_ignore_ascii_case(words[2]))
+            .ok_or("invalid Date GMT month")?;
+            if !["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+                .iter()
+                .any(|d| d.eq_ignore_ascii_case(words[0]))
+            {
+                return Err("invalid Date GMT weekday".into());
+            }
+            let utc = Self::from_text(&format!(
+                "{}.{}.{} {}",
+                words[1],
+                month + 1,
+                words[3],
+                words[4]
+            ))?;
+            return Self::from_number(utc.millis - Self::offset()? as f64 * 60000.0);
+        }
         if words.len() == 3 {
             if let Some(month) = [
                 "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -103,7 +128,7 @@ impl Date {
         }
         Ok(Self { millis: n.trunc() })
     }
-    fn check_calendar(&self) -> Result<(), String> {
+    pub(super) fn check_calendar(&self) -> Result<(), String> {
         if self.millis < days(100, 1, 1) as f64 * DAY as f64
             || self.millis >= days(10000, 1, 1) as f64 * DAY as f64
         {

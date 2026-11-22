@@ -197,8 +197,13 @@ impl Sessions {
                 )
             {
                 let runtime = self.runtimes.get_mut(&dir.path).unwrap();
-                if let Some(reply) = distribution::guard_child(&engine, request).map_err(VmError)? {
-                    return Ok(reply);
+                // The native settings page is readable by authenticated /20a
+                // users. Keep the administrator check on changes and on the
+                // child operations, some of which can write during GET.
+                if object != "raspred_settings" || !matches!(request.method.as_str(), "GET" | "HEAD") {
+                    if let Some(reply) = distribution::guard_child(&engine, request).map_err(VmError)? {
+                        return Ok(reply);
+                    }
                 }
                 runtime.allow_distribution_writes(request.method == "POST");
                 if object == "raspred_settings" {
@@ -208,6 +213,17 @@ impl Sessions {
                         return Ok(reply);
                     }
                 }
+            }
+            if dir.path.trim_end_matches('/') == "/20a"
+                && object.eq_ignore_ascii_case("Raspred_Del_Auto")
+            {
+                // The native entry refreshes working judge factors while
+                // opening the form, before the assignment POST. Its compiled
+                // access checks still run for both requests.
+                self.runtimes
+                    .get_mut(&dir.path)
+                    .unwrap()
+                    .allow_distribution_writes(request.user.is_some());
             }
             let mut body = self.render_record(dir, record, object)?;
             if object == "raspred_settings" {
@@ -315,11 +331,13 @@ impl Sessions {
         object: &str,
     ) -> Result<Vec<u8>, VmError> {
         let runtime = self.runtimes.get_mut(&dir.path).unwrap();
-        if object == "raspred_settings" && record.source().is_none_or(|s| s.is_empty()) {
+        if (object == "raspred_settings" || object.eq_ignore_ascii_case("Raspred_Del_Auto"))
+            && record.source().is_none_or(|s| s.is_empty())
+        {
             let ast = ks::compiled::parse(
                 record
                     .code()
-                    .ok_or_else(|| VmError("compiled settings missing".into()))?,
+                    .ok_or_else(|| VmError("compiled script missing".into()))?,
             )
             .map_err(VmError)?;
             let html = runtime

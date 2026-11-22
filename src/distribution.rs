@@ -155,8 +155,12 @@ pub(super) fn refresh(
         return Ok(());
     }
     let key = branch(engine, dir)?;
-    let entries = db::writer::settings::read(&config.path, key, &setting_names())?;
-    for name in setting_names() {
+    // All HTTP executors must observe calendar ACL updates as well as the
+    // distribution settings after a config.db4 commit.
+    let mut names = setting_names();
+    names.push("AccessByUserForMakeVacation");
+    let entries = db::writer::settings::read(&config.path, key, &names)?;
+    for name in names {
         if !entries.iter().any(|e| e.name.eq_ignore_ascii_case(name)) {
             runtime.clear_directory_setting(name);
         }

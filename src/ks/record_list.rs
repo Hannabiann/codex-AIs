@@ -15,6 +15,23 @@ fn quoted(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 impl Runtime<'_> {
+    pub(super) fn list_area(&self, value: &Value, scope: u32) -> Result<u16, Fault> {
+        let area = match value {
+            Value::String(name) if !name.is_empty() && name.parse::<f64>().is_err() => {
+                let structure = self.member(self.database_for(scope)?, "Struct".into())?;
+                let definition = self.member(structure, name.clone())?;
+                if matches!(definition, Value::Null) {
+                    return Err(format!("List area absent: {name}").into());
+                }
+                self.member(definition, "Area".into())?.number()?
+            }
+            _ => value.number()?,
+        };
+        if !area.is_finite() || !(0.0..=65535.0).contains(&area) || area.fract() != 0.0 {
+            return Err("List area invalid".into());
+        }
+        Ok(area as u16)
+    }
     pub(super) fn list_set(
         &self,
         list: &mut RecordList,
@@ -30,7 +47,7 @@ impl Runtime<'_> {
         }
         match key {
             "Area" => {
-                list.area = field(&value)?;
+                list.area = self.list_area(&value, list.scope)?;
                 *list.ids.borrow_mut() = None;
             }
             "Order" => {

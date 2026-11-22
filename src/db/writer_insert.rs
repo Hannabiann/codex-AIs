@@ -380,7 +380,8 @@ pub(super) fn append(
         }
     }
     if roots.get(&(65535, 2)).is_some_and(|r| r.1 != 0) {
-        return Err("DB40 write with a populated global word index is not implemented".into());
+        // The checked rebuild path also updates the user login word index.
+        return Ok(None);
     }
     let schema = crate::db::schema::Schema::read(path)?;
     let area = schema
