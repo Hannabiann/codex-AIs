@@ -202,6 +202,12 @@ pub fn request_source<'a>(name: &str, source: &'a str) -> Cow<'a, str> {
                 var value = this['a' + deffield.Attr];
                 if (codex_p_merge == '1' && this['codex_absent_a' + deffield.Attr] == '1') value = null;"#, 1);
         fixed = fixed.replacen("switch(x.Code){", "if (x.codexPConflict) { __codexPConflict(); return; }\n        switch(x.Code){", 1);
+        // This form displays byte counts, not formatted text. Counting the
+        // decoded text stream also supports embedded objects and old style tables
+        // without invoking the HTML/RTF renderer or rewriting their metadata.
+        let count_start = fixed.find("for(i in fld){").unwrap();
+        let count_end = count_start + fixed[count_start..].find("{/ <OPTION > %tVal").unwrap();
+        fixed.replace_range(count_start..count_end, "tVal += __codex_TextFieldSize(fld);\n");
         fixed.push_str(P_CONFLICT_HELPER);
         return Cow::Owned(fixed);
     }
@@ -239,6 +245,14 @@ pub fn request_source<'a>(name: &str, source: &'a str) -> Cow<'a, str> {
             }
         }
         return Cow::Owned(updated);
+    }
+    // This getdoc source retains ordinal 12 from an older fixed projection;
+    // its current SELECT has OBJECT at position 9, before client attributes.
+    // Resolve by the explicit column name so variable Word fields cannot shift it.
+    if name.eq_ignore_ascii_case("getdoc")
+        && source.contains("var operator = 'SELECT \"Код исполнителя\",\"Код системы\",\"Идентификатор\",\"Год\",\"Редакция\",\"Работник\",\"Блокировка\",\"Последняя редакция\",OBJECT';")
+        && source.contains("var doc = result.getObject(12);") {
+        return Cow::Owned(source.replace("var doc = result.getObject(12);", "var doc = result.getObject('OBJECT');"));
     }
     if name.eq_ignore_ascii_case("getdelo") && source.contains("SELECT * FROM \"Дело\"") {
         return Cow::Owned(source.replace(

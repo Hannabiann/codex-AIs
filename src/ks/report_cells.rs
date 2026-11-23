@@ -63,6 +63,13 @@ impl Runtime<'_> {
         let Some(Value::Object(object)) = receiver else {
             return Err("text font receiver missing".into());
         };
+        if let [Value::Object(attributes)] = values {
+            object.borrow_mut().insert(
+                "\0font_default".into(),
+                Value::Object(Rc::new(RefCell::new(attributes.borrow().clone()))),
+            );
+            return Ok(Value::Null);
+        }
         if !(2..=3).contains(&values.len()) {
             return Err("SetFontAttributes expects attributes, start[, count]".into());
         }
@@ -70,6 +77,7 @@ impl Runtime<'_> {
             return Err("font attributes expected".into());
         };
         let length = match object.borrow().get("Text") {
+            Some(Value::ReadStream(text)) => text.borrow().data.len(),
             Some(Value::TextStream(text) | Value::RichStream(text)) => {
                 text.borrow().chars().count()
             }

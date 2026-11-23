@@ -311,12 +311,11 @@ impl Runtime<'_> {
             if root.starts_with(&path) && path.is_dir() {
                 return Ok(Value::AncestorDirectory(path));
             }
-            return Err(format!(
+            return Err(Fault::Script(Value::String(format!(
                 "File outside data root: resolved={}, root={}",
                 path.display(),
                 root.display()
-            )
-            .into());
+            ))));
         }
         Ok(Value::File(ReadFile::new(path)))
     }

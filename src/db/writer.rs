@@ -1,6 +1,8 @@
 //! DB40 record encoding. The commit path is kept separate from the KS API.
 use super::fields::{Field, Record, Value, MAX_FIELD};
 use std::io::Write;
+#[path = "rtf_import.rs"]
+pub(crate) mod rtf_import;
 #[path = "writer_counters.rs"]
 pub(crate) mod counters;
 #[path = "writer_kod.rs"]
@@ -73,6 +75,10 @@ fn text(out: &mut Vec<u8>, data: &[u8]) -> Result<(), String> {
     Ok(())
 }
 fn zlib(out: &mut Vec<u8>, data: &[u8]) -> Result<(), String> {
+    if data.is_empty() {
+        out.extend(0u32.to_le_bytes());
+        return Ok(());
+    }
     let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
     encoder.write_all(data).map_err(|e| e.to_string())?;
     let packed = encoder.finish().map_err(|e| e.to_string())?;

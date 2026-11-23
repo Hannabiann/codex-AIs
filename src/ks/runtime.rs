@@ -37,6 +37,10 @@ mod form_doc;
 mod record_list;
 #[path = "report_cells.rs"]
 mod report_cells;
+#[path = "report_document.rs"]
+mod report_document;
+#[path = "report_rtf.rs"]
+mod report_rtf;
 #[path = "report_text.rs"]
 mod report_text;
 
@@ -230,7 +234,9 @@ impl Value {
             Self::Null => false,
             Self::Bool(b) => *b,
             Self::Number(n) => *n != 0.0 && !n.is_nan(),
-            Self::Decimal(n) => n.coefficient != 0,
+            // Native LongDouble is an object: a stored zero still exists.
+            // Treating it as numeric false blanks money inputs on round-trip.
+            Self::Decimal(_) => true,
             Self::String(s) => !s.is_empty(),
             _ => true,
         }
@@ -341,6 +347,7 @@ pub struct Runtime<'a> {
     scopes: Vec<Object>,
     output: String,
     binary_output: Option<Vec<u8>>,
+    rtf_styles: RefCell<Option<Value>>,
     steps: usize,
     pub(crate) distribution_generation: u64,
     instruction_limit: Option<usize>,
@@ -414,6 +421,7 @@ impl<'a> Runtime<'a> {
             scopes: vec![Rc::new(RefCell::new(global))],
             output: String::new(),
             binary_output: None,
+            rtf_styles: RefCell::new(None),
             steps: 0,
             distribution_generation: 0,
             instruction_limit: None,
@@ -1147,6 +1155,7 @@ impl<'a> Runtime<'a> {
             "false" => Ok(Value::Bool(false)),
             "StartProfile"
             | "__codex_LinkFields"
+            | "__codex_TextFieldSize"
             | "__codex_PEditVersion"
             | "__codex_PEditCheck"
             | "__codex_PEditPrepare"
@@ -1167,6 +1176,7 @@ impl<'a> Runtime<'a> {
             | "Output"
             | "SetOutput"
             | "Document"
+            | "KodeksFormatRTFWriter"
             | "Array"
             | "Object"
             | "Math"
@@ -1410,6 +1420,7 @@ impl<'a> Runtime<'a> {
                     Value::Array(_) | Value::List(_) | Value::StoredField(_) | Value::Database(_)
                 );
                 let mut keys = match value {
+                    Value::RichField(f) => (0..f.borrow().parts.len()).map(|i|i.to_string()).collect(),
                     Value::StoredField(f) => (0..f.text_objects()?.len())
                         .map(|i| i.to_string())
                         .collect(),
@@ -1466,12 +1477,11 @@ impl<'a> Runtime<'a> {
                         keys.dedup();
                         keys
                     }
-                    Value::Array(o) => o
-                        .borrow()
-                        .keys()
-                        .filter(|k| k.as_str() != "length")
-                        .cloned()
-                        .collect(),
+                    Value::Array(o) => {
+                        let m=o.borrow();
+                        m.keys().filter(|k| k.as_str()!="length" && !k.starts_with('\0') &&
+                            (!m.contains_key("\0enumerate_numeric") || k.parse::<usize>().is_ok())).cloned().collect()
+                    }
                     Value::Document(oid, scope) => self
                         .doc_object(oid, scope)
                         .borrow()
@@ -1612,7 +1622,8 @@ impl<'a> Runtime<'a> {
                 return Err("prototype chain cycle/depth limit".into());
             }
             let m = o.borrow();
-            keys.extend(m.keys().filter(|k| !k.starts_with('\0')).cloned());
+            keys.extend(m.keys().filter(|k| !k.starts_with('\0') &&
+                (!m.contains_key("\0enumerate_numeric") || k.parse::<usize>().is_ok())).cloned());
             current = match m.get("\0prototype") {
                 Some(Value::Object(p)) => Some(p.clone()),
                 _ => None,
@@ -1621,6 +1632,14 @@ impl<'a> Runtime<'a> {
         Ok(keys.into_iter().collect())
     }
     fn member(&self, base: Value, key: String) -> Result<Value, Fault> {
+        if let Value::Object(o) = &base {
+            if let Some(Value::String(kind))=o.borrow().get("\0report_collection") {
+                if (kind=="rows" && matches!(key.as_str(),"Add"|"Remove")) ||
+                    (kind=="parts" && matches!(key.as_str(),"InsertText"|"InsertTable"|"Insert"|"TextLength")) {
+                    return Ok(Value::Native(format!("report.collection.{key}")));
+                }
+            }
+        }
         // HTTP argument names are case-insensitive on Connection objects,
         // including bracket access used by compiled KS (mp_g_this["name"]).
         if let Value::Object(object) = &base {
@@ -1640,6 +1659,9 @@ impl<'a> Runtime<'a> {
             }
         }
         match (base, key.as_str()) {
+            (Value::Native(n), "styles") if n=="KodeksFormatRTFWriter" => {
+                Ok(self.rtf_styles.borrow_mut().get_or_insert_with(report_rtf::styles).clone())
+            }
             (Value::Native(n), "ReadFromStream") if n == "Document" => {
                 Ok(Value::Native("Document.ReadFromStream".into()))
             }
@@ -1667,9 +1689,11 @@ impl<'a> Runtime<'a> {
                 .get(key.parse::<usize>().unwrap())
                 .cloned()
                 .unwrap_or(Value::Null)),
-            (Value::RichField(text), "InsertText" | "InsertList" | "MarkContext") => {
+            (Value::RichField(text), "InsertText" | "InsertTable" | "Insert" | "TextLength" | "InsertList" | "MarkContext") => {
                 Ok(Value::RichMethod(text, key))
             }
+            (Value::RichField(text), "length") => Ok(Value::Number(text.borrow().parts.len() as f64)),
+            (Value::RichField(text), _) if key.parse::<usize>().is_ok() => Ok(text.borrow().parts.get(key.parse::<usize>().unwrap()).cloned().map(Value::Object).unwrap_or(Value::Null)),
             (Value::FormTab(tab), "isEmpty") => Ok(Value::FormTabMethod(tab, key)),
             (Value::FormTab(tab), _) => Ok(match key.as_str() {
                 "name" => Value::String(tab.name.clone()),
@@ -1850,7 +1874,7 @@ impl<'a> Runtime<'a> {
                 }
                 Ok(Value::Null)
             }
-            (Value::TempDocument(d), "NewField" | "Compile" | "Execute") => {
+            (Value::TempDocument(d), "NewField" | "Compile" | "Execute" | "Attr" | "Lock" | "Unlock" | "Write") => {
                 Ok(Value::TempMethod(d, key))
             }
             (Value::TempDocument(d), _) => Ok(d
@@ -2355,6 +2379,14 @@ impl<'a> Runtime<'a> {
                                 }
                                 return Ok(Value::Signal(super::signal::Signal::named(&name)?));
                             }
+                            "RTFStylesForKodeks" | "RTFFieldsForKodeks" => {
+                                if !args.is_empty() { return Err("RTF mapping constructor expects no arguments".into()); }
+                                return Ok(Value::Object(Rc::new(RefCell::new(HashMap::from([
+                                    ("addEntry".into(), Value::Native("rtf.mapping".into())),
+                                    ("addForHyperlinks".into(), Value::Native("rtf.mapping".into())),
+                                    ("addForTOCentries".into(), Value::Native("rtf.mapping".into())),
+                                ])))));
+                            }
                             "CSSStyleSheet" => {
                                 if !args.is_empty() {
                                     return Err("CSSStyleSheet expects no arguments".into());
@@ -2689,6 +2721,8 @@ impl<'a> Runtime<'a> {
                 }
                 let v = self.eval(e)?;
                 if op == "typeof" {
+                    let field = match &v { Value::StoredField(f)=>Some(f.clone()), Value::WritableField(f)=>Some(f.snapshot()?), _=>None };
+                    if field.is_some_and(|f|f.data().wire_type==5) {return Ok(Value::String("LinkField".into()));}
                     if matches!(v, Value::Host(super::host::Handle::Rows(_))) {
                         return Ok(Value::String("JDBCResult".into()));
                     }
@@ -4110,6 +4144,9 @@ impl<'a> Runtime<'a> {
                 )])))))
             }
             Value::TempMethod(d, method) => {
+                if d.borrow().properties.borrow().contains_key("\0report") {
+                    return self.report_document_call(d, &method, &values);
+                }
                 if values.is_empty() || values.len() > if method == "Execute" { 2 } else { 1 } {
                     return Err("temporary document method arguments".into());
                 }
@@ -4172,11 +4209,22 @@ impl<'a> Runtime<'a> {
                     }
                     Ok(Value::String(d.borrow().gmt_string()?))
                 } else if method.starts_with("set") {
+                    let component = method.strip_prefix("setUTC")
+                        .or_else(|| method.strip_prefix("set"));
+                    if !matches!(component, Some("Time" | "FullYear" | "Month" | "Date"
+                        | "Hours" | "Minutes" | "Seconds" | "Milliseconds")) {
+                        return Err(format!("Date.{method} not implemented").into());
+                    }
+                    // Stored KS catches invalid optional Word dates in DocAttr.
+                    // Validation errors belong to that script's try/catch;
+                    // missing host bindings must still fail explicitly.
                     let nums = values
                         .iter()
                         .map(Value::number)
-                        .collect::<Result<Vec<_>, _>>()?;
-                    d.borrow_mut().set(&method, &nums)?;
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| Fault::Script(Value::String(e)))?;
+                    d.borrow_mut().set(&method, &nums)
+                        .map_err(|e| Fault::Script(Value::String(e)))?;
                     Ok(Value::Date(d))
                 } else {
                     if !values.is_empty() {
@@ -4300,6 +4348,7 @@ impl<'a> Runtime<'a> {
                     let html = self.abstract_html(oid, scope)?;
                     return Ok(Value::RichField(Rc::new(RefCell::new(
                         form_doc::RichText {
+                            report: false,
                             parts: vec![Rc::new(RefCell::new(HashMap::from([(
                                 "\0html".into(),
                                 Value::String(html),
@@ -4496,6 +4545,9 @@ impl<'a> Runtime<'a> {
                 Ok(Value::Bool(form_doc::is_empty_html(&html)))
             }
             Value::RichMethod(field, method) => {
+                if matches!(method.as_str(),"InsertText"|"InsertTable"|"Insert"|"TextLength") {
+                    return self.report_collection_call(&method,Value::RichField(field),&values);
+                }
                 if method == "MarkContext" {
                     if values.is_empty() || values.len() > 3 {
                         return Err("MarkContext expects text[, positions, advanced]".into());
@@ -4673,12 +4725,22 @@ impl<'a> Runtime<'a> {
             }
             Value::Native(n) => match n.as_str() {
                 "Document.ReadFromStream" => self.read_kod_document(&values),
+                "__codex_TextFieldSize" => {
+                    let [Value::StoredField(field)] = values.as_slice() else {
+                        return Err("Text field size expects one stored text attribute".into());
+                    };
+                    if field.data().wire_type != 4 {
+                        return Err("Text field size requires a text attribute".into());
+                    }
+                    Ok(Value::Number(crate::rich_text::attribute_text_size(field.data())? as f64))
+                }
                 "__codex_PEditVersion" => self.p_edit_version(&values),
                 "__codex_PEditCheck" => self.p_edit_check(&values),
                 "__codex_PEditPrepare" => self.p_edit_prepare(&values),
                 "__codex_PEditConflict" => self.p_edit_conflict(&values),
                 "__codex_ImportKod" => self.import_kod_document(&values),
                 "attachment.shell" => self.attachment_shell(&values),
+                n if n.starts_with("report.collection.") => self.report_collection_call(n.trim_start_matches("report.collection."),receiver.ok_or("Report receiver missing")?,&values),
                 "report.text.set_fonts" => self.report_set_font_attributes(receiver, &values),
                 "MkDir" | "Unlink" | "RmDir" => self.log_path_operation(&n, &values),
                 "SetOutput" => {
@@ -4702,6 +4764,13 @@ impl<'a> Runtime<'a> {
                 "path.SaveState" => self.save_path_settings(receiver, &values, false),
                 "path.SaveCalendarAccess" => self.save_path_settings(receiver, &values, true),
                 "field.InsertText" => self.writable_insert_text(receiver, &values),
+                "rtf.mapping" => {
+                    let Some(Value::Object(map)) = receiver else { return Err("RTF mapping receiver missing".into()); };
+                    let key=if values.len()==2 {values[0].text()}else{"converter".into()};
+                    let value=values.last().cloned().ok_or("RTF mapping value missing")?;
+                    map.borrow_mut().insert(key,value);
+                    Ok(Value::Null)
+                }
                 "field.FromStream" => self.writable_from_stream(receiver, &values),
                 "xml.Parse" => self.xml_parse(receiver, &values),
                 "xml.SetEncoding" => {
@@ -4823,6 +4892,11 @@ impl<'a> Runtime<'a> {
                         .ok_or("Database host missing")?
                         .borrow();
                     let page = host.object_page(scope, &sql, start as usize, size as usize)?;
+                    // Native empty SQL results are null. Keep the empty-list
+                    // branch, but retain a cursor for a page past a nonempty list.
+                    if page.estimated == 0 && page.ids.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     Ok(Value::Host(super::host::Handle::object_page(
                         scope, page, &sql,
                     )?))

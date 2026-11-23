@@ -449,6 +449,12 @@ impl Parser {
                 self.want(",")?;
             }
         }
+        // Native KS accepts `function f(); { ... }` (UnlockDoc).
+        // Require an explicit block: do not turn a prototype into a function
+        // that consumes the following unrelated statement.
+        if self.is(";") && self.tokens.get(self.at + 1).is_some_and(|t| &self.source[t.start..t.end] == "{") {
+            self.at += 1;
+        }
         let b = if self.is("{") {
             self.block()?
         } else {

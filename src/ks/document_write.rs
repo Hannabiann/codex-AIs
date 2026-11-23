@@ -192,6 +192,9 @@ impl Runtime<'_> {
         Ok(())
     }
     pub(super) fn new_edit_document(&self) -> Result<Value, Fault> {
+        if !self.document_write_allowed {
+            return self.new_report_document();
+        }
         self.new_edit_document_in(0)
     }
     pub(super) fn new_edit_document_in(&self, scope: u32) -> Result<Value, Fault> {
@@ -291,13 +294,15 @@ impl Runtime<'_> {
         if !matches!(key, "Value" | "Link") {
             return Err(format!("Unsupported writable field property {key}").into());
         }
-        let mut d = field.doc.borrow_mut();
+        let d = field.doc.borrow();
         d.check_lock()?;
         let old = d.field(field.index)?;
         if old.id == 1024 {
             return Err("Document identity is immutable".into());
         }
         let data = scalar(old.wire_type, &value)?;
+        drop(d);
+        let mut d = field.doc.borrow_mut();
         d.fields[field.index].as_mut().unwrap().value = data;
         Ok(())
     }
@@ -377,9 +382,11 @@ impl Runtime<'_> {
         let Some(Value::WritableField(field)) = receiver else {
             return Err("FromStream requires a writable field".into());
         };
-        let [Value::ReadStream(source)] = args else {
+        let Some(Value::ReadStream(source)) = args.first() else {
             return Err("FromStream expects a readable text stream".into());
         };
+        let rtf = args.get(1).is_some_and(|v| v.text().eq_ignore_ascii_case("RTF"));
+        if args.len()!=1 && !(rtf && args.len()==5) {return Err("Unsupported FromStream format or arguments".into());}
         let mut doc = field.doc.borrow_mut();
         doc.check_lock()?;
         if doc.imported || doc.field(field.index)?.wire_type != 4 {
@@ -389,7 +396,8 @@ impl Runtime<'_> {
         if source.closed { return Err("stream closed".into()); }
         let bytes = source.data.get(source.position..).ok_or("invalid stream position")?;
         if bytes.len() > 16 * 1024 * 1024 { return Err("text stream size limit".into()); }
-        let text = crate::db::writer::plain_text(bytes.to_vec())?;
+        let text = if rtf { crate::db::writer::rtf_import::parse(bytes)? }
+            else { crate::db::writer::plain_text(bytes.to_vec())? };
         doc.streams.remove(&field.index);
         doc.fields[field.index].as_mut().unwrap().value = text;
         source.position = source.data.len();
@@ -563,7 +571,7 @@ impl Runtime<'_> {
             if !(1..=2).contains(&args.len()) {
                 return Err("NewField expects attribute[, value]".into());
             }
-            let mut d = doc.borrow_mut();
+            let d = doc.borrow();
             d.check_lock()?;
             if d.fields.len() >= u16::MAX as usize {
                 return Err("Document field limit".into());
@@ -602,6 +610,8 @@ impl Runtime<'_> {
                     _ => return Err(format!("NewField type {kind} needs a value").into()),
                 }
             };
+            drop(d);
+            let mut d = doc.borrow_mut();
             let index = d.fields.len();
             d.fields.push(Some(Field {
                 id,

@@ -103,7 +103,7 @@ impl Runtime<'_> {
                 .chars()
                 .any(|c| c.is_control() || matches!(c, '"' | '*' | '?'))
         {
-            return Err("invalid attachment path".into());
+            return Err(Fault::Script(Value::String("invalid attachment path".into())));
         }
         let data = Path::new(
             self.data_root
@@ -112,13 +112,13 @@ impl Runtime<'_> {
         );
         let path = data.join(name.replace('\\', "/"));
         if path.components().any(|c| matches!(c, Component::ParentDir)) {
-            return Err("attachment path traversal".into());
+            return Err(Fault::Script(Value::String("attachment path traversal".into())));
         }
         for c in path.components() {
             if let Component::Normal(s) = c {
                 let s = s.to_string_lossy();
                 if s.contains(':') || s.ends_with([' ', '.']) {
-                    return Err("invalid attachment path component".into());
+                    return Err(Fault::Script(Value::String("invalid attachment path component".into())));
                 }
                 let base = s.split('.').next().unwrap_or("").to_ascii_uppercase();
                 if matches!(base.as_str(), "CON" | "NUL" | "PRN" | "AUX")
@@ -126,7 +126,7 @@ impl Runtime<'_> {
                         && base.len() == 4
                         && matches!(base.as_bytes()[3], b'1'..=b'9')
                 {
-                    return Err("attachment device name is not permitted".into());
+                    return Err(Fault::Script(Value::String("attachment device name is not permitted".into())));
                 }
             }
         }

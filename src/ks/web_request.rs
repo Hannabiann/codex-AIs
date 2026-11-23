@@ -342,7 +342,7 @@ impl Runtime<'_> {
                     && matches!(participant_mode.as_str(), "11"|"12"|"14"|"27"|"34")
                 || matches!(path, "/20a" | "/20a/")
                     && request.method == "POST"
-                    && matches!(command, "ispravlenieForm" | "DeleteObject"));
+                    && matches!(command, "ispravlenieForm" | "DeleteObject" | "statcard171" | "statcard111"));
         self.schedule_export_allowed = self.document_write_allowed
             && matches!(path, "/20a" | "/20a/") && command == "anshlag"
             && request.method == "POST";
@@ -697,6 +697,7 @@ impl Runtime<'_> {
         self.form_fields.borrow_mut().clear();
         self.context_marks.clear();
         self.rich_context_marks.clear();
+        self.rtf_styles.borrow_mut().take();
         if let Some((globals, directory, properties)) = self.request_baseline.take() {
             *self.scopes[0].borrow_mut() = globals;
             *directory.borrow_mut() = properties;

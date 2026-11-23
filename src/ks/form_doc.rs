@@ -29,6 +29,7 @@ pub(super) struct Tab {
 #[derive(Debug, Default)]
 pub(super) struct RichText {
     pub parts: Vec<Object>,
+    pub report: bool,
 }
 #[derive(Debug)]
 enum Part {
@@ -234,6 +235,9 @@ impl Runtime<'_> {
                 "documentArea".into(),
                 object([("propertiesWords".into(), Value::String(String::new()))]),
             );
+            let styles = super::report_rtf::styles();
+            *self.rtf_styles.borrow_mut() = Some(styles.clone());
+            fields.insert("\0styles".into(), styles);
         }
         for method in methods {
             fields.insert((*method).into(), Value::Native(format!("format.{method}")));
@@ -319,6 +323,11 @@ impl Runtime<'_> {
                     if writer.borrow().get("\0kind").map(Value::text).as_deref()
                         == Some("KodeksFormatRTFWriter")
                     {
+                        if matches!(&values[0], Value::RichField(_)) {
+                            self.binary_output = Some(super::report_rtf::render(&values[0], &writer)?);
+                            self.output.clear();
+                            return self.format_object("node", values);
+                        }
                         let page = match writer.borrow().get("documentArea") {
                             Some(Value::Object(o)) => o
                                 .borrow()

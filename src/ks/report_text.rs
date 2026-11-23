@@ -98,11 +98,35 @@ pub(super) fn item(item: &crate::rich_text::Item, bytes: &[u8]) -> Result<Value,
                     );
                     if let Value::Array(a) = &value {
                         a.borrow_mut()
+                            .insert("\0enumerate_numeric".into(), Value::Bool(true));
+                        a.borrow_mut()
                             .insert("Width".into(), Value::Number(cell.width as f64));
+                        for (bit, name) in
+                            ["BorderTop", "BorderLeft", "BorderBottom", "BorderRight"]
+                                .iter()
+                                .enumerate()
+                        {
+                            a.borrow_mut().insert(
+                                (*name).into(),
+                                Value::Number(if cell.borders & (1 << bit) != 0 {
+                                    1.0
+                                } else {
+                                    0.0
+                                }),
+                            );
+                        }
                     }
                     cells.push(value);
                 }
-                out.push(array(cells));
+                let value = array(cells);
+                if let Value::Array(a) = &value {
+                    a.borrow_mut()
+                        .insert("\0enumerate_numeric".into(), Value::Bool(true));
+                    a.borrow_mut()
+                        .insert("Gap".into(), Value::Number(row.padding as f64));
+                    a.borrow_mut().insert("Margin".into(), Value::Number(row.margin as f64));
+                }
+                out.push(value);
             }
             if at != children.len() {
                 return Err("report table has unassigned child objects".into());

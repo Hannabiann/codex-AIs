@@ -170,6 +170,11 @@ fn zcompressed(c: &mut Cursor<'_>) -> Result<Vec<u8>> {
     if expected > MAX_FIELD {
         return Err(err(at, "zlib output exceeds size limit"));
     }
+    // Native empty ZCmprBinField ends at this length DWORD. No zlib frame
+    // follows: the next bytes belong to the binary kind and file metadata.
+    if expected == 0 {
+        return Ok(Vec::new());
+    }
     let mut packed = Vec::new();
     let (mut a, mut b) = (1u32, 0u32);
     loop {

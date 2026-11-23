@@ -35,6 +35,7 @@ pub struct Cell {
 pub struct Row {
     pub cells: Vec<Cell>,
     pub padding: u16,
+    pub margin: i16,
 }
 struct Cursor<'a> {
     bytes: &'a [u8],
@@ -101,7 +102,7 @@ pub fn items(field: &Field) -> Result<Vec<Item>, String> {
         at: 0,
     };
     let mut start = 0usize;
-    let out = read_items(&mut c, text.len(), &mut start, 0, &mut 10000)?;
+    let out = read_items(&mut c, text.len(), &mut start, 0, &mut 10000, false)?;
     if c.at != data.len() || start != text.len() {
         return Err(format!(
             "rich text metadata/text length mismatch: {} of {}, {start} of {}",
@@ -112,6 +113,22 @@ pub fn items(field: &Field) -> Result<Vec<Item>, String> {
     }
     Ok(out)
 }
+/// Sum the Text streams exposed by the top-level native field enumerator.
+/// Tables/pictures have no Text property. The property editor does not need to
+/// render hyperlinks, OLE data or the optional style dictionary after the runs.
+pub fn attribute_text_size(field: &Field) -> Result<usize, String> {
+    let text = document::bytes(field)?;
+    if text.is_empty() || document::metadata(field).is_empty() { return Ok(text.len()); }
+    let data = unpack(document::metadata(field))?;
+    let mut c = Cursor { bytes: &data, at: 0 };
+    let mut start = 0;
+    let objects = read_items(&mut c, text.len(), &mut start, 0, &mut 10000, true)?;
+    if start != text.len() { return Err("text object lengths do not cover field".into()); }
+    Ok(objects.iter().map(|item| match item {
+        Item::Text { length, .. } => *length,
+        _ => 0,
+    }).sum())
+}
 /// Text controls 0/1 delimit emphasis; literal markup remains escaped.
 fn read_items(
     c: &mut Cursor<'_>,
@@ -119,6 +136,7 @@ fn read_items(
     start: &mut usize,
     depth: usize,
     budget: &mut usize,
+    size_only: bool,
 ) -> Result<Vec<Item>, String> {
     if depth > 16 {
         return Err("table nesting limit".into());
@@ -154,6 +172,10 @@ fn read_items(
                             } else {
                                 0
                             });
+                        }
+                        5 if size_only => {
+                            // Native link descriptor: DWORD + 32-byte target (006293d0).
+                            c.take(36)?;
                         }
                         5 => return Err("rich text linked attribute is not implemented".into()),
                         _ => {
@@ -239,9 +261,12 @@ fn read_items(
                             cell.borders = (data[6 + i / 2] >> ((i % 2) * 4)) & 15;
                         }
                     }
-                    rows.push(Row { cells, padding });
+                    // Row format occupies the first WORD, followed by the
+                    // signed left margin and the cell padding, in screen units.
+                    let margin = i16::from_le_bytes([data[2], data[3]]);
+                    rows.push(Row { cells, padding, margin });
                 }
-                let children = read_items(c, text_len, start, depth + 1, budget)?;
+                let children = read_items(c, text_len, start, depth + 1, budget, size_only)?;
                 if total != children.len() {
                     return Err("table cell object count mismatch".into());
                 }

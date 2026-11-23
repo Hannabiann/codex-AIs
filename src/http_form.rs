@@ -159,6 +159,13 @@ fn add(
         return Ok(());
     }
     if let Some((_, previous)) = out.iter_mut().find(|(k, _)| *k == key) {
+        // Native statistical-card fragments repeat these hidden controls.
+        // A differing object/mode remains an ambiguous request.
+        if matches!(command, "statcard171" | "statcard111")
+            && matches!(key.as_str(), "mode" | "numofstatcard")
+            && (*previous == value || key=="mode" && value=="0" && previous.parse::<u8>().is_ok_and(|n| n<=2)) {
+            return Ok(());
+        }
         // The native registration templates emit an initial hidden value and
         // then the current value again near the participant/document controls.
         if matches!(command, "regdelo" | "regdoc")
@@ -192,7 +199,11 @@ fn add(
             && previous
                 .split(';')
                 .all(|v| v.parse::<u32>().is_ok_and(|n| n != 0));
-        let multi = category
+        let stat_attribute = matches!(command,"statcard171"|"statcard111") && key.strip_prefix('a').is_some_and(|s|{
+            let digits=s.bytes().take_while(u8::is_ascii_digit).count();
+            digits>0 && matches!(&s[digits..], ""|"date"|"double"|"event")
+        });
+        let multi = stat_attribute || category
             || vacation
             || user_groups
             || key == "tipdoc"
@@ -213,6 +224,12 @@ fn add(
         }
         if previous.len() + value.len() + 1 > 65536 {
             return Err("form field value limit".into());
+        }
+        // A hidden empty control precedes a checked statistical-card checkbox.
+        // Native KS receives the selected value without a leading separator.
+        if stat_attribute && previous.is_empty() {
+            *previous = value;
+            return Ok(());
         }
         previous.push(';');
         previous.push_str(&value);

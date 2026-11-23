@@ -33,6 +33,13 @@ impl Date {
             .split(|c: char| c.is_whitespace() || c == ',')
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>();
+        // Statistical-card inputs use the native long Russian date format.
+        if matches!(words.len(),3|4) && (words.len()==3 || matches!(words[3],"г."|"г")) {
+            if let Some(month)=["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"].iter().position(|m| words[1].eq_ignore_ascii_case(m)) {
+                let day=words[0].trim_matches('"');
+                return Self::from_text(&format!("{}.{}.{}",day,month+1,words[2]));
+            }
+        }
         // The duration calculator clones dates through toUTCString(). Dates
         // internally use local calendar milliseconds, so invert gmt_string's
         // offset after parsing the explicit GMT representation.
