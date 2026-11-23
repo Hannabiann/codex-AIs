@@ -35,12 +35,15 @@ impl Runtime<'_> {
             .ok_or("attachment registry missing")?;
         let mut roots = vec![self.attachment_temp_base()?];
         let mut keys = vec![registry.root];
-        // Settings are inherited from Web and overridden by the active catalog.
+        // Word's PDF scripts run in /99 but explicitly read repositories from
+        // /20a through mp_CReg. Keep those reads and writes in the same roots.
+        let catalog = self.path.trim_end_matches('/');
         for &key in &registry.key(registry.root)?.children {
             if registry.query(key, "Path")?.is_some_and(|e| {
                 e.value
                     .trim_end_matches('/')
-                    .eq_ignore_ascii_case(self.path.trim_end_matches('/'))
+                    .eq_ignore_ascii_case(catalog)
+                    || catalog == "/99" && e.value.trim_end_matches('/') == "/20a"
             }) {
                 keys.push(key);
             }

@@ -24,6 +24,10 @@ impl From<String> for DeleteError {
     }
 }
 pub trait DatabaseHost {
+    /// Locate a bounded cursor window without loading its records.
+    fn prepare_cursor(&self, _scope: u32, _oids: &[u32]) -> Result<(), String> {
+        Ok(())
+    }
     fn object_page(
         &self,
         _scope: u32,
@@ -134,6 +138,150 @@ pub trait DatabaseHost {
     ) -> Result<crate::db::free_text::ResultData, String> {
         Ok(Default::default())
     }
+    /// Full list cursors retain identities and decode just their current row.
+    /// Callers opt in only for read-only scans that do not require frozen cells.
+    fn select_cursor(&self, scope: u32, sql: &str) -> Result<super::host::QueryData, String> {
+        if super::sql_join::parse(sql)?.is_some() {
+            return self.select(scope, sql);
+        }
+        let q = super::sql::parse(sql)?;
+        if !q.projection.has_fields() {
+            return self.select(scope, sql);
+        }
+        let schema = self.shared_schema(scope)?;
+        let area = schema
+            .area(&q.area)
+            .ok_or_else(|| format!("Unknown SQL area {}", q.area))?;
+        q.fields(area)?;
+        Ok(super::host::QueryData {
+            area: Some(area.id),
+            oids: self.query(scope, sql)?,
+            cells: Vec::new(),
+            fulltext: self.fulltext_result(scope, sql)?,
+        })
+    }
+    fn project_row(
+        &self,
+        scope: u32,
+        oid: u32,
+        area: u16,
+        fields: &[Option<(u16, u16)>],
+    ) -> Result<Vec<super::host::ColumnValues>, String> {
+        use super::host::ColumnValues;
+        crate::execution::check()?;
+        let record = self
+            .read(scope, oid)?
+            .ok_or_else(|| format!("SQL result OID {oid} missing from DataBase({scope})"))?;
+        if record.area != area {
+            return Err(format!("SQL result area mismatch for OID {oid}"));
+        }
+        let mut row = Vec::with_capacity(fields.len());
+        for field in fields {
+            let Some((id, kind)) = *field else {
+                row.push(ColumnValues::Identity);
+                continue;
+            };
+            if matches!(kind, 4 | 8 | 14) {
+                row.push(ColumnValues::StreamRef {
+                    oid: oid,
+                    field: id,
+                    kind,
+                });
+                continue;
+            }
+            if kind == 1 || kind == 12 {
+                let mut values = Vec::new();
+                for f in record
+                    .fields
+                    .iter()
+                    .filter(|f| f.id == id && f.wire_type == kind)
+                {
+                    let p = match &f.value {
+                        crate::db::fields::Value::Date(b) => [
+                            i16::from_le_bytes([b[0], b[1]]) as i64,
+                            b[2] as i64 - 1,
+                            b[3] as i64,
+                            0,
+                            0,
+                            0,
+                            0,
+                        ],
+                        crate::db::fields::Value::Timestamp(b) => [
+                            u16::from_be_bytes([b[0], b[1]]) as i64,
+                            b[2] as i64 - 1,
+                            b[3] as i64,
+                            b[4] as i64,
+                            b[5] as i64,
+                            b[6] as i64,
+                            b[7] as i64 * 10,
+                        ],
+                        _ => return Err("SQL date field type mismatch".into()),
+                    };
+                    values.push(super::date::Date::from_parts(p)?.millis);
+                }
+                row.push(ColumnValues::Dates(values));
+                continue;
+            }
+            if kind == 13 {
+                let values = record
+                    .fields
+                    .iter()
+                    .filter(|f| f.id == id && f.wire_type == kind)
+                    .map(|f| match &f.value {
+                        crate::db::fields::Value::Decimal(b) => Ok(*b),
+                        _ => Err("SQL decimal field type mismatch".to_string()),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                row.push(ColumnValues::Decimals(values));
+                continue;
+            }
+            if kind == 5 {
+                let mut values = Vec::new();
+                for f in record
+                    .fields
+                    .iter()
+                    .filter(|f| f.id == id && f.wire_type == kind)
+                {
+                    let crate::db::fields::Value::Integer(value) = f.value else {
+                        return Err(format!(
+                            "SQL link projection type mismatch: OID {oid}, field {id}"
+                        ));
+                    };
+                    if f.wire_type != kind {
+                        return Err(format!("SQL field {id} wire/schema type mismatch"));
+                    }
+                    values.push(value);
+                }
+                row.push(ColumnValues::Links(values));
+                continue;
+            }
+            // Keep storage order for array access. Scalar string access
+            // chooses the final occurrence (verified with native reports).
+            let mut values = Vec::new();
+            for f in record
+                .fields
+                .iter()
+                .filter(|f| f.id == id && f.wire_type == kind)
+            {
+                let crate::db::fields::Value::String(raw) = &f.value else {
+                    return Err(format!(
+                        "SQL string projection type mismatch: OID {oid}, field {id}"
+                    ));
+                };
+                if f.wire_type != kind {
+                    return Err(format!("SQL field {id} wire/schema type mismatch"));
+                }
+                // Keep the per-field guard; the total result has no 4 MiB cap.
+                if raw.len() > 4 * 1024 * 1024 {
+                    return Err("SQL string field byte limit".into());
+                }
+                let text = crate::db::decode(raw);
+                values.push(text);
+            }
+            row.push(ColumnValues::Strings(values));
+        }
+        Ok(row)
+    }
     fn select(&self, scope: u32, sql: &str) -> Result<super::host::QueryData, String> {
         if let Some(data) = self.select_indexed(scope, sql)? {
             return Ok(data);
@@ -144,7 +292,6 @@ pub trait DatabaseHost {
                 sql.chars().take(2048).collect::<String>()
             );
         }
-        use super::host::ColumnValues;
         if let Some(join) = super::sql_join::parse(sql)? {
             return join.execute(self, scope);
         }
@@ -174,135 +321,16 @@ pub trait DatabaseHost {
         if oids.len() > super::sql::MAX_SQL_ROWS {
             return Err("SQL row limit".into());
         }
-        let mut cells = Vec::with_capacity(oids.len());
-        let mut bytes = 0usize;
+        // A complete postal-range list exceeds the old 4 MiB aggregate cap.
+        // Preserve every projected row; allocation failures and cancellation
+        // remain explicit errors rather than silently truncating the result.
+        let mut cells = Vec::new();
+        cells
+            .try_reserve(oids.len())
+            .map_err(|e| format!("SQL result allocation: {e}"))?;
         for oid in &oids {
-            let record = self
-                .read(scope, *oid)?
-                .ok_or_else(|| format!("SQL result OID {oid} missing from DataBase({scope})"))?;
-            if record.area != area.id {
-                return Err(format!("SQL result area mismatch for OID {oid}"));
-            }
-            let mut row = Vec::with_capacity(fields.len());
-            for field in &fields {
-                let Some((id, kind)) = *field else {
-                    row.push(ColumnValues::Identity);
-                    continue;
-                };
-                if matches!(kind, 4 | 8 | 14) {
-                    row.push(ColumnValues::StreamRef {
-                        oid: *oid,
-                        field: id,
-                        kind,
-                    });
-                    continue;
-                }
-                if kind == 1 || kind == 12 {
-                    let mut values = Vec::new();
-                    for f in record
-                        .fields
-                        .iter()
-                        .filter(|f| f.id == id && f.wire_type == kind)
-                    {
-                        let p = match &f.value {
-                            crate::db::fields::Value::Date(b) => [
-                                i16::from_le_bytes([b[0], b[1]]) as i64,
-                                b[2] as i64 - 1,
-                                b[3] as i64,
-                                0,
-                                0,
-                                0,
-                                0,
-                            ],
-                            crate::db::fields::Value::Timestamp(b) => [
-                                u16::from_be_bytes([b[0], b[1]]) as i64,
-                                b[2] as i64 - 1,
-                                b[3] as i64,
-                                b[4] as i64,
-                                b[5] as i64,
-                                b[6] as i64,
-                                b[7] as i64 * 10,
-                            ],
-                            _ => return Err("SQL date field type mismatch".into()),
-                        };
-                        values.push(super::date::Date::from_parts(p)?.millis);
-                    }
-                    bytes += values.len() * 8;
-                    if bytes > 4 * 1024 * 1024 {
-                        return Err("SQL result byte limit".into());
-                    }
-                    row.push(ColumnValues::Dates(values));
-                    continue;
-                }
-                if kind == 13 {
-                    let values = record
-                        .fields
-                        .iter()
-                        .filter(|f| f.id == id && f.wire_type == kind)
-                        .map(|f| match &f.value {
-                            crate::db::fields::Value::Decimal(b) => Ok(*b),
-                            _ => Err("SQL decimal field type mismatch".to_string()),
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    bytes += values.len() * 34;
-                    if bytes > 4 * 1024 * 1024 {
-                        return Err("SQL result byte limit".into());
-                    }
-                    row.push(ColumnValues::Decimals(values));
-                    continue;
-                }
-                if kind == 5 {
-                    let mut values = Vec::new();
-                    for f in record
-                        .fields
-                        .iter()
-                        .filter(|f| f.id == id && f.wire_type == kind)
-                    {
-                        let crate::db::fields::Value::Integer(value) = f.value else {
-                            return Err(format!(
-                                "SQL link projection type mismatch: OID {oid}, field {id}"
-                            ));
-                        };
-                        if f.wire_type != kind {
-                            return Err(format!("SQL field {id} wire/schema type mismatch"));
-                        }
-                        bytes += 4;
-                        if bytes > 4 * 1024 * 1024 {
-                            return Err("SQL result byte limit".into());
-                        }
-                        values.push(value);
-                    }
-                    row.push(ColumnValues::Links(values));
-                    continue;
-                }
-                // Keep storage order for array access. Scalar string access
-                // chooses the final occurrence (verified with native reports).
-                let mut values = Vec::new();
-                for f in record
-                    .fields
-                    .iter()
-                    .filter(|f| f.id == id && f.wire_type == kind)
-                {
-                    let crate::db::fields::Value::String(raw) = &f.value else {
-                        return Err(format!(
-                            "SQL string projection type mismatch: OID {oid}, field {id}"
-                        ));
-                    };
-                    if f.wire_type != kind {
-                        return Err(format!("SQL field {id} wire/schema type mismatch"));
-                    }
-                    if raw.len() > 4 * 1024 * 1024 - bytes {
-                        return Err("SQL string result byte limit".into());
-                    }
-                    let text = crate::db::decode(raw);
-                    bytes += text.len();
-                    if bytes > 4 * 1024 * 1024 {
-                        return Err("SQL string result byte limit".into());
-                    }
-                    values.push(text);
-                }
-                row.push(ColumnValues::Strings(values));
-            }
+            crate::execution::check()?;
+            let row = self.project_row(scope, *oid, area.id, &fields)?;
             cells.push(row);
         }
         Ok(super::host::QueryData {

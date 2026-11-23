@@ -9,6 +9,10 @@ struct State {
     flags: u32,
     align: u16,
     star: bool,
+    table_depth: usize,
+    caps: bool,
+    font: u32,
+    font_table: bool,
 }
 #[derive(Default)]
 struct Paragraph {
@@ -50,7 +54,16 @@ impl Paragraph {
             self.active = state.flags;
         }
         self.align = state.align;
-        self.bytes.extend_from_slice(bytes);
+        if state.caps {
+            // Leave the legacy line-drawing codes untouched.
+            self.bytes.extend(bytes.iter().map(|b| match *b {
+                b'a'..=b'z' | 0xe0..=0xff => b - 32,
+                0xb8 => 0xa8,
+                _ => *b,
+            }));
+        } else {
+            self.bytes.extend_from_slice(bytes);
+        }
     }
     fn finish(&mut self) -> Part {
         let mut p = std::mem::take(self);
@@ -203,9 +216,12 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
     let mut parts = Vec::new();
     let mut cell = Vec::new();
     let mut row: Option<Row> = None;
+    let mut parent_rows: Vec<(Row, Vec<Part>)> = Vec::new();
     let mut i = 0;
     let mut fallback = 0;
     let mut codepage = 1252;
+    let mut default_font = 0;
+    let mut font_pages = std::collections::HashMap::new();
     let mut surrogate = None;
     while i < input.len() {
         let b = input[i];
@@ -242,7 +258,12 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
                     if fallback > 0 {
                         fallback -= 1;
                     } else if !state.skip {
-                        put_encoded(&mut p, v, codepage, &state)?;
+                        put_encoded(
+                            &mut p,
+                            v,
+                            *font_pages.get(&state.font).unwrap_or(&codepage),
+                            &state,
+                        )?;
                     }
                     continue;
                 }
@@ -303,10 +324,33 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
                     }
                     continue;
                 }
-                if state.star && !matches!(control, "fldrslt" | "shppict") {
+                if state.star && !matches!(control, "fldrslt" | "shppict" | "nesttableprops") {
                     state.skip = true;
                 }
                 state.star = false;
+                if control == "fonttbl" {
+                    state.font_table = true;
+                }
+                if state.font_table {
+                    if control == "f" {
+                        state.font =
+                            u32::try_from(n.unwrap_or(-1)).map_err(|_| "Invalid RTF font")?;
+                    }
+                    if control == "fcharset" {
+                        match n {
+                            Some(204) => {
+                                font_pages.insert(state.font, 1251);
+                            }
+                            Some(0 | 1) => {
+                                font_pages.insert(state.font, codepage);
+                            }
+                            _ => {}
+                        }
+                    }
+                    if control == "cpg" {
+                        font_pages.insert(state.font, n.ok_or("Missing RTF font code page")?);
+                    }
+                }
                 if matches!(
                     control,
                     "fonttbl"
@@ -324,6 +368,7 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
                         | "colorschememapping"
                         | "fldinst"
                         | "nonshppict"
+                        | "nonesttables"
                 ) {
                     state.skip = true;
                 }
@@ -333,6 +378,11 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
                 let v = n.unwrap_or(1);
                 match control {
                     "ansicpg" => codepage = v,
+                    "deff" => {
+                        default_font = u32::try_from(v).map_err(|_| "Invalid RTF default font")?;
+                        state.font = default_font;
+                    }
+                    "f" => state.font = u32::try_from(v).map_err(|_| "Invalid RTF font")?,
                     "uc" => {
                         state.uc = usize::try_from(v)
                             .ok()
@@ -360,13 +410,7 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
                                 char::from_u32(unit as u32)
                             };
                             let c = c.ok_or("Invalid RTF Unicode")?;
-                            let mut buf = [0; 4];
-                            let (bytes, _, bad) =
-                                encoding_rs::WINDOWS_1251.encode(c.encode_utf8(&mut buf));
-                            if bad {
-                                return Err("RTF character is not representable in native Windows-1251 text".into());
-                            }
-                            p.put(&bytes, &state);
+                            put_unicode(&mut p, c, &state)?;
                         }
                         fallback = state.uc;
                     }
@@ -384,8 +428,41 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
                         }
                     }
                     "ulnone" => state.flags &= !4,
-                    "plain" => state.flags = 0,
-                    "pard" => state.align = 0,
+                    "plain" => {
+                        state.flags = 0;
+                        state.caps = false;
+                        state.font = default_font;
+                    }
+                    "caps" => state.caps = v != 0,
+                    "pard" => {
+                        state.align = 0;
+                        state.table_depth = 0;
+                    }
+                    "intbl" => {
+                        state.table_depth = state.table_depth.max(1);
+                        // Subsequent Word rows may put their properties after
+                        // the cell content, without an opening trowd.
+                        if row.is_none() {
+                            flush(&mut p, &mut parts, &mut cell, false, false);
+                            row = Some(Row::default());
+                        }
+                    }
+                    "itap" => {
+                        let depth = usize::try_from(v)
+                            .ok()
+                            .filter(|d| *d <= 16)
+                            .ok_or("RTF table nesting limit")?;
+                        state.table_depth = depth;
+                        if depth > 1 && depth > parent_rows.len() + 1 {
+                            if depth != parent_rows.len() + 2 {
+                                return Err("RTF table nesting gap".into());
+                            }
+                            let outer = row.take().ok_or("Nested RTF table has no parent row")?;
+                            flush(&mut p, &mut parts, &mut cell, true, false);
+                            parent_rows.push((outer, std::mem::take(&mut cell)));
+                            row = Some(Row::default());
+                        }
+                    }
                     "ql" => state.align = 0,
                     "qr" => state.align = 1,
                     "qc" => state.align = 2,
@@ -401,11 +478,16 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
                     "ldblquote" => p.put(&[0x93], &state),
                     "rdblquote" => p.put(&[0x94], &state),
                     "trowd" => {
-                        if row.is_some() {
-                            return Err("Nested RTF tables are not supported".into());
+                        if let Some(r) = row.as_mut() {
+                            // Word repeats row properties after the cell content.
+                            // Replace the properties, retaining the completed cells.
+                            r.widths.clear();
+                            r.left = 0;
+                            r.gap = 0;
+                        } else {
+                            flush(&mut p, &mut parts, &mut cell, false, false);
+                            row = Some(Row::default());
                         }
-                        flush(&mut p, &mut parts, &mut cell, false, false);
-                        row = Some(Row::default());
                     }
                     "trleft" => {
                         if let Some(r) = &mut row {
@@ -418,28 +500,45 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
                         }
                     }
                     "cellx" => {
-                        let r = row.as_mut().ok_or("RTF cell outside row")?;
+                        let r = row
+                            .as_mut()
+                            .ok_or_else(|| format!("RTF cell properties outside row at {i}"))?;
                         let end = v / 15;
                         let old = r.left as i32 + r.widths.iter().map(|v| *v as i32).sum::<i32>();
                         r.widths
                             .push((end - old).try_into().map_err(|_| "RTF cell width")?);
                     }
-                    "cell" => {
+                    "cell" | "nestcell" => {
+                        if control == "nestcell" && parent_rows.is_empty() {
+                            return Err("RTF nested cell has no parent".into());
+                        }
                         let empty = cell.is_empty();
                         flush(&mut p, &mut parts, &mut cell, true, empty);
-                        let r = row.as_mut().ok_or("RTF cell outside row")?;
+                        let r = row
+                            .as_mut()
+                            .ok_or_else(|| format!("RTF cell outside row at {i}"))?;
                         r.cells.push(std::mem::take(&mut cell));
                     }
-                    "row" => {
+                    "row" | "nestrow" => {
                         if !p.bytes.is_empty() || !cell.is_empty() {
                             return Err("Unclosed RTF cell".into());
                         }
-                        parts.push(table(row.take().ok_or("RTF row missing")?)?);
+                        let part = table(row.take().ok_or("RTF row missing")?)?;
+                        if control == "nestrow" {
+                            let (outer, mut outer_cell) =
+                                parent_rows.pop().ok_or("RTF nested row has no parent")?;
+                            outer_cell.push(part);
+                            cell = outer_cell;
+                            row = Some(outer);
+                        } else {
+                            if !parent_rows.is_empty() {
+                                return Err("RTF outer row ends inside nested table".into());
+                            }
+                            parts.push(part);
+                        }
                     }
                     "pict" => picture(input, &mut i)?,
-                    "object" | "nesttableprops" => {
-                        return Err(format!("Unsupported RTF object: {control}"))
-                    }
+                    "object" => return Err(format!("Unsupported RTF object: {control}")),
                     _ => {}
                 }
             }
@@ -447,7 +546,12 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
                 if fallback > 0 {
                     fallback -= 1;
                 } else if !state.skip {
-                    put_encoded(&mut p, b, codepage, &state)?;
+                    put_encoded(
+                        &mut p,
+                        b,
+                        *font_pages.get(&state.font).unwrap_or(&codepage),
+                        &state,
+                    )?;
                 }
             }
         }
@@ -462,7 +566,7 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
             return Err("RTF object limit".into());
         }
     }
-    if !stack.is_empty() || row.is_some() || surrogate.is_some() {
+    if !stack.is_empty() || row.is_some() || !parent_rows.is_empty() || surrogate.is_some() {
         return Err("Incomplete RTF document".into());
     }
     let empty = parts.is_empty();
@@ -485,6 +589,39 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
         metadata.extend(chunk);
     }
     Ok(Value::TextWithMetadata { data, metadata })
+}
+fn put_unicode(p: &mut Paragraph, c: char, state: &State) -> Result<(), String> {
+    // Native text has a legacy box-drawing alphabet in the 0x80..0x8f range.
+    // Preserve those codes rather than substituting RTF's lossy ANSI fallback.
+    let special = match c {
+        '\u{2002}' => Some(b' '),
+        '\u{2500}' => Some(0x83),
+        '\u{2518}' => Some(0x85),
+        '\u{2514}' => Some(0x86),
+        '\u{2534}' => Some(0x87),
+        '\u{2510}' => Some(0x89),
+        '\u{250c}' => Some(0x8a),
+        '\u{252c}' => Some(0x8b),
+        '\u{2502}' => Some(0x8c),
+        '\u{2524}' => Some(0x8d),
+        '\u{251c}' => Some(0x8e),
+        '\u{253c}' => Some(0x8f),
+        _ => None,
+    };
+    if let Some(b) = special {
+        p.put(&[b], state);
+        return Ok(());
+    }
+    let mut buf = [0; 4];
+    let (bytes, _, bad) = encoding_rs::WINDOWS_1251.encode(c.encode_utf8(&mut buf));
+    if bad {
+        return Err(format!(
+            "RTF character U+{:04X} is not representable in native text",
+            c as u32
+        ));
+    }
+    p.put(&bytes, state);
+    Ok(())
 }
 fn put_encoded(p: &mut Paragraph, b: u8, codepage: i32, state: &State) -> Result<(), String> {
     if b < 128 || codepage == 1251 {

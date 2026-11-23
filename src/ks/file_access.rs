@@ -5,11 +5,11 @@ use std::path::{Component, Path, PathBuf};
 #[derive(Debug)]
 pub(super) struct WriteFile {
     pub name: String,
-    pub file: Rc<RefCell<std::fs::File>>,
+    pub file: Rc<RefCell<Option<std::fs::File>>>,
 }
 impl WriteFile {
     fn new(name: &str, file: std::fs::File) -> Rc<Self> {
-        Rc::new(Self { name: name.into(), file: Rc::new(RefCell::new(file)) })
+        Rc::new(Self { name: name.into(), file: Rc::new(RefCell::new(Some(file))) })
     }
 }
 

@@ -53,6 +53,32 @@ mod xml_report;
 #[path = "xml_sax.rs"]
 pub(crate) mod xml_sax;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
+
+// Native KS treats '[' inside a character class as a literal. Rust regex
+// accepts nested classes, which silently changes the native JSON tokenizer.
+// POSIX classes such as [[:digit:]] retain their existing meaning.
+fn legacy_regex_pattern(pattern: &str) -> String {
+    let mut out=String::with_capacity(pattern.len());
+    let mut chars=pattern.chars().peekable();
+    let mut in_class=false;
+    let mut posix=false;
+    while let Some(ch)=chars.next() {
+        if ch=='\\' {
+            out.push(ch);
+            if let Some(next)=chars.next() {out.push(next);}
+            continue;
+        }
+        if ch=='[' {
+            if in_class {
+                if chars.peek()==Some(&':') {posix=true;} else {out.push('\\');}
+            } else {in_class=true;}
+        } else if ch==']' {
+            if posix {posix=false;} else {in_class=false;}
+        }
+        out.push(ch);
+    }
+    out
+}
 type Object = Rc<RefCell<HashMap<String, Value>>>;
 type Loader<'a> = Box<dyn Fn(u32, u16) -> Result<String, String> + 'a>;
 type Documents<'a> = Box<dyn Fn(u32) -> Result<Option<crate::db::fields::Record>, String> + 'a>;
@@ -76,13 +102,40 @@ struct InputStream {
     // Stored rich text reports its encoded byte length, including font markers.
     encoded_extra: usize,
     position: usize,
+    // copyTo preserves the destination read cursor but appends bytes. A
+    // following write continues after those bytes until a read or explicit seek.
+    copied_write_end: Option<usize>,
     charset: String,
+    escape_chars: String,
+    escape: Value,
     closed: bool,
 }
 impl InputStream {
+    fn set_property(&mut self, key: &str, value: Value) -> Result<(), Fault> {
+        if self.closed {
+            return Err("stream closed".into());
+        }
+        match key {
+            "CharSet" => {
+                let charset = value.text().to_lowercase();
+                if !matches!(charset.as_str(), "windows-1251" | "utf-8") {
+                    return Err("unsupported input stream charset".into());
+                }
+                self.charset = charset;
+            }
+            "escapeStr" => self.escape_chars = value.text(),
+            "Escape" => self.escape = value,
+            _ => return Err("input stream property is read-only".into()),
+        }
+        Ok(())
+    }
+
     fn insert_text(&mut self, bytes: &[u8]) -> Result<(), Fault> {
         if self.data.len().saturating_add(bytes.len()) > 16 * 1024 * 1024 {
             return Err("stream size limit".into());
+        }
+        if let Some(end) = self.copied_write_end.take() {
+            self.position = end;
         }
         if self.position == self.data.len() {
             self.data.extend_from_slice(bytes);
@@ -99,7 +152,10 @@ impl InputStream {
             data: data.to_vec(),
             encoded_extra: 0,
             position: 0,
+            copied_write_end: None,
             charset: "windows-1251".into(),
+            escape_chars: String::new(),
+            escape: Value::Null,
             closed: false,
         })))
     }
@@ -122,7 +178,7 @@ enum Value {
     SignalMethod(std::sync::Arc<super::signal::Signal>, String),
     HttpOutput,
     LogFile(Rc<file_access::WriteFile>),
-    LogMethod(Rc<RefCell<std::fs::File>>, String),
+    LogMethod(Rc<RefCell<Option<std::fs::File>>>, String),
     Regex(regex::Regex),
     Mutex(Rc<RefCell<super::mutex::NamedMutex>>),
     MutexMethod(Rc<RefCell<super::mutex::NamedMutex>>, String),
@@ -308,6 +364,7 @@ pub struct Runtime<'a> {
     document_vars: RefCell<HashMap<(u32, u32), Object>>,
     document_edits: RefCell<HashMap<(u32, u32), document_write::Edit>>,
     document_write_allowed: bool,
+    cursor_projections: bool,
     schedule_export_allowed: bool,
     kod_snapshot_loaded: bool,
     p_edit_guard_required: bool,
@@ -382,6 +439,7 @@ impl<'a> Runtime<'a> {
             document_vars: Default::default(),
             document_edits: Default::default(),
             document_write_allowed: false,
+            cursor_projections: false,
             schedule_export_allowed: false,
             kod_snapshot_loaded: false,
             p_edit_guard_required: false,
@@ -754,7 +812,7 @@ impl<'a> Runtime<'a> {
  self.numeric_arrays.invalidate(&o);
  let mut map=o.borrow_mut();
  if key=="length" {let n=v.number()?;if !n.is_finite()||n<0.0||n.fract()!=0.0||n>u32::MAX as f64{return Err("invalid or excessive array length".into());}map.retain(|k,_|k.parse::<usize>().map(|i|i<(n as usize)).unwrap_or(true));map.insert(key,Value::Number(n));}
- else {if let Ok(index)=key.parse::<usize>(){if index.to_string()==key{if index>=u32::MAX as usize{return Err("KS array index limit".into());}let old=map.get("length").unwrap().number()? as usize;if index>=old{map.insert("length".into(),Value::Number((index+1) as f64));}}}map.insert(key,v);}Ok(())},Value::Document(oid,scope)=>{if key=="Area" && self.document_write_allowed {return self.assign_stored_area(oid,scope,&v);}let o=self.doc_object(oid,scope);if o.borrow().len()>10000{return Err("document member limit".into());}o.borrow_mut().insert(key,v);Ok(())},Value::TempDocument(d)=>{if !matches!(key.as_str(),"Area"|"NumDoc"){return Err("unsupported temporary document property".into());}d.borrow().properties.borrow_mut().insert(key,v);Ok(())},Value::Function(f)=>{if f.properties.borrow().len()>=10000{return Err("function property limit".into());}f.properties.borrow_mut().insert(key,v);Ok(())},Value::ReadStream(s)=>{if key!="CharSet"{return Err("input stream property is read-only".into());}let charset=v.text().to_lowercase();if !matches!(charset.as_str(),"windows-1251"|"utf-8"){return Err("unsupported input stream charset".into());}s.borrow_mut().charset=charset;Ok(())},Value::HttpOutput=>{if self.http_output.borrow().len()>=64{return Err("HTTP header limit".into());}self.http_output.borrow_mut().insert(key,v);Ok(())},Value::StoredField(_)=>Err("Document fields are read-only; persistent field writes are not implemented".into()),Value::ReadOnlyObject(_)=>Err("Application.Config writes require the native registry writer; source volumes remain read-only".into()),Value::Object(o)|Value::Application(o)=>{if o.borrow().len()>10000{return Err("KS object member limit".into());}o.borrow_mut().insert(key,v);Ok(())},_=>Err("property assignment requires an object".into())}
+ else {if let Ok(index)=key.parse::<usize>(){if index.to_string()==key{if index>=u32::MAX as usize{return Err("KS array index limit".into());}let old=map.get("length").unwrap().number()? as usize;if index>=old{map.insert("length".into(),Value::Number((index+1) as f64));}}}map.insert(key,v);}Ok(())},Value::Document(oid,scope)=>{if key=="Area" && self.document_write_allowed {return self.assign_stored_area(oid,scope,&v);}let o=self.doc_object(oid,scope);if o.borrow().len()>10000{return Err("document member limit".into());}o.borrow_mut().insert(key,v);Ok(())},Value::TempDocument(d)=>{if !matches!(key.as_str(),"Area"|"NumDoc"){return Err("unsupported temporary document property".into());}d.borrow().properties.borrow_mut().insert(key,v);Ok(())},Value::Function(f)=>{if f.properties.borrow().len()>=10000{return Err("function property limit".into());}f.properties.borrow_mut().insert(key,v);Ok(())},Value::ReadStream(s)=>s.borrow_mut().set_property(&key,v),Value::HttpOutput=>{if self.http_output.borrow().len()>=64{return Err("HTTP header limit".into());}self.http_output.borrow_mut().insert(key,v);Ok(())},Value::StoredField(_)=>Err("Document fields are read-only; persistent field writes are not implemented".into()),Value::ReadOnlyObject(_)=>Err("Application.Config writes require the native registry writer; source volumes remain read-only".into()),Value::Object(o)|Value::Application(o)=>{if o.borrow().len()>10000{return Err("KS object member limit".into());}o.borrow_mut().insert(key,v);Ok(())},_=>Err("property assignment requires an object".into())}
     }
     fn read_document(&self, oid: u32, scope: u32) -> Result<crate::db::fields::Record, Fault> {
         if let Some(d) = self.document_edits.borrow().get(&(scope, oid)) {
@@ -893,13 +951,12 @@ impl<'a> Runtime<'a> {
         if self.include_depth >= 32 {
             return Err("Document.Execute recursion limit".into());
         }
-        let mut calendar_job = false;
+        let mut writable_job = false;
         let source = if self.dbhost.is_some() {
             let rec = self.read_document(oid, scope)?;
-            calendar_job = self.scheduled_request
+            writable_job = self.scheduled_request
                 && attr == 3
-                && rec.string(1).map(crate::db::decode).as_deref() == Some("newJudAndHoliday")
-                && self.calendar_job_principal();
+                && self.writable_job_principal(&rec.string(1).map(crate::db::decode).unwrap_or_default());
             if std::env::var_os("KODEKS_TRACE").is_some_and(|s| s == "1") {
                 eprintln!(
                     "KS DataBase({scope}) Document({oid}).Execute({attr}): {}",
@@ -932,7 +989,7 @@ impl<'a> Runtime<'a> {
         };
         let source = super::source_compat::document_source(oid, attr, &source);
         let previous_write = self.document_write_allowed;
-        self.document_write_allowed |= calendar_job;
+        self.document_write_allowed |= writable_job;
         let result = self.execute_code(&source, context);
         self.document_write_allowed = previous_write;
         result.map_err(|e| match e {
@@ -1770,6 +1827,8 @@ impl<'a> Runtime<'a> {
                 match key.as_str() {
                     "length" => Ok(Value::Number((s.data.len() + s.encoded_extra) as f64)),
                     "CharSet" => Ok(Value::String(s.charset.clone())),
+                    "escapeStr" => Ok(Value::String(s.escape_chars.clone())),
+                    "Escape" => Ok(s.escape.clone()),
                     "read" | "readByte" | "readLine" | "reset" | "close" | "copyTo" | "Print"
                     | "PrintS" | "write" | "skip" => {
                         Ok(Value::ReadStreamMethod(stream.clone(), key))
@@ -2232,7 +2291,7 @@ impl<'a> Runtime<'a> {
                 if flags.chars().any(|c| !"ims".contains(c)) {
                     return Err(format!("unsupported KS regex flags {flags}").into());
                 }
-                let re = regex::RegexBuilder::new(pattern)
+                let re = regex::RegexBuilder::new(&legacy_regex_pattern(pattern))
                     .case_insensitive(flags.contains('i'))
                     .multi_line(flags.contains('m'))
                     .dot_matches_new_line(flags.contains('s'))
@@ -2286,7 +2345,7 @@ impl<'a> Runtime<'a> {
                                     return Err("File expects path[, create]".into());
                                 }
                                 let value = self.eval(&args[0])?;
-                                if !matches!(value, Value::String(_) | Value::FilePath(_)) {
+                                if !matches!(value, Value::Null | Value::String(_) | Value::FilePath(_)) {
                                     return Err("File requires a path".into());
                                 }
                                 let create = args.len() == 2 && self.eval(&args[1])?.truth();
@@ -3032,7 +3091,15 @@ impl<'a> Runtime<'a> {
             }
             Value::LogMethod(file, method) => {
                 use std::io::{Seek, Write};
-                let mut file = file.borrow_mut();
+                let mut handle = file.borrow_mut();
+                if method == "close" && values.is_empty() {
+                    if let Some(file) = handle.as_mut() {
+                        file.flush().and_then(|_| file.sync_all()).map_err(|e| e.to_string())?;
+                    }
+                    handle.take();
+                    return Ok(Value::Null);
+                }
+                let file = handle.as_mut().ok_or("file closed")?;
                 match method.as_str() {
                     "writeByte" => {
                         let [value] = values.as_slice() else {
@@ -3746,7 +3813,7 @@ impl<'a> Runtime<'a> {
                             if pattern.len() > 16384 {
                                 return Err("regex pattern limit".into());
                             }
-                            regex::RegexBuilder::new(&pattern)
+                            regex::RegexBuilder::new(&legacy_regex_pattern(&pattern))
                                 .size_limit(1024 * 1024)
                                 .dfa_size_limit(1024 * 1024)
                                 .build()
@@ -3808,7 +3875,7 @@ impl<'a> Runtime<'a> {
                                 if pattern.len() > 16384 {
                                     return Err("regex pattern limit".into());
                                 }
-                                let re = regex::RegexBuilder::new(pattern)
+                                let re = regex::RegexBuilder::new(&legacy_regex_pattern(pattern))
                                     .size_limit(1024 * 1024)
                                     .build()
                                     .map_err(|e| format!("unsupported split regex: {e}"))?;
@@ -3948,13 +4015,16 @@ impl<'a> Runtime<'a> {
                     return Ok(Value::Null);
                 }
                 if method == "copyTo" {
+                    // Native copyTo transfers raw bytes, including CR/LF, even
+                    // when the source has escapeStr/Escape set by /99 SQL KS.
                     if let [Value::LogFile(file)] = values.as_slice() {
                         use std::io::Write;
                         let mut source = stream.borrow_mut();
                         if source.closed {
                             return Err("stream closed".into());
                         }
-                        let mut file = file.file.borrow_mut();
+                        let mut handle = file.file.borrow_mut();
+                        let file = handle.as_mut().ok_or("file closed")?;
                         file.write_all(&source.data[source.position..])
                             .and_then(|_| file.sync_all())
                             .map_err(|e| e.to_string())?;
@@ -3978,9 +4048,13 @@ impl<'a> Runtime<'a> {
                         {
                             return Err("stream size limit".into());
                         }
+                        let copied = source.data.len() - source.position;
                         target
                             .data
                             .extend_from_slice(&source.data[source.position..]);
+                        if copied != 0 {
+                            target.copied_write_end = Some(target.data.len());
+                        }
                         source.position = source.data.len();
                         return Ok(Value::Null);
                     }
@@ -4018,6 +4092,7 @@ impl<'a> Runtime<'a> {
                         return Err("stream closed".into());
                     }
                     let b = s.data.get(s.position).copied();
+                    s.copied_write_end = None;
                     if b.is_some() {
                         s.position += 1;
                     }
@@ -4043,12 +4118,14 @@ impl<'a> Runtime<'a> {
                         // Stored text length includes encoding markers. Seeking
                         // that length advances to the end of the decoded stream.
                         s.position = s.position.saturating_add(n as usize).min(s.data.len());
+                        s.copied_write_end = None;
                         Ok(Value::Null)
                     }
                     "readLine" => {
                         if !values.is_empty() {
                             return Err("readLine expects no arguments".into());
                         }
+                        s.copied_write_end = None;
                         if s.position >= s.data.len() {
                             return Ok(Value::Null);
                         }
@@ -4085,6 +4162,7 @@ impl<'a> Runtime<'a> {
                             return Err("invalid stream read size".into());
                         }
                         let end = (s.position + n as usize).min(s.data.len());
+                        s.copied_write_end = None;
                         let bytes = &s.data[s.position..end];
                         let text = if s.charset == "utf-8" {
                             std::str::from_utf8(bytes)
@@ -4098,10 +4176,12 @@ impl<'a> Runtime<'a> {
                     }
                     "reset" if values.is_empty() => {
                         s.position = 0;
+                        s.copied_write_end = None;
                         Ok(Value::Null)
                     }
                     "close" if values.is_empty() => {
                         s.closed = true;
+                        s.copied_write_end = None;
                         s.data.clear();
                         s.encoded_extra = 0;
                         Ok(Value::Null)
@@ -4243,7 +4323,8 @@ impl<'a> Runtime<'a> {
                     let record = self.read_document(oid, scope)?;
                     let mut bytes = oid.to_le_bytes().to_vec();
                     bytes.extend(crate::db::writer::encode_record(&record)?);
-                    let mut file = file.file.borrow_mut();
+                    let mut handle = file.file.borrow_mut();
+                    let file = handle.as_mut().ok_or("file closed")?;
                     file.write_all(&bytes)
                         .and_then(|_| file.sync_all())
                         .map_err(|e| e.to_string())?;
@@ -4414,7 +4495,8 @@ impl<'a> Runtime<'a> {
                     .collect::<Result<Vec<_>, _>>()?;
                 let query = |scope, sql: &str| {
                     if let Some(host) = &self.dbhost {
-                        host.borrow().select(scope, sql)
+                        if self.cursor_projections { host.borrow().select_cursor(scope, sql) }
+                        else { host.borrow().select(scope, sql) }
                     } else {
                         if scope != 0 {
                             return Err("independent DataBase host not configured".into());
@@ -4430,6 +4512,9 @@ impl<'a> Runtime<'a> {
                         })
                     }
                 };
+                if let Some(database) = &self.dbhost {
+                    host.prepare_row(&method, &**database.borrow())?;
+                }
                 let result = host.call(&method, &args, &query)?;
                 use super::host::ResultValue as H;
                 Ok(match result {

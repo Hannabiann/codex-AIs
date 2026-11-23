@@ -36,10 +36,26 @@ pub struct Rows {
     oids: Vec<u32>,
     projection: Projection,
     cells: Vec<Vec<ColumnValues>>,
+    row_cache: Option<(usize, Vec<ColumnValues>)>,
+    cursor_fields: Option<Vec<Option<(u16, u16)>>>,
+    cursor_window: Option<(usize, usize)>,
     pub fulltext: crate::db::free_text::ResultData,
     position: i64,
     page: Option<(usize, usize)>, // global start and native estimated row count
     closed: bool,
+}
+impl Rows {
+    fn cell(&self, col: usize) -> Option<&ColumnValues> {
+        self.cells
+            .get(self.position as usize)
+            .and_then(|row| row.get(col))
+            .or_else(|| {
+                self.row_cache
+                    .as_ref()
+                    .filter(|(position, _)| *position == self.position as usize)
+                    .and_then(|(_, row)| row.get(col))
+            })
+    }
 }
 pub enum Arg {
     Null,
@@ -166,11 +182,91 @@ impl Handle {
             oids,
             projection: script_query(sql)?.projection,
             cells: Vec::new(),
+            row_cache: None,
+            cursor_fields: None,
+            cursor_window: None,
             fulltext: Default::default(),
             position: -1,
             page: None,
             closed: false,
         }))))
+    }
+    pub(super) fn prepare_row(
+        &self,
+        method: &str,
+        host: &dyn super::database::DatabaseHost,
+    ) -> Result<(), String> {
+        if !matches!(
+            method,
+            "getString"
+                | "_getString"
+                | "getDate"
+                | "_getDate"
+                | "getTimestamp"
+                | "getLongDouble"
+                | "_getLongDouble"
+                | "getInt"
+                | "_getInt"
+                | "getObject"
+                | "getAsciiStream"
+        ) {
+            return Ok(());
+        }
+        let Self::Rows(rows) = self else {
+            return Ok(());
+        };
+        let mut r = rows.borrow_mut();
+        if r.closed
+            || r.connection.borrow().closed
+            || !r.cells.is_empty()
+            || !r.projection.has_fields()
+            || r.position < 0
+            || r.position as usize >= r.oids.len()
+        {
+            return Ok(());
+        }
+        let position = r.position as usize;
+        if r.row_cache.as_ref().is_some_and(|(p, _)| *p == position) {
+            return Ok(());
+        }
+        let scope = r.connection.borrow().scope;
+        if !r
+            .cursor_window
+            .is_some_and(|(start, end)| (start..end).contains(&position))
+        {
+            let start = position / 1024 * 1024;
+            let end = (start + 1024).min(r.oids.len());
+            host.prepare_cursor(scope, &r.oids[start..end])?;
+            r.cursor_window = Some((start, end));
+        }
+        let area_id = r.area.ok_or("SQL cursor area missing")?;
+        if r.cursor_fields.is_none() {
+            let schema = host.shared_schema(scope)?;
+            let area = schema.areas.get(&area_id).ok_or("SQL cursor area absent")?;
+            let fields = r
+                .projection
+                .0
+                .iter()
+                .map(|c| match c {
+                    Column::Field(name) => area
+                        .fields
+                        .values()
+                        .find(|f| f.name == *name)
+                        .map(|f| Some((f.id, f.kind)))
+                        .ok_or_else(|| format!("Unknown SQL field {name}")),
+                    _ => Ok(None),
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            r.cursor_fields = Some(fields);
+        }
+        let row = host.project_row(
+            scope,
+            r.oids[position],
+            area_id,
+            r.cursor_fields.as_ref().unwrap(),
+        )?;
+        r.row_cache = Some((position, row));
+        Ok(())
     }
     pub fn call(
         &self,
@@ -254,6 +350,9 @@ impl Handle {
                             connection: s.connection.clone(),
                             oids,
                             cells,
+                            row_cache: None,
+                            cursor_fields: None,
+                            cursor_window: None,
                             fulltext,
                             projection: script_query(&s.sql)?.projection,
                             position: -1,
@@ -281,6 +380,9 @@ impl Handle {
                     r.closed = true;
                     r.oids.clear();
                     r.cells.clear();
+                    r.row_cache = None;
+                    r.cursor_fields = None;
+                    r.cursor_window = None;
                     return Ok(V::Null);
                 }
                 if r.closed || r.connection.borrow().closed {
@@ -291,6 +393,10 @@ impl Handle {
                     // Rewind this result; do not rerun the query or close it.
                     "beforeFirst" if args.is_empty() => {
                         r.position = -1;
+                        Ok(V::Null)
+                    }
+                    "afterLast" if args.is_empty() => {
+                        r.position = r.oids.len() as i64;
                         Ok(V::Null)
                     }
                     "absolute" | "next" | "prev" => {
@@ -316,11 +422,7 @@ impl Handle {
                         let Some(col) = r.projection.index(args)? else {
                             return Ok(V::Null);
                         };
-                        if let Some(ColumnValues::StreamRef { oid, field, kind }) = r
-                            .cells
-                            .get(r.position as usize)
-                            .and_then(|row| row.get(col))
-                        {
+                        if let Some(ColumnValues::StreamRef { oid, field, kind }) = r.cell(col) {
                             return Ok(V::FieldStream(
                                 *oid,
                                 r.connection.borrow().scope,
@@ -337,11 +439,7 @@ impl Handle {
                         Ok(r.oids
                             .get(r.position as usize)
                             .map(|oid| {
-                                let oid = match r
-                                    .cells
-                                    .get(r.position as usize)
-                                    .and_then(|row| row.get(col))
-                                {
+                                let oid = match r.cell(col) {
                                     Some(ColumnValues::IdentityOid(id)) => *id,
                                     _ => *oid,
                                 };
@@ -357,11 +455,7 @@ impl Handle {
                         if r.position < 0 || r.position as usize >= r.oids.len() {
                             return Ok(V::Null);
                         }
-                        let cell = r
-                            .cells
-                            .get(r.position as usize)
-                            .and_then(|row| row.get(col))
-                            .ok_or("SQL typed column missing")?;
+                        let cell = r.cell(col).ok_or("SQL typed column missing")?;
                         Ok(match cell {
                             ColumnValues::Dates(values)
                                 if method.contains("Date") || method == "getTimestamp" =>
@@ -400,11 +494,7 @@ impl Handle {
                         if r.position < 0 || r.position as usize >= r.oids.len() {
                             return Ok(V::Null);
                         }
-                        let cell = r
-                            .cells
-                            .get(r.position as usize)
-                            .and_then(|row| row.get(col))
-                            .ok_or("SQL result column data missing")?;
+                        let cell = r.cell(col).ok_or("SQL result column data missing")?;
                         let converted;
                         let values = match cell {
                             ColumnValues::Strings(v) => v,
@@ -467,11 +557,7 @@ impl Handle {
                             .oids
                             .get(r.position as usize)
                             .ok_or("cursor not on a row")?;
-                        if let Some(ColumnValues::IdentityOid(joined)) = r
-                            .cells
-                            .get(r.position as usize)
-                            .and_then(|row| row.get(col))
-                        {
+                        if let Some(ColumnValues::IdentityOid(joined)) = r.cell(col) {
                             oid = *joined;
                         }
                         if matches!(r.projection.0[col], Column::Field(_)) {
@@ -480,11 +566,7 @@ impl Handle {
                                     "getObject for field projections is not implemented".into()
                                 );
                             }
-                            let cell = r
-                                .cells
-                                .get(r.position as usize)
-                                .and_then(|row| row.get(col))
-                                .ok_or("SQL result column data missing")?;
+                            let cell = r.cell(col).ok_or("SQL result column data missing")?;
                             let values = match cell {
                                 ColumnValues::Links(values) => values.clone(),
                                 ColumnValues::Strings(values) => values

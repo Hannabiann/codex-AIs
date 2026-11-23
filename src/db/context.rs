@@ -876,6 +876,41 @@ impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
     fn read(&self, scope: u32, oid: u32) -> Result<Option<Record>, String> {
         Ok(self.record(scope, oid)?.map(|(r, _)| r))
     }
+    fn prepare_cursor(&self, scope: u32, oids: &[u32]) -> Result<(), String> {
+        self.refresh_writes();
+        // Resolve mount precedence in a batch. A long SQL result otherwise
+        // evicts the mount cache and probes every volume for each next row.
+        // Cache only locations; ordinary reads still check write generations.
+        let mut pending = oids
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        for mount in self.mounts(scope)?.iter().rev() {
+            if pending.is_empty() {
+                break;
+            }
+            let ids = pending.iter().copied().collect::<Vec<_>>();
+            let entries = match self.engine.lookup_entries(&mount.key, &ids)? {
+                Some(entries) => entries,
+                None => self
+                    .extra
+                    .lookup_entries(&mount.key, &ids)?
+                    .ok_or("mounted volume missing from cursor readers")?,
+            };
+            for entry in entries {
+                pending.remove(&entry.oid);
+                self.cache_record_mount(
+                    scope,
+                    entry.oid,
+                    (entry.block != u32::MAX).then_some(mount.volume.id),
+                );
+            }
+        }
+        for oid in pending {
+            self.cache_record_mount(scope, oid, None);
+        }
+        Ok(())
+    }
     fn metadata(
         &self,
         scope: u32,

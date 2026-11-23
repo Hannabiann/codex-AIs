@@ -203,7 +203,9 @@ fn add(
             let digits=s.bytes().take_while(u8::is_ascii_digit).count();
             digits>0 && matches!(&s[digits..], ""|"date"|"double"|"event")
         });
-        let multi = stat_attribute || category
+        let postal_previous = command.eq_ignore_ascii_case("regletters")
+            && matches!(key.as_str(), "prev_number_month" | "prev_number_first" | "prev_number_last");
+        let multi = postal_previous || stat_attribute || category
             || vacation
             || user_groups
             || key == "tipdoc"

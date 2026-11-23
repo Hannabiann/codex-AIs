@@ -310,6 +310,10 @@ impl Runtime<'_> {
         }
         // Native registration reserves a case and its number while opening the
         // form; subsequent POSTs attach parties and complete the registration.
+        // The complete postal range scan is read-only and can be larger than
+        // one million rows. Other reports retain their materialized SQL cells.
+        self.cursor_projections = !scheduled && matches!(path, "/20a" | "/20a/")
+            && command.eq_ignore_ascii_case("regletters") && participant_mode == "1";
         self.registration_write_allowed = !scheduled
             && request.user.is_some()
             && matches!(path, "/20a" | "/20a/")
@@ -318,7 +322,12 @@ impl Runtime<'_> {
             || !scheduled
                 && request.user.is_some()
                 && matches!(path, "/20a" | "/20a/")
-                && command == "savetempfile";
+                && command == "savetempfile"
+            || !scheduled
+                && request.user.is_some()
+                && matches!(path, "/99" | "/99/")
+                && matches!(request.method.as_str(), "PUT" | "POST")
+                && matches!(command, "savebinpdf" | "savesigforpdf");
         self.document_write_allowed = !scheduled
             && request.user.is_some()
             && (self.registration_write_allowed || matches!(path, "/99" | "/99/")
@@ -334,6 +343,8 @@ impl Runtime<'_> {
                         // The bankruptcy schedule initializes its column settings
                         // on first opening; both native forms persist them in DB4.
                         || command == "bankrotanshlag"
+                        || request.method == "POST" && command == "regletters"
+                            && matches!(participant_mode.as_str(), "2" | "4" | "6")
                         || request.method == "POST" && command == "anshlag"
                         || request.method == "POST" && matches!(command, "makeVacation" | "regassessors")
                         // The original assessor form removes a period by AJAX GET.
@@ -666,6 +677,7 @@ impl Runtime<'_> {
         self.numeric_arrays.clear();
         self.schema_links.clear();
         self.document_write_allowed = false;
+        self.cursor_projections = false;
         self.schedule_export_allowed = false;
         self.kod_snapshot_loaded = false;
         self.p_edit_guard_required = false;
@@ -707,17 +719,23 @@ impl Runtime<'_> {
         self.output_stream = None;
         self.release_unused_databases();
     }
-    /// Only the native queue's authenticated calendar-creation job may write
-    /// while executing without an HTTP connection. Other timers stay read-only.
-    pub(super) fn calendar_job_principal(&self) -> bool {
+    /// Only known native jobs with a recorded creator may write from At.
+    /// Their submission and execution still pass through the native KS queue.
+    pub(super) fn writable_job_principal(&self, script: &str) -> bool {
         let Ok(Value::Object(principal)) = self.get("mp_g_ascJobPrincipal") else {
             return false;
         };
         let principal = principal.borrow();
-        matches!(principal.get("sJobUrlName"), Some(Value::String(name)) if name == "newJudAndHoliday")
-            && principal
-                .get("nJobPagemode")
-                .is_some_and(|mode| mode.text() == "3")
+        let mode = principal.get("nJobPagemode").map(Value::text).unwrap_or_default();
+        // Stored URL names can differ in case from the name used at submission
+        // (regLetters in the volume, regletters in the HTTP request).
+        self.path.trim_end_matches('/') == "/20a"
+            && matches!(principal.get("sJobUrlName"), Some(Value::String(name)) if name.eq_ignore_ascii_case(script))
+            && match script.to_ascii_lowercase().as_str() {
+                "newjudandholiday" => mode == "3",
+                "regletters" => matches!(mode.as_str(), "3" | "5" | "7"),
+                _ => false,
+            }
             && matches!(principal.get("oidJobCreator"), Some(Value::Number(oid)) if oid.is_finite() && *oid > 0.0)
     }
     /// The catalog owner cannot block waiting for its own At queue. Run the

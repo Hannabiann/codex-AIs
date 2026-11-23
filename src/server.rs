@@ -601,6 +601,26 @@ fn lane(target: &str, request: &RequestContext) -> Lane {
     let Ok(name) = object_name(&path, query, &dir) else {
         return Lane::Owner;
     };
+    if name.eq_ignore_ascii_case("regletters") {
+        // Only the read-only complete range list can leave the owner. The
+        // form and mutation modes share its native background-job queue.
+        let mut mode = String::new();
+        for part in query.split('&') {
+            if let Some((key, value)) = part.split_once('=') {
+                let (Ok(key), Ok(value)) = (percent_decode(key), percent_decode(&value.replace('+', " "))) else {
+                    return Lane::Owner;
+                };
+                if key.eq_ignore_ascii_case("mode") { mode = value; }
+            }
+        }
+        for (key, value) in &request.form {
+            if key.eq_ignore_ascii_case("mode") { mode = value.clone(); }
+        }
+        return if matches!(method, "GET" | "POST") && mode == "1"
+            && request.uploads.is_empty() && (request.body.is_empty() || !request.form.is_empty()) {
+            Lane::Heavy
+        } else { Lane::Owner };
+    }
     if name == "anshlag" {
         return if notice_calculation(query, request) {
             Lane::Heavy
