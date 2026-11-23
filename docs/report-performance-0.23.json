@@ -1,0 +1,188 @@
+{
+  "version": "0.23",
+  "date": "2026-11-23",
+  "environment": {
+    "os": "Windows x64 VM",
+    "cpu": "Xeon Silver 4516Y+",
+    "physical_cores": 6,
+    "logical_cpus": 12,
+    "memory_gib": 32,
+    "workers": 6,
+    "heavy_workers": 4,
+    "queue": 16,
+    "http_slots": 64
+  },
+  "method": {
+    "process": "new process for each comparative scenario",
+    "os_file_cache_flushed": false,
+    "filters": "all collegia, judges and panels",
+    "profiled_timings_included": false,
+    "day": "functional control after a monthly report; not used as a speed comparison",
+    "timing": "full HTTP response; client Excel recalculation excluded",
+    "memory": "process private bytes sampled every 200 ms",
+    "io": "process logical counters, not physical disk traffic"
+  },
+  "runs": [
+    {
+      "label": "baseline-four",
+      "period": "month",
+      "count": 4,
+      "wall_s": 87.435,
+      "cpu_s": 330.09375,
+      "read_calls": 10180473,
+      "read_gib": 8.377903539687395,
+      "private_mib": 1663.79296875,
+      "ui_max_ms": 84,
+      "xls_sha256": [
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e",
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e",
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e",
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e"
+      ],
+      "exe_sha256": "95da7989856c2860e76cf70a79c680dffc6d4c743d803ffbdaa1e2cebd8bde69"
+    },
+    {
+      "label": "baseline-month",
+      "period": "month",
+      "count": 1,
+      "wall_s": 58.231,
+      "cpu_s": 58.796875,
+      "read_calls": 2574955,
+      "read_gib": 2.151560933329165,
+      "private_mib": 592.09375,
+      "ui_max_ms": 53,
+      "xls_sha256": [
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e"
+      ],
+      "exe_sha256": "95da7989856c2860e76cf70a79c680dffc6d4c743d803ffbdaa1e2cebd8bde69"
+    },
+    {
+      "label": "baseline-month-repeat",
+      "period": "month",
+      "count": 1,
+      "wall_s": 56.652,
+      "cpu_s": 57.1875,
+      "read_calls": 2574955,
+      "read_gib": 2.151560933329165,
+      "private_mib": 588.1796875,
+      "ui_max_ms": 54,
+      "xls_sha256": [
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e"
+      ],
+      "exe_sha256": "95da7989856c2860e76cf70a79c680dffc6d4c743d803ffbdaa1e2cebd8bde69"
+    },
+    {
+      "label": "baseline-year",
+      "period": "year",
+      "count": 1,
+      "wall_s": 309.262,
+      "cpu_s": 312.328125,
+      "read_calls": 6169303,
+      "read_gib": 6.057664678432047,
+      "private_mib": 689.265625,
+      "ui_max_ms": 68,
+      "xls_sha256": [
+        "60eecf183ec5efd154a35c178e832d5955915e114e868a8d8329441e49e98121"
+      ],
+      "exe_sha256": "95da7989856c2860e76cf70a79c680dffc6d4c743d803ffbdaa1e2cebd8bde69"
+    },
+    {
+      "label": "final-day",
+      "period": "day",
+      "count": 1,
+      "wall_s": 29.857,
+      "cpu_s": 30.28125,
+      "read_calls": 1369652,
+      "read_gib": 1.124950297176838,
+      "private_mib": 656.07421875,
+      "ui_max_ms": 59,
+      "xls_sha256": [
+        "8430ba104a4d97f49746a6e1517f003f9bdc0dc0591c0e8cb5e37ee6dad22d70"
+      ],
+      "exe_sha256": "11ad3b65b377364f7f6cd682f080437bc36005d09e04ee2360fda20c65e5f1ca"
+    },
+    {
+      "label": "final-four",
+      "period": "month",
+      "count": 4,
+      "wall_s": 73.418,
+      "cpu_s": 283.046875,
+      "read_calls": 7552593,
+      "read_gib": 8.292534619569778,
+      "private_mib": 1834.98046875,
+      "ui_max_ms": 72,
+      "xls_sha256": [
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e",
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e",
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e",
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e"
+      ],
+      "exe_sha256": "11ad3b65b377364f7f6cd682f080437bc36005d09e04ee2360fda20c65e5f1ca"
+    },
+    {
+      "label": "final-month",
+      "period": "month",
+      "count": 1,
+      "wall_s": 52.722,
+      "cpu_s": 53.65625,
+      "read_calls": 1921561,
+      "read_gib": 2.1338796773925424,
+      "private_mib": 625.2890625,
+      "ui_max_ms": 48,
+      "xls_sha256": [
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e"
+      ],
+      "exe_sha256": "11ad3b65b377364f7f6cd682f080437bc36005d09e04ee2360fda20c65e5f1ca"
+    },
+    {
+      "label": "final-month-repeat",
+      "period": "month",
+      "count": 1,
+      "wall_s": 50.828,
+      "cpu_s": 51.46875,
+      "read_calls": 1917959,
+      "read_gib": 2.1301703611388803,
+      "private_mib": 613.4921875,
+      "ui_max_ms": 56,
+      "xls_sha256": [
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e"
+      ],
+      "exe_sha256": "11ad3b65b377364f7f6cd682f080437bc36005d09e04ee2360fda20c65e5f1ca"
+    },
+    {
+      "label": "final-year",
+      "period": "year",
+      "count": 1,
+      "wall_s": 284.2,
+      "cpu_s": 286.859375,
+      "read_calls": 4472223,
+      "read_gib": 5.952548527158797,
+      "private_mib": 720.42578125,
+      "ui_max_ms": 55,
+      "xls_sha256": [
+        "60eecf183ec5efd154a35c178e832d5955915e114e868a8d8329441e49e98121"
+      ],
+      "exe_sha256": "11ad3b65b377364f7f6cd682f080437bc36005d09e04ee2360fda20c65e5f1ca"
+    }
+  ],
+  "validation": {
+    "final_xls_byte_equal": 8,
+    "ordinary_tests_passed": 435,
+    "ordinary_tests_ignored": 79,
+    "additional_native_tests_passed": 4,
+    "scalar_projection_records": 40
+  },
+  "profile": {
+    "tool": "ETW CPU sampled stacks",
+    "lost_events": 0,
+    "main_worker_stacks": 51668,
+    "inclusive_percent": {
+      "MainKey::read": 15.25,
+      "residual_matches": 12.82,
+      "HashSet<u32> construction": 8.83,
+      "MainKey::validate_size": 7.6,
+      "Decimal::from_native": 3.59
+    },
+    "inclusive_percent_is_not_additive": true
+  }
+}

@@ -1,0 +1,256 @@
+{
+  "date": "2026-11-23",
+  "version": "0.23",
+  "platform": "Windows x64",
+  "logical_cpus": 12,
+  "ks_db_workers": 6,
+  "heavy_workers": 4,
+  "queue_capacity": 16,
+  "http_slots": 64,
+  "rows": [
+    {
+      "label": "baseline-year",
+      "kind": "1ac",
+      "period": "year",
+      "count": 1,
+      "wall_s": 281.053,
+      "cpu_s": 283.3125,
+      "peak_private_mib": 714.426,
+      "read_calls": 4472223,
+      "read_gib": 5.953,
+      "other_io_calls": 16542166,
+      "max_home_ms": 55,
+      "xls_sha256": [
+        "60eecf183ec5efd154a35c178e832d5955915e114e868a8d8329441e49e98121"
+      ],
+      "exe_sha256": "11ad3b65b377364f7f6cd682f080437bc36005d09e04ee2360fda20c65e5f1ca"
+    },
+    {
+      "label": "final-year",
+      "kind": "1ac",
+      "period": "year",
+      "count": 1,
+      "wall_s": 215.063,
+      "cpu_s": 217.1875,
+      "peak_private_mib": 657.543,
+      "read_calls": 4552282,
+      "read_gib": 5.726,
+      "other_io_calls": 22116,
+      "max_home_ms": 57,
+      "xls_sha256": [
+        "60eecf183ec5efd154a35c178e832d5955915e114e868a8d8329441e49e98121"
+      ],
+      "exe_sha256": "cd4468689b73caf76fe5bb9cce0022b1dc37fb49b3b55145eedb0b1a9d67de8d"
+    },
+    {
+      "label": "final-year-repeat",
+      "kind": "1ac",
+      "period": "year",
+      "count": 1,
+      "wall_s": 215.157,
+      "cpu_s": 217.578125,
+      "peak_private_mib": 656.234,
+      "read_calls": 4552282,
+      "read_gib": 5.726,
+      "other_io_calls": 22115,
+      "max_home_ms": 53,
+      "xls_sha256": [
+        "60eecf183ec5efd154a35c178e832d5955915e114e868a8d8329441e49e98121"
+      ],
+      "exe_sha256": "cd4468689b73caf76fe5bb9cce0022b1dc37fb49b3b55145eedb0b1a9d67de8d"
+    },
+    {
+      "label": "baseline-four",
+      "kind": "1ac",
+      "period": "month",
+      "count": 4,
+      "wall_s": 71.714,
+      "cpu_s": 278.0,
+      "peak_private_mib": 1814.727,
+      "read_calls": 7551849,
+      "read_gib": 8.291,
+      "other_io_calls": 5974107,
+      "max_home_ms": 69,
+      "xls_sha256": [
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e",
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e",
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e",
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e"
+      ],
+      "exe_sha256": "11ad3b65b377364f7f6cd682f080437bc36005d09e04ee2360fda20c65e5f1ca"
+    },
+    {
+      "label": "final-four",
+      "kind": "1ac",
+      "period": "month",
+      "count": 4,
+      "wall_s": 55.413,
+      "cpu_s": 216.46875,
+      "peak_private_mib": 1755.598,
+      "read_calls": 7556501,
+      "read_gib": 7.789,
+      "other_io_calls": 56902,
+      "max_home_ms": 58,
+      "xls_sha256": [
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e",
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e",
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e",
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e"
+      ],
+      "exe_sha256": "cd4468689b73caf76fe5bb9cce0022b1dc37fb49b3b55145eedb0b1a9d67de8d"
+    },
+    {
+      "label": "final-month",
+      "kind": "1ac",
+      "period": "month",
+      "count": 1,
+      "wall_s": 45.565,
+      "cpu_s": 45.9375,
+      "peak_private_mib": 586.031,
+      "read_calls": 1919054,
+      "read_gib": 2.004,
+      "other_io_calls": 18617,
+      "max_home_ms": 51,
+      "xls_sha256": [
+        "4f3b272ca01737ea0f0e5e1f1f1561ff3c68c669da926c6c746cd0e031004a2e"
+      ],
+      "exe_sha256": "cd4468689b73caf76fe5bb9cce0022b1dc37fb49b3b55145eedb0b1a9d67de8d"
+    },
+    {
+      "label": "baseline-1b",
+      "kind": "1b",
+      "period": "month",
+      "count": 1,
+      "wall_s": 32.677,
+      "cpu_s": 31.109375,
+      "peak_private_mib": 446.582,
+      "read_calls": 6092381,
+      "read_gib": 10.546,
+      "other_io_calls": 438227,
+      "max_home_ms": 52,
+      "xls_sha256": [
+        "aaa04da0efd52e6aeb8ba88ba682c1aa471364ece629e9b818e161841acacccf"
+      ],
+      "exe_sha256": "11ad3b65b377364f7f6cd682f080437bc36005d09e04ee2360fda20c65e5f1ca"
+    },
+    {
+      "label": "final-1b",
+      "kind": "1b",
+      "period": "month",
+      "count": 1,
+      "wall_s": 27.504,
+      "cpu_s": 27.8125,
+      "peak_private_mib": 412.785,
+      "read_calls": 6087207,
+      "read_gib": 10.542,
+      "other_io_calls": 16881,
+      "max_home_ms": 54,
+      "xls_sha256": [
+        "aaa04da0efd52e6aeb8ba88ba682c1aa471364ece629e9b818e161841acacccf"
+      ],
+      "exe_sha256": "cd4468689b73caf76fe5bb9cce0022b1dc37fb49b3b55145eedb0b1a9d67de8d"
+    },
+    {
+      "label": "baseline-1ac2019",
+      "kind": "1ac2019",
+      "period": "month",
+      "count": 1,
+      "wall_s": 52.72,
+      "cpu_s": 50.453125,
+      "peak_private_mib": 552.996,
+      "read_calls": 1992432,
+      "read_gib": 2.192,
+      "other_io_calls": 1479507,
+      "max_home_ms": 54,
+      "xls_sha256": [
+        "f05a5169cf7a34a4bddcba0a2a479eb6da1ba1d45c1f4150ad99762573b05439"
+      ],
+      "exe_sha256": "11ad3b65b377364f7f6cd682f080437bc36005d09e04ee2360fda20c65e5f1ca"
+    },
+    {
+      "label": "final-1ac2019",
+      "kind": "1ac2019",
+      "period": "month",
+      "count": 1,
+      "wall_s": 45.643,
+      "cpu_s": 45.953125,
+      "peak_private_mib": 523.254,
+      "read_calls": 1993642,
+      "read_gib": 2.061,
+      "other_io_calls": 12311,
+      "max_home_ms": 55,
+      "xls_sha256": [
+        "f05a5169cf7a34a4bddcba0a2a479eb6da1ba1d45c1f4150ad99762573b05439"
+      ],
+      "exe_sha256": "cd4468689b73caf76fe5bb9cce0022b1dc37fb49b3b55145eedb0b1a9d67de8d"
+    },
+    {
+      "label": "baseline-z221",
+      "kind": "z221",
+      "period": "year",
+      "count": 1,
+      "wall_s": 370.542,
+      "cpu_s": 286.359375,
+      "peak_private_mib": 536.293,
+      "read_calls": 4478239,
+      "read_gib": 8.79,
+      "other_io_calls": 363704,
+      "max_home_ms": 55,
+      "xls_sha256": [
+        "6b81911950b3fa8c145bfe53c914202a0b32487298e291c1b7344b80d171575f"
+      ],
+      "exe_sha256": "11ad3b65b377364f7f6cd682f080437bc36005d09e04ee2360fda20c65e5f1ca"
+    },
+    {
+      "label": "baseline-z221-repeat",
+      "kind": "z221",
+      "period": "year",
+      "count": 1,
+      "wall_s": 154.896,
+      "cpu_s": 156.171875,
+      "peak_private_mib": 543.121,
+      "read_calls": 4477205,
+      "read_gib": 8.787,
+      "other_io_calls": 362223,
+      "max_home_ms": 53,
+      "xls_sha256": [
+        "6b81911950b3fa8c145bfe53c914202a0b32487298e291c1b7344b80d171575f"
+      ],
+      "exe_sha256": "11ad3b65b377364f7f6cd682f080437bc36005d09e04ee2360fda20c65e5f1ca"
+    },
+    {
+      "label": "final-z221",
+      "kind": "z221",
+      "period": "year",
+      "count": 1,
+      "wall_s": 158.033,
+      "cpu_s": 159.65625,
+      "peak_private_mib": 530.922,
+      "read_calls": 4497386,
+      "read_gib": 8.793,
+      "other_io_calls": 9472,
+      "max_home_ms": 56,
+      "xls_sha256": [
+        "6b81911950b3fa8c145bfe53c914202a0b32487298e291c1b7344b80d171575f"
+      ],
+      "exe_sha256": "cd4468689b73caf76fe5bb9cce0022b1dc37fb49b3b55145eedb0b1a9d67de8d"
+    },
+    {
+      "label": "final-z221-repeat",
+      "kind": "z221",
+      "period": "year",
+      "count": 1,
+      "wall_s": 156.393,
+      "cpu_s": 157.78125,
+      "peak_private_mib": 532.793,
+      "read_calls": 4497339,
+      "read_gib": 8.793,
+      "other_io_calls": 9410,
+      "max_home_ms": 54,
+      "xls_sha256": [
+        "6b81911950b3fa8c145bfe53c914202a0b32487298e291c1b7344b80d171575f"
+      ],
+      "exe_sha256": "cd4468689b73caf76fe5bb9cce0022b1dc37fb49b3b55145eedb0b1a9d67de8d"
+    }
+  ]
+}

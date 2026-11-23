@@ -297,6 +297,33 @@ fn backup(
     sync_parent(&target)
 }
 
+/// Refresh an existing backup before replacing the base file. Old base readers
+/// can still hold this inode through a backup hard link. On Windows, renaming
+/// over that open target fails even with shared-delete handles. Freeze those
+/// readers before updating the backup, while the caller holds PUBLICATION.
+/// The authoritative base is untouched until the backup has been synced.
+pub(super) fn refresh_backup_for_replace(base: &Path, old: &[u8]) -> Result<bool, String> {
+    let target = sidecar(base, ".codex-backup");
+    let mut file = match OpenOptions::new().read(true).write(true).open(&target) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("DB40 backup open: {e}")),
+    };
+    let base_file = File::open(base).map_err(|e| e.to_string())?;
+    if snapshot::identity(&file)? != snapshot::identity(&base_file)? {
+        snapshot::freeze_lazy(&file, || {
+            read_bounded(&target, MAX_IMAGE).map(std::sync::Arc::new)
+        })?;
+        patch_from_file(&mut file, old, || Ok(()))?;
+        snapshot::retire(&file)?;
+    } else {
+        // A hard link to the current base already is the exact old image.
+        // Unlike in-place page publication, replacement leaves this inode intact.
+        file.sync_all().map_err(|e| e.to_string())?;
+    }
+    Ok(true)
+}
+
 // The backup is usually not held by readers. Compare it in small chunks so a
 // one-page update does not allocate another complete volume. Every byte is
 // still compared, and the complete resulting backup is synced before the base.

@@ -57,7 +57,10 @@ pub(super) fn item(item: &crate::rich_text::Item, bytes: &[u8]) -> Result<Value,
                         .map(|(i, n)| (n.to_string(), Value::Bool(f & (1 << i) != 0)))
                         .collect();
                     runs.push(object(HashMap::from([
-                        ("pos".into(), Value::Number(at as f64 + 1.0)),
+                        // The registry reader consumes each run with
+                        // Stream.read(pos + count - 1). These spans are adjacent;
+                        // pos is relative to the previous span, not the full text.
+                        ("pos".into(), Value::Number(1.0)),
                         ("count".into(), Value::Number((end - at) as f64)),
                         ("attributes".into(), object(attrs)),
                     ])));

@@ -1,6 +1,72 @@
 //! Read-only native List, backed by the same bounded database query path as SQL.
 use super::{Fault, Runtime, Value};
-use std::cell::RefCell;
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    collections::HashSet,
+};
+
+/// Ordered List contents with a lazy membership index. Append must not copy
+/// and rehash the entire list for each document in a report loop.
+#[derive(Debug)]
+pub(super) struct ListIds {
+    values: RefCell<Option<Vec<u32>>>,
+    members: RefCell<Option<HashSet<u32>>>,
+}
+impl ListIds {
+    pub(super) fn new(values: Option<Vec<u32>>) -> Self {
+        Self {
+            values: RefCell::new(values),
+            members: RefCell::new(None),
+        }
+    }
+    pub(super) fn borrow(&self) -> Ref<'_, Option<Vec<u32>>> {
+        self.values.borrow()
+    }
+    pub(super) fn borrow_mut(&self) -> RefMut<'_, Option<Vec<u32>>> {
+        // Replacement, deletion, filtering and sorting all go through here.
+        *self.members.borrow_mut() = None;
+        self.values.borrow_mut()
+    }
+    pub(super) fn contains(&self, id: u32) -> bool {
+        let values = self.values.borrow();
+        let Some(ids) = values.as_ref() else {
+            return false;
+        };
+        if ids.len() < 128 {
+            return ids.contains(&id);
+        }
+        self.members
+            .borrow_mut()
+            .get_or_insert_with(|| ids.iter().copied().collect())
+            .contains(&id)
+    }
+    pub(super) fn append(&self, incoming: &[u32]) -> Result<(), Fault> {
+        let mut values = self.values.borrow_mut();
+        let ids = values.get_or_insert_with(Vec::new);
+        let mut members = self.members.borrow_mut();
+        if members.is_none() && ids.len().saturating_add(incoming.len()) >= 128 {
+            *members = Some(ids.iter().copied().collect());
+        }
+        let mut added = Vec::new();
+        for &id in incoming {
+            let unique = if let Some(seen) = members.as_mut() {
+                seen.insert(id)
+            } else {
+                !ids.contains(&id) && !added.contains(&id)
+            };
+            if unique {
+                added.push(id)
+            }
+        }
+        if ids.len().saturating_add(added.len()) > crate::ks::sql::MAX_SQL_ROWS {
+            // A failed append must not leave phantom members in the index.
+            *members = None;
+            return Err("List row limit".into());
+        }
+        ids.extend(added);
+        Ok(())
+    }
+}
 
 #[derive(Debug)]
 pub(super) struct RecordList {
@@ -9,12 +75,24 @@ pub(super) struct RecordList {
     pub order: Option<Vec<u16>>,
     pub conditions: Vec<String>,
     pub query_all: bool,
-    pub ids: RefCell<Option<Vec<u32>>>,
+    pub ids: ListIds,
 }
 fn quoted(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 impl Runtime<'_> {
+    pub(super) fn list_len(&self, list: &RecordList) -> Result<usize, Fault> {
+        if let Some(ids) = list.ids.borrow().as_ref() {
+            return Ok(ids.len());
+        }
+        Ok(self.list_ids(list)?.len())
+    }
+    pub(super) fn list_item(&self, list: &RecordList, index: usize) -> Result<Option<u32>, Fault> {
+        if let Some(ids) = list.ids.borrow().as_ref() {
+            return Ok(ids.get(index).copied());
+        }
+        Ok(self.list_ids(list)?.get(index).copied())
+    }
     pub(super) fn list_area(&self, value: &Value, scope: u32) -> Result<u16, Fault> {
         let area = match value {
             Value::String(name) if !name.is_empty() && name.parse::<f64>().is_err() => {

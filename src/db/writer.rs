@@ -414,16 +414,18 @@ fn publish_checked(
                 .and_then(|_| f.sync_all())
                 .map_err(|e| e.to_string())?;
             drop(f);
-            prepare_backup(path, &backup_tmp, &old)?;
-            created.push(backup_tmp.clone());
-            if !matches_image(path, &old)? {
-                return Err("DB40 changed outside this transaction".into());
-            }
-            crate::settings::replace_file(&backup_tmp, &backup)
-                .map_err(|e| format!("DB40 backup publication: {e}"))?;
             let _publish = PUBLICATION
                 .write()
                 .map_err(|_| "DB40 publication lock poisoned")?;
+            if !matches_image(path, &old)? {
+                return Err("DB40 changed outside this transaction".into());
+            }
+            if !journal::refresh_backup_for_replace(path, &old)? {
+                prepare_backup(path, &backup_tmp, &old)?;
+                created.push(backup_tmp.clone());
+                crate::settings::replace_file(&backup_tmp, &backup)
+                    .map_err(|e| format!("DB40 backup publication: {e}"))?;
+            }
             publish_volume_with(&temporary, path, &backup, &old, &bytes, replace_volume)?;
             #[cfg(unix)]
             std::fs::File::open(path.parent().ok_or("DB40 parent missing")?)

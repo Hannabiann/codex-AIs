@@ -1,0 +1,648 @@
+{
+  "date": "2026-11-23",
+  "version": "0.23",
+  "dataset": {
+    "registered_volumes": 49,
+    "approx_gb": 194,
+    "report_date": "2026-10-01",
+    "ordinary_form_22_uses_current_day": true
+  },
+  "scope": "Visible HTML cell text (excluding leaked KText font markers), row/column spans, row order and document links; two old heading spacing errors are recorded as expected corrections in the before/after comparison",
+  "native_comparison": [
+    {
+      "name": "legacy-01",
+      "cells": 21,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "outer_ans"
+    },
+    {
+      "name": "legacy-02",
+      "cells": 21,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "affair_list"
+    },
+    {
+      "name": "legacy-03",
+      "cells": 140,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "outer_ans1"
+    },
+    {
+      "name": "legacy-04",
+      "cells": 15,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "anshlag_plain_outer"
+    },
+    {
+      "name": "legacy-05",
+      "cells": 18,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "anshlag_plain_outer1"
+    },
+    {
+      "name": "legacy-06",
+      "cells": 30,
+      "equal": true,
+      "raw_equal": false,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 1,
+      "links_equal": true,
+      "links": 0,
+      "title": "affair_list1"
+    },
+    {
+      "name": "legacy-07",
+      "cells": 12,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "anshlag_plain_outer2"
+    },
+    {
+      "name": "legacy-08",
+      "cells": 21,
+      "equal": true,
+      "raw_equal": false,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 1,
+      "links_equal": true,
+      "links": 0,
+      "title": "Список судебных дел - форма 8"
+    },
+    {
+      "name": "legacy-09",
+      "cells": 27,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "Список судебных дел - форма 9"
+    },
+    {
+      "name": "legacy-10",
+      "cells": 18,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "Аншлаг форма 10 (внешний)"
+    },
+    {
+      "name": "legacy-11",
+      "cells": 24,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "Аншлаг с боковыми судьями"
+    },
+    {
+      "name": "legacy-12",
+      "cells": 21,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "anshlag_plain_outer3"
+    },
+    {
+      "name": "legacy-14",
+      "cells": 18,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "Аншлаг форма 14 (внешний)"
+    },
+    {
+      "name": "legacy-15",
+      "cells": 18,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "Аншлаг форма 15 (внешний)"
+    },
+    {
+      "name": "legacy-16",
+      "cells": 18,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "Аншлаг рассмотрения дел - форма 17"
+    },
+    {
+      "name": "legacy-17",
+      "cells": 21,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "Аншлаг рассмотрения дел АС Татарстана  - форма 18"
+    },
+    {
+      "name": "legacy-18",
+      "cells": 2,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "Список судебных дел - форма 19"
+    },
+    {
+      "name": "legacy-19",
+      "cells": 21,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "Список судебных дел - форма 20"
+    },
+    {
+      "name": "legacy-20",
+      "cells": 18,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "Результаты рассмотрения дел - форма 21"
+    },
+    {
+      "name": "legacy-21",
+      "cells": 218,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "Список судебных дел на сегодня - форма 22"
+    },
+    {
+      "name": "legacy-22",
+      "cells": 18,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "Аншлаг форма 23 (внешний)"
+    },
+    {
+      "name": "grouped",
+      "cells": 21,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0,
+      "title": "grouped"
+    },
+    {
+      "name": "custom",
+      "cells": 15,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 2,
+      "title": "custom"
+    }
+  ],
+  "extra_cases": [
+    {
+      "name": "grouped-exact",
+      "cells": 21,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "grouped-empty",
+      "cells": 0,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "custom-exact",
+      "cells": 15,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 2
+    },
+    {
+      "name": "custom-empty",
+      "cells": 0,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "custom-range",
+      "cells": 160,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 30
+    }
+  ],
+  "before_after_all_judges": [
+    {
+      "name": "legacy-01",
+      "cells": 2198,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-02",
+      "cells": 2016,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-03",
+      "cells": 1570,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-04",
+      "cells": 1440,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-05",
+      "cells": 1884,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-06",
+      "cells": 2880,
+      "equal": true,
+      "raw_equal": false,
+      "approved_header_fixes": 1,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-07",
+      "cells": 1152,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-08",
+      "cells": 2016,
+      "equal": true,
+      "raw_equal": false,
+      "approved_header_fixes": 1,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-09",
+      "cells": 2592,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-10",
+      "cells": 1884,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-11",
+      "cells": 2304,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-12",
+      "cells": 2198,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-13",
+      "cells": 372,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-14",
+      "cells": 1884,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-15",
+      "cells": 1884,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-16",
+      "cells": 1884,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-17",
+      "cells": 2198,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-18",
+      "cells": 287,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-19",
+      "cells": 2016,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-20",
+      "cells": 1884,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-21",
+      "cells": 218,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "legacy-22",
+      "cells": 1884,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "grouped",
+      "cells": 2198,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    },
+    {
+      "name": "custom",
+      "cells": 1440,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 287
+    }
+  ],
+  "settings": [
+    {
+      "mode": "save",
+      "fields_equal": true,
+      "column_options_equal": true,
+      "column_options": 20
+    },
+    {
+      "mode": "verify",
+      "fields_equal": true,
+      "column_options_equal": true,
+      "column_options": 20
+    },
+    {
+      "mode": "clear",
+      "fields_equal": true,
+      "column_options_equal": true,
+      "column_options": 20
+    }
+  ],
+  "menus": {
+    "ordinary_templates": 22,
+    "order_equal": true,
+    "grouped_form_link": true,
+    "custom_initial_fields_equal": true
+  },
+  "native_all_judges": [
+    {
+      "name": "legacy-01",
+      "cells": 2198,
+      "equal": true,
+      "raw_equal": true,
+      "approved_header_fixes": 0,
+      "ignored_font_controls": 0,
+      "links_equal": true,
+      "links": 0
+    }
+  ],
+  "parallel": {
+    "active": 4,
+    "executors": [
+      "3",
+      "4",
+      "5",
+      "6"
+    ],
+    "all_groups_heavy": true,
+    "results_equal": 4,
+    "probes": [
+      {
+        "uri": "/20a/",
+        "status": 200,
+        "elapsed_ms": 46
+      },
+      {
+        "uri": "/99?testconnection",
+        "status": 204,
+        "elapsed_ms": 30
+      },
+      {
+        "uri": "/20a?gen_anshlag",
+        "status": 200,
+        "elapsed_ms": 32
+      },
+      {
+        "uri": "/20a?anshlag&instancia=1&",
+        "status": 200,
+        "elapsed_ms": 42
+      },
+      {
+        "uri": "/20a?statistica1",
+        "status": 200,
+        "elapsed_ms": 77
+      }
+    ]
+  },
+  "routing_tests_passed": 13,
+  "report_tests_passed": 17,
+  "report_tests_ignored": 2,
+  "limits": [
+    {
+      "form": "Аншлаг форма 13 (внешний)",
+      "native": "No HTTP response within 600 seconds",
+      "native_comparison_complete": false,
+      "rust_completes": true,
+      "rust_matches_previous_build": true
+    }
+  ]
+}

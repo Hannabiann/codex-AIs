@@ -1,4 +1,6 @@
 //! A mount table per KS DataBase. Remove detaches a mount, never deletes a file.
+#[path = "context_cache.rs"]
+mod context_cache;
 #[path = "context_pages.rs"]
 mod context_pages;
 use super::{fields::Record, schema::Schema, Db4Engine, RecordLookup, VirtualDir};
@@ -6,6 +8,7 @@ use crate::ks::{
     database::{DatabaseHost, Volume},
     runtime::OpenError,
 };
+use context_cache::ClockCache;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
@@ -77,7 +80,7 @@ pub struct Contexts<E> {
     next_scope: u32,
     next_mount: u32,
     trace: bool,
-    record_mounts: RefCell<BTreeMap<(u32, u32), Option<u32>>>,
+    record_mounts: RefCell<ClockCache<(u32, u32), Option<u32>>>,
     timings: Timings,
     schemas: RefCell<BTreeMap<u32, std::sync::Arc<Schema>>>,
     queries: RefCell<BTreeMap<(u32, String), Vec<u32>>>,
@@ -88,8 +91,7 @@ pub struct Contexts<E> {
 }
 #[derive(Default)]
 struct RecordCache {
-    items: BTreeMap<(u32, u32), Record>,
-    bytes: usize,
+    items: ClockCache<(u32, u32), Record>,
     metadata: BTreeMap<(u32, u32), (super::fields::RecordMetadata, u32)>,
     metadata_bytes: usize,
 }
@@ -131,15 +133,11 @@ impl RecordCache {
                         }
                 })
                 .sum::<usize>();
-        if size > 1024 * 1024 || self.items.contains_key(&key) {
+        if size > 256 * 1024 || self.items.contains_key(&key) {
             return;
         }
-        if self.items.len() >= 32768 || self.bytes + size > 128 * 1024 * 1024 {
-            self.items.clear();
-            self.bytes = 0;
-        }
-        self.bytes += size;
-        self.items.insert(key, record.clone());
+        self.items
+            .insert(key, record.clone(), size, 64 * 1024 * 1024, 65536);
     }
 }
 impl<E: Deref<Target = Db4Engine>> Contexts<E> {
@@ -179,7 +177,7 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
             next_scope: 1,
             next_mount: 1,
             trace: std::env::var_os("KODEKS_TRACE").is_some_and(|s| s == "1"),
-            record_mounts: RefCell::new(BTreeMap::new()),
+            record_mounts: RefCell::new(ClockCache::default()),
             timings: Timings::default(),
             schemas: RefCell::new(BTreeMap::new()),
             queries: RefCell::new(BTreeMap::new()),
@@ -260,16 +258,16 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
     fn record_mount(&self, scope: u32, oid: u32) -> Result<Option<(Record, &Mount)>, String> {
         self.refresh_writes();
         let _measure = Measure::new(&self.timings.record);
-        // Read-only snapshot caches are invalidated by mount changes. Large
-        // bodies are excluded; the decoded-record cache has a 32 MiB budget.
-        if let Some(cached) = self.record_mounts.borrow().get(&(scope, oid)).copied() {
+        // Write generations and mount changes invalidate both caches. Large
+        // bodies are excluded; this context's full-record budget is 64 MiB.
+        if let Some(cached) = self.record_mounts.borrow_mut().get(&(scope, oid)).copied() {
             let Some(id) = cached else { return Ok(None) };
             let mount = self
                 .mounts(scope)?
                 .iter()
                 .find(|m| m.volume.id == id)
                 .ok_or("stale record mount cache")?;
-            if let Some(record) = self.records.borrow().items.get(&(scope, oid)) {
+            if let Some(record) = self.records.borrow_mut().items.get(&(scope, oid)) {
                 return Ok(Some((record.clone(), mount)));
             }
             let record = match self.engine.lookup_record(oid, &mount.key)? {
@@ -310,10 +308,11 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
     }
     fn cache_record_mount(&self, scope: u32, oid: u32, mount: Option<u32>) {
         let mut cache = self.record_mounts.borrow_mut();
-        if cache.len() >= 100_000 && !cache.contains_key(&(scope, oid)) {
-            cache.clear();
+        if let Some(selected) = cache.get_mut(&(scope, oid)) {
+            *selected = mount;
+        } else {
+            cache.insert((scope, oid), mount, 1, 100_000, 100_000);
         }
-        cache.insert((scope, oid), mount);
     }
     fn metadata_mount(
         &self,
@@ -329,7 +328,7 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
                 .ok_or("stale metadata mount cache")?;
             return Ok(Some((metadata.clone(), mount)));
         }
-        let selected = self.record_mounts.borrow().get(&(scope, oid)).copied();
+        let selected = self.record_mounts.borrow_mut().get(&(scope, oid)).copied();
         if selected == Some(None) {
             return Ok(None);
         }
@@ -343,7 +342,7 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
                 .iter()
                 .find(|m| m.volume.id == id)
                 .ok_or("stale record mount cache")?;
-            if let Some(record) = self.records.borrow().items.get(&(scope, oid)) {
+            if let Some(record) = self.records.borrow_mut().items.get(&(scope, oid)) {
                 return Ok(Some((record.into(), mount)));
             }
             return match lookup(mount)? {

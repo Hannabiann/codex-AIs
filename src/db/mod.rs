@@ -1,4 +1,5 @@
 pub mod context;
+mod decoded_cache;
 pub mod fields;
 pub mod free_text;
 mod indexed_query;
@@ -66,6 +67,7 @@ pub enum ConfigValue {
 }
 #[derive(Debug, Default)]
 pub struct Db4Engine {
+    decoded: std::sync::Arc<std::sync::Mutex<decoded_cache::DecodedCache>>,
     pub volumes: Vec<Volume>,
     pub virtual_dirs: Vec<VirtualDir>,
     pub mount_report: Vec<String>,
@@ -1026,6 +1028,26 @@ impl Db4Engine {
         }
         Ok(None)
     }
+    /// A static-resource cache must recover a pending journal before trusting
+    /// its generation, even when it does not need to decode the record again.
+    pub(crate) fn resource_stamp(
+        &self,
+        volume: &str,
+    ) -> Result<Option<(PathBuf, u64, u64, std::time::SystemTime)>, String> {
+        let Some(v) = self.volume_id(volume)? else {
+            return Ok(None);
+        };
+        let path = &self.volumes[v].path;
+        writer::ensure_recovered(path)?;
+        let _publication = writer::open_guard()?;
+        let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+        Ok(Some((
+            path.clone(),
+            writer::generation(path),
+            meta.len(),
+            meta.modified().map_err(|e| e.to_string())?,
+        )))
+    }
     pub fn read_oid(&self, oid: u32, preferred: &str) -> Result<Option<Record>, String> {
         Ok(match self.lookup_record(oid, preferred)? {
             RecordLookup::Present(record) => Some(record),
@@ -1086,6 +1108,7 @@ impl Db4Engine {
             }
             let mut reader = mainkey::MainKey::open(&self.volumes[v].path)?;
             reader.cache_nodes();
+            reader.cache_records(self.decoded.clone());
             let size = reader.snapshot_size();
             readers.insert(v, (size, reader));
         }

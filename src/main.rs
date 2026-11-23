@@ -12,6 +12,7 @@ mod runtime_logs;
 mod server;
 mod settings;
 mod vm;
+mod worker_config;
 use std::{path::PathBuf, sync::Arc};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

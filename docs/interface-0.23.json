@@ -1,0 +1,295 @@
+{
+  "version": "0.23",
+  "workers": 6,
+  "worker_mode": "auto",
+  "queue": 16,
+  "connections": 64,
+  "period": "2025-01-01/2025-01-31",
+  "volumes": 49,
+  "data_gb_approx": 194,
+  "transport": "HTTP on loopback; complete response",
+  "baseline_sha256": "cd4468689b73caf76fe5bb9cce0022b1dc37fb49b3b55145eedb0b1a9d67de8d",
+  "updated_sha256": "650dedab78d25a481dec1ede40610db3d94b28a66fe98f644edaf3519a809568",
+  "before": {
+    "series_wall_s": 81.794,
+    "reports": [
+      {
+        "kind": "1b",
+        "elapsed_ms": 30955,
+        "sha256": "aaa04da0efd52e6aeb8ba88ba682c1aa471364ece629e9b818e161841acacccf",
+        "bytes": 430080
+      },
+      {
+        "kind": "1ac2019",
+        "elapsed_ms": 81743,
+        "sha256": "f05a5169cf7a34a4bddcba0a2a479eb6da1ba1d45c1f4150ad99762573b05439",
+        "bytes": 3574272
+      }
+    ],
+    "probes": [
+      {
+        "route": "/20a/",
+        "status": 200,
+        "elapsed_ms": 70.254
+      },
+      {
+        "route": "/99?testconnection",
+        "status": 204,
+        "elapsed_ms": 79662.905
+      },
+      {
+        "route": "/20a/?mp_js",
+        "status": 200,
+        "elapsed_ms": 22.988
+      }
+    ]
+  },
+  "after": {
+    "series_wall_s": 52.474,
+    "reports": [
+      {
+        "kind": "1b",
+        "elapsed_ms": 36610,
+        "sha256": "aaa04da0efd52e6aeb8ba88ba682c1aa471364ece629e9b818e161841acacccf",
+        "bytes": 430080
+      },
+      {
+        "kind": "1ac2019",
+        "elapsed_ms": 52437,
+        "sha256": "f05a5169cf7a34a4bddcba0a2a479eb6da1ba1d45c1f4150ad99762573b05439",
+        "bytes": 3574272
+      }
+    ],
+    "probes": [
+      {
+        "route": "/20a/",
+        "status": 200,
+        "elapsed_ms": 31.33
+      },
+      {
+        "route": "/99?testconnection",
+        "status": 204,
+        "elapsed_ms": 36.522
+      },
+      {
+        "route": "/20a/?mp_js",
+        "status": 200,
+        "elapsed_ms": 7.112
+      }
+    ]
+  },
+  "interface_bursts": {
+    "before": {
+      "concurrent_requests": 12,
+      "measured_batches": 3,
+      "latency_ms": [
+        [
+          50,
+          112,
+          197,
+          141,
+          309,
+          243,
+          313,
+          347,
+          380,
+          422,
+          458,
+          406
+        ],
+        [
+          27,
+          66,
+          120,
+          217,
+          253,
+          164,
+          130,
+          201,
+          282,
+          293,
+          309,
+          347
+        ],
+        [
+          88,
+          40,
+          73,
+          141,
+          124,
+          172,
+          184,
+          220,
+          254,
+          271,
+          321,
+          306
+        ]
+      ],
+      "maxima_ms": [
+        458,
+        347,
+        321
+      ]
+    },
+    "after": {
+      "concurrent_requests": 12,
+      "measured_batches": 3,
+      "latency_ms": [
+        [
+          47,
+          81,
+          115,
+          45,
+          92,
+          80,
+          59,
+          210,
+          152,
+          77,
+          120,
+          107
+        ],
+        [
+          53,
+          64,
+          126,
+          48,
+          89,
+          97,
+          112,
+          84,
+          105,
+          97,
+          129,
+          120
+        ],
+        [
+          35,
+          112,
+          96,
+          27,
+          82,
+          51,
+          38,
+          125,
+          78,
+          95,
+          160,
+          89
+        ]
+      ],
+      "maxima_ms": [
+        210,
+        129,
+        160
+      ]
+    }
+  },
+  "full_queue": {
+    "active": 4,
+    "queued": 16,
+    "cancellation_ms": 234,
+    "probes": [
+      {
+        "route": "/20a/",
+        "elapsed_ms": 50,
+        "status": 200
+      },
+      {
+        "route": "/20a?d",
+        "elapsed_ms": 91,
+        "status": 200
+      },
+      {
+        "route": "/20a?hdoc",
+        "elapsed_ms": 56,
+        "status": 200
+      },
+      {
+        "route": "/99?testconnection",
+        "elapsed_ms": 14,
+        "status": 204
+      },
+      {
+        "route": "/20a/?mp_js",
+        "elapsed_ms": 1,
+        "status": 200
+      }
+    ]
+  },
+  "assets": [
+    {
+      "route": "/20a/?mp_js",
+      "sha256": "e49acd9ccaff50f4b6974ad7b05a9c3f47cbcf1d5119fa0e3fc13fe981672ccd",
+      "bytes": 14616,
+      "conditional_status": 304,
+      "unauthenticated_status": 401
+    },
+    {
+      "route": "/20a/?jquery-1.4.2.js",
+      "sha256": "1a50bc4a32ddd62f3c6ac84bcecc29bc1d67da470da76d719d540cc4a25004da",
+      "bytes": 163854,
+      "conditional_status": 304,
+      "unauthenticated_status": 401
+    },
+    {
+      "route": "/20a/?kodeks_logo.png",
+      "sha256": "8b7cafc8c9e13726f4454ef5f67b620c008be1d6743116f0e742d2faf02f7005",
+      "bytes": 1899,
+      "conditional_status": 304,
+      "unauthenticated_status": 401
+    },
+    {
+      "route": "/20a/?mglass_27.png",
+      "sha256": "cb7dd911a01d5b6dff2951a3df41657f7adebba4cb1bebf5cdaf0ac486aaced9",
+      "bytes": 1297,
+      "conditional_status": 304,
+      "unauthenticated_status": 401
+    },
+    {
+      "route": "/20a/css/mode_default/mode_default_styles.css",
+      "sha256": "25fa1c2f85d17fc89154b019129d5b06fa4325ac0c3eeffd70e619a85f557815",
+      "bytes": 4103,
+      "conditional_status": 304,
+      "unauthenticated_status": 401
+    },
+    {
+      "route": "/20a/image/common_layout/help_ico.png",
+      "sha256": "1522e5ebadffce4d7cc8df273e7f7a2282b064fce212da59b54596a9179c417d",
+      "bytes": 796,
+      "conditional_status": 304,
+      "unauthenticated_status": 401
+    },
+    {
+      "route": "/20a/image/common_layout/faq.png",
+      "sha256": "181c7c96cfd0821c524c68b5704fe0e07baabbd505fb9b920be33ffad492e393",
+      "bytes": 3538,
+      "conditional_status": 304,
+      "unauthenticated_status": 401
+    }
+  ],
+  "validation": {
+    "unit_passed": 445,
+    "native_fixture_passed": 2,
+    "http_smoke_passed": 13,
+    "keep_alive_requests": 10
+  },
+  "after_interface_and_cancellation": {
+    "reports": [
+      {
+        "kind": "1b",
+        "status": 200,
+        "elapsed_ms": 33983,
+        "sha256": "aaa04da0efd52e6aeb8ba88ba682c1aa471364ece629e9b818e161841acacccf"
+      },
+      {
+        "kind": "1ac2019",
+        "status": 200,
+        "elapsed_ms": 50089,
+        "sha256": "f05a5169cf7a34a4bddcba0a2a479eb6da1ba1d45c1f4150ad99762573b05439"
+      }
+    ],
+    "series_wall_s": 50.124
+  }
+}

@@ -14,7 +14,7 @@ pub struct Settings {
     pub body_seconds: u64,
     pub write_seconds: u64,
     pub history: usize,
-    pub workers: usize,
+    pub workers: crate::worker_config::Mode,
     pub keep_alive_seconds: u64,
 }
 impl Default for Settings {
@@ -26,7 +26,7 @@ impl Default for Settings {
             body_seconds: 10,
             write_seconds: 15,
             history: 128,
-            workers: 4,
+            workers: crate::worker_config::Mode::Auto,
             keep_alive_seconds: 60,
         }
     }
@@ -47,20 +47,21 @@ const FIELDS: [(&str, &str, usize, usize); 8] = [
     ),
 ];
 impl Settings {
-    fn values(&self) -> [usize; 8] {
+    fn values(&self) -> [String; 8] {
         [
-            self.connections,
-            self.queue,
-            self.header_seconds as usize,
-            self.body_seconds as usize,
-            self.write_seconds as usize,
-            self.history,
-            self.workers,
-            self.keep_alive_seconds as usize,
+            self.connections.to_string(),
+            self.queue.to_string(),
+            self.header_seconds.to_string(),
+            self.body_seconds.to_string(),
+            self.write_seconds.to_string(),
+            self.history.to_string(),
+            self.workers.to_string(),
+            self.keep_alive_seconds.to_string(),
         ]
     }
     fn from_pairs(pairs: &[(String, String)]) -> Result<Self, String> {
         let mut values = [0; 8];
+        let mut workers = crate::worker_config::Mode::Auto;
         let mut seen = HashSet::new();
         for (key, value) in pairs {
             let Some(index) = FIELDS.iter().position(|f| f.0 == key) else {
@@ -68,6 +69,10 @@ impl Settings {
             };
             if !seen.insert(index) {
                 return Err(format!("Повторный параметр: {key}"));
+            }
+            if key == "workers" {
+                workers = crate::worker_config::Mode::parse(value)?;
+                continue;
             }
             let n = value
                 .parse::<usize>()
@@ -90,7 +95,7 @@ impl Settings {
             body_seconds: values[3] as u64,
             write_seconds: values[4] as u64,
             history: values[5],
-            workers: values[6],
+            workers,
             keep_alive_seconds: values[7] as u64,
         })
     }
@@ -107,11 +112,14 @@ impl Settings {
         }
         // Old six-key files retain every saved setting and gain new defaults.
         for (key, value) in [
-            ("workers", Self::default().workers as u64),
-            ("keep_alive_seconds", Self::default().keep_alive_seconds),
+            ("workers", Self::default().workers.to_string()),
+            (
+                "keep_alive_seconds",
+                Self::default().keep_alive_seconds.to_string(),
+            ),
         ] {
             if !pairs.iter().any(|(k, _)| k == key) {
-                pairs.push((key.into(), value.to_string()));
+                pairs.push((key.into(), value));
             }
         }
         Self::from_pairs(&pairs)
@@ -126,6 +134,7 @@ impl Settings {
 }
 pub struct Store {
     pub active: Settings,
+    pub worker_selection: crate::worker_config::Selection,
     saved: Mutex<Settings>,
     path: PathBuf,
     token: String,
@@ -233,6 +242,7 @@ impl Store {
             Err(e) => return Err(e),
         };
         Ok(Self {
+            worker_selection: active.workers.resolve(),
             saved: Mutex::new(active.clone()),
             active,
             path,
@@ -290,19 +300,47 @@ impl Store {
         }
         let saved = self.saved.lock().unwrap().clone();
         let escape = crate::monitor::escape;
-        let mut html = String::from("<!doctype html><html lang=ru><meta charset=utf-8><title>Расширенные настройки · codex-AIs</title><style>body{font:16px Arial;margin:24px;background:#e3ddda;color:#222;max-width:1000px}table{border-collapse:collapse;background:white;width:100%}th,td{padding:12px;border:1px solid #aaa;text-align:left}input{width:9em;font:inherit}button{font:inherit;padding:10px 18px;margin-top:16px}.notice{padding:12px;background:#fff4c2}.error{color:#a00}code{overflow-wrap:anywhere}</style><p><a href='/admin/'>Администрирование</a> → Установки → Расширенные настройки</p><h1>Параметры codex-AIs</h1><p>Сохранённые значения применяются после перезапуска сервера. Сеть обслуживает Tokio; KS и доступ к данным выполняют отдельные исполнители. Их число задаётся параметром «Исполнители KS/DB». Число HTTP-соединений и длина очереди настраиваются независимо. Помимо общей очереди предусмотрено по одному резервному месту для владельца и выделенного интерфейса, если они есть.</p>");
+        let mut html = String::from("<!doctype html><html lang=ru><meta charset=utf-8><title>Расширенные настройки · codex-AIs</title><style>body{font:16px Arial;margin:24px;background:#e3ddda;color:#222;max-width:1000px}table{border-collapse:collapse;background:white;width:100%}th,td{padding:12px;border:1px solid #aaa;text-align:left}input,select{width:13em;font:inherit}button{font:inherit;padding:10px 18px;margin-top:16px}.notice{padding:12px;background:#fff4c2}.error{color:#a00}code{overflow-wrap:anywhere}</style><p><a href='/admin/'>Администрирование</a> → Установки → Расширенные настройки</p><h1>Параметры codex-AIs</h1><p>Сохранённые значения применяются после перезапуска сервера. Сеть обслуживает Tokio; KS и доступ к данным выполняют отдельные исполнители. Их число задаётся параметром «Исполнители KS/DB». Число HTTP-соединений и длина очереди настраиваются независимо. Помимо общей очереди предусмотрено по одному резервному месту для владельца и выделенного интерфейса, если они есть.</p>");
         if let Some(error) = error {
             html.push_str(&format!("<p class=error>{}</p>", escape(&error)));
         }
         if saved != self.active {
             html.push_str("<p class=notice>Есть сохранённые изменения. Для их применения перезапустите codex-AIs.</p>");
         }
+        html.push_str(&format!(
+            "<p>{}</p>",
+            escape(&self.worker_selection.explanation)
+        ));
         html.push_str(&format!("<p>Файл: <code>{}</code>. Предыдущая версия сохраняется в <code>codex-AIs.settings.bak</code>.</p><form method=post action='/admin?advanced'><input type=hidden name=csrf value='{}'><table><tr><th>Параметр</th><th>Работает сейчас</th><th>После перезапуска</th></tr>", escape(&self.path.display().to_string()), self.token));
         for ((field, active), value) in FIELDS.iter().zip(self.active.values()).zip(saved.values())
         {
+            if field.0 == "workers" {
+                let current = match self.active.workers {
+                    crate::worker_config::Mode::Auto => {
+                        format!("auto → {}", self.worker_selection.workers)
+                    }
+                    crate::worker_config::Mode::Manual(n) => format!("{n} (вручную)"),
+                };
+                html.push_str(&format!("<tr><td><label for=workers>Исполнители KS/DB</label></td><td>{current}</td><td><select id=workers name=workers>"));
+                for option in
+                    std::iter::once("auto".to_string()).chain((1..=32).map(|n| n.to_string()))
+                {
+                    let title = if option == "auto" {
+                        "auto — при запуске".into()
+                    } else {
+                        format!("{option} — вручную")
+                    };
+                    html.push_str(&format!(
+                        "<option value='{option}'{}>{title}</option>",
+                        if value == option { " selected" } else { "" }
+                    ));
+                }
+                html.push_str("</select></td></tr>");
+                continue;
+            }
             html.push_str(&format!("<tr><td><label for='{}'>{}</label> ({}–{})</td><td>{active}</td><td><input required type=number id='{}' name='{}' min='{}' max='{}' value='{value}'></td></tr>", field.0, field.1, field.2, field.3, field.0, field.0, field.2, field.3));
         }
-        html.push_str("</table><button type=submit>Сохранить настройки Rust</button></form><h2>Параметры оригинального сервера</h2><p>config.db4 используется для каталогов, томов и прав доступа и здесь не изменяется. Число исполнителей и очередь Rust задаются выше. По умолчанию работают 4 исполнителя: владелец каталогов/Word/At, интерфейс /20a и два исполнителя тяжёлых запросов. При 1 исполнителе работа последовательная, при 2 интерфейс разделяет владельца. Увеличение числа исполнителей увеличивает потребление памяти кэшами. Публикация DB4 согласована и последовательна; расчёты идут параллельно. Ограничение памяти старого Win32-процесса не применяется к Rust: кэши имеют собственные пределы, это не жёсткий предел всей памяти процесса.</p><p>HTTP/1.1 keep-alive включён по умолчанию, HTTP/1.0 — по запросу клиента. Таймаут выше относится только к ожиданию следующего запроса, в том числе Word /99, и не ограничивает длительность расчёта. Сжатие ответов пока не реализовано. Периодическую очистку нативного хэша заменяют ограниченные кэши Rust. Заголовок X-Real-IP не подменяет адрес клиента. Журналы KS задаются KODEKS_LOG_DIR; адрес и порт слушателя — KODEKS_HOST и KODEKS_PORT. Таймаут отправки ответа отсчитывается после вычисления результата и не ограничивает длительность отчёта.</p><p><a href='/admin?status'>Состояние сервера и очереди</a></p></html>");
+        html.push_str("</table><button type=submit>Сохранить настройки Rust</button></form><h2>Параметры оригинального сервера</h2><p>config.db4 используется для каталогов, томов и прав доступа и здесь не изменяется. Число исполнителей и очередь Rust задаются выше. По умолчанию действует auto: при запуске выбирается 3, 4 или 6 исполнителей по доступным CPU. Два из них выделены для владельца каталогов/Word/At и интерфейса /20a. Ручное число 1–32 имеет приоритет над auto, включая сохранённые настройки прежних версий. При 1 исполнителе работа последовательная, при 2 интерфейс разделяет владельца. Увеличение числа исполнителей увеличивает потребление памяти кэшами. Публикация DB4 согласована и последовательна; расчёты идут параллельно. Ограничение памяти старого Win32-процесса не применяется к Rust: кэши имеют собственные пределы, это не жёсткий предел всей памяти процесса.</p><p>HTTP/1.1 keep-alive включён по умолчанию, HTTP/1.0 — по запросу клиента. Таймаут выше относится только к ожиданию следующего запроса, в том числе Word /99, и не ограничивает длительность расчёта. Сжатие ответов пока не реализовано. Периодическую очистку нативного хэша заменяют ограниченные кэши Rust. Заголовок X-Real-IP не подменяет адрес клиента. Журналы KS задаются KODEKS_LOG_DIR; адрес и порт слушателя — KODEKS_HOST и KODEKS_PORT. Таймаут отправки ответа отсчитывается после вычисления результата и не ограничивает длительность отчёта.</p><p><a href='/admin?status'>Состояние сервера и очереди</a></p></html>");
         crate::server::Response {
             status,
             mime: "text/html; charset=utf-8",

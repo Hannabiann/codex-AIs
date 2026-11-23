@@ -1413,7 +1413,7 @@ impl<'a> Runtime<'a> {
                     Value::StoredField(f) => (0..f.text_objects()?.len())
                         .map(|i| i.to_string())
                         .collect(),
-                    Value::List(list) => (0..self.list_ids(&list.borrow())?.len())
+                    Value::List(list) => (0..self.list_len(&list.borrow())?)
                         .map(|i| i.to_string())
                         .collect(),
                     Value::Database(o) => {
@@ -1683,7 +1683,7 @@ impl<'a> Runtime<'a> {
                 "AddCondition" | "Add" | "Find" | "AddEmptyCondition" | "Delete" | "IsInArray",
             ) => Ok(Value::ListMethod(list, key)),
             (Value::List(list), "Size" | "length") => {
-                Ok(Value::Number(self.list_ids(&list.borrow())?.len() as f64))
+                Ok(Value::Number(self.list_len(&list.borrow())? as f64))
             }
             (Value::List(list), _) => {
                 let l = list.borrow();
@@ -1691,9 +1691,8 @@ impl<'a> Runtime<'a> {
                     .parse::<usize>()
                     .map_err(|_| format!("List.{key} not implemented"))?;
                 Ok(self
-                    .list_ids(&l)?
-                    .get(index)
-                    .map(|id| Value::Document(*id, l.scope))
+                    .list_item(&l, index)?
+                    .map(|id| Value::Document(id, l.scope))
                     .unwrap_or(Value::Null))
             }
             (Value::Css(css), "cssRules") => Ok(Value::CssRules(css)),
@@ -2410,7 +2409,7 @@ impl<'a> Runtime<'a> {
                                         order: None,
                                         conditions: Vec::new(),
                                         query_all: area != 0,
-                                        ids: RefCell::new(None),
+                                        ids: record_list::ListIds::new(None),
                                     },
                                 ))));
                             }
@@ -4550,8 +4549,8 @@ impl<'a> Runtime<'a> {
                     }
                     let list = list.borrow();
                     let id = id as u32;
-                    if let Some(ids) = list.ids.borrow().as_ref() {
-                        return Ok(Value::Bool(ids.contains(&id)));
+                    if list.ids.borrow().is_some() {
+                        return Ok(Value::Bool(list.ids.contains(id)));
                     }
                     return Ok(Value::Bool(self.list_ids(&list)?.contains(&id)));
                 }
@@ -4584,24 +4583,10 @@ impl<'a> Runtime<'a> {
                         vec![n as u32]
                     };
                     let list = list.borrow();
-                    let mut ids = if list.conditions.is_empty() {
-                        list.ids.borrow().clone().unwrap_or_default()
-                    } else {
-                        self.list_ids(&list)?
-                    };
-                    let mut seen = ids
-                        .iter()
-                        .copied()
-                        .collect::<std::collections::HashSet<_>>();
-                    for id in incoming {
-                        if seen.insert(id) {
-                            ids.push(id);
-                        }
+                    if !list.conditions.is_empty() && list.ids.borrow().is_none() {
+                        self.list_ids(&list)?;
                     }
-                    if ids.len() > super::sql::MAX_SQL_ROWS {
-                        return Err("List row limit".into());
-                    }
-                    *list.ids.borrow_mut() = Some(ids);
+                    list.ids.append(&incoming)?;
                     return Ok(Value::Null);
                 }
                 if method == "Find" {

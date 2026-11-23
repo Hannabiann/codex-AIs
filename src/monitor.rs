@@ -46,6 +46,7 @@ struct Entry {
     result: String,
     disconnected: bool,
     executor: Option<usize>,
+    group: &'static str,
 }
 #[derive(Default)]
 struct Inner {
@@ -55,10 +56,17 @@ struct Inner {
     scheduled: Vec<String>,
     connections: usize,
 }
-#[derive(Default)]
 pub struct Monitor {
     inner: Mutex<Inner>,
     settings: crate::settings::Settings,
+    workers: crate::worker_config::Selection,
+}
+impl Default for Monitor {
+    fn default() -> Self {
+        let settings = crate::settings::Settings::default();
+        let workers = settings.workers.resolve();
+        Self::new(settings, workers)
+    }
 }
 pub fn escape(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -108,10 +116,14 @@ pub fn safe_url(s: &str) -> String {
     result
 }
 impl Monitor {
-    pub fn new(settings: crate::settings::Settings) -> Self {
+    pub fn new(
+        settings: crate::settings::Settings,
+        workers: crate::worker_config::Selection,
+    ) -> Self {
         Self {
             inner: Mutex::new(Inner::default()),
             settings,
+            workers,
         }
     }
     pub fn active_users(&self) -> usize {
@@ -147,6 +159,7 @@ impl Monitor {
                 result: String::new(),
                 disconnected: false,
                 executor: None,
+                group: if job { "Владелец" } else { "" },
             },
         );
         id
@@ -161,6 +174,11 @@ impl Monitor {
     pub fn executor(&self, id: u64, worker: usize) {
         if let Some(e) = self.inner.lock().unwrap().active.get_mut(&id) {
             e.executor = Some(worker);
+        }
+    }
+    pub fn group(&self, id: u64, group: &'static str) {
+        if let Some(e) = self.inner.lock().unwrap().active.get_mut(&id) {
+            e.group = group;
         }
     }
     pub fn target(&self, id: u64, url: &str) {
@@ -226,18 +244,39 @@ impl Monitor {
             })
             .count();
         let connection_limit = self.settings.connections;
-        let queue_limit = self.settings.queue + self.settings.workers.saturating_sub(1).min(2);
-        let workers = self.settings.workers;
+        let workers = self.workers.workers;
+        let queue_limit = self.settings.queue + workers.saturating_sub(1).min(2);
         let mut out=format!("<!doctype html><html lang=ru><meta charset=utf-8><meta http-equiv=refresh content=3><title>Состояние сервера</title><style>body{{background:#e3ddda;font:14px Arial;margin:20px}}table{{background:white;border-collapse:collapse;width:100%;min-width:1120px;table-layout:auto}}.table-scroll{{max-width:100%;overflow-x:auto}}th,td{{border:1px solid #aaa;padding:7px 10px;text-align:left;vertical-align:top}}th{{color:#00009a;white-space:nowrap}}td{{white-space:nowrap}}td:nth-child(4){{min-width:280px;max-width:640px;white-space:normal;overflow-wrap:anywhere}}td:nth-child(3),td:nth-child(6),td:nth-child(9){{max-width:260px;white-space:normal;overflow-wrap:break-word}}td:nth-child(1),td:nth-child(5),td:nth-child(7),td:nth-child(8){{font-variant-numeric:tabular-nums}}.lost{{color:#a00}}</style><h2>Состояние сервера · Tokio</h2><p>Соединения: {connections}/{connection_limit}. Очередь KS: {queued}/{queue_limit}. Исполнители KS/DB: {running}/{workers}, свободно: {}. Свободные слоты приёма HTTP: {}.</p><p>Сеть обслуживается Tokio. Состояние фоновых очередей и Word принадлежит исполнителю 1. При 3 и более исполнителях номер 2 обслуживает проверенные формы интерфейса /20a, остальные — удаления, поиск и отчёты. Неизвестные KS обслуживает владелец каталога. Монитор и проверка его доступа выполняются вне очереди KS.</p>",workers.saturating_sub(running),connection_limit.saturating_sub(connections));
+        out.push_str(&format!("<p>{}</p>", escape(&self.workers.explanation)));
+        if workers >= 3 {
+            let heavy_running = active
+                .iter()
+                .filter(|e| {
+                    matches!(e.state, State::Running | State::Cancelling)
+                        && e.executor.is_some_and(|index| index >= 3)
+                        && e.group != "Интерфейс"
+                })
+                .count();
+            let assisting = active
+                .iter()
+                .filter(|e| {
+                    matches!(e.state, State::Running | State::Cancelling)
+                        && e.executor.is_some_and(|index| index >= 3)
+                        && e.group == "Интерфейс"
+                })
+                .count();
+            out.push_str(&format!("<p>Пул тяжёлых задач: {} исполнителей; удаления, поиск и отчёты выполняют {heavy_running}, интерфейсу помогают {assisting}, свободны {}. Сначала исполнитель берёт запрос из общей очереди тяжёлых задач, а если она пуста и исполнитель 2 занят — из очереди проверенных форм интерфейса. Начатый запрос завершается без переноса на другой поток. Исполнители 1 (владелец/Word) и 2 (интерфейс) не берут тяжёлые задачи.</p>", workers - 2, (workers - 2).saturating_sub(heavy_running + assisting)));
+        }
+        out.push_str("<p>Готовые CSS, JavaScript и изображения: общий кэш до 32 МиБ, до 1024 записей; один ресурс до 4 МиБ. Выдача и проверка доступа выполняются вне KS, не более четырёх одновременно. Браузер проверяет ETag при повторном запросе. Ответы KS, HTML-формы и документы не кэшируются.</p>");
         for (title, rows, job) in [
             ("Активные HTTP-запросы", active.clone(), false),
             ("Активные задания At", active.clone(), true),
             ("История HTTP", history.iter().cloned().collect(), false),
             ("История At", history.iter().cloned().collect(), true),
         ] {
-            out.push_str(&format!("<h3>{title}</h3><div class=table-scroll><table><tr><th>ID</th><th>Состояние</th><th>Результат</th><th>URL / действие</th><th>Источник / IP:Port</th><th>Пользователь</th><th>Начало UTC (Unix)</th><th>Мс</th><th>Соединение</th><th>KS/DB</th></tr>"));
+            out.push_str(&format!("<h3>{title}</h3><div class=table-scroll><table><tr><th>ID</th><th>Состояние</th><th>Результат</th><th>URL / действие</th><th>Источник / IP:Port</th><th>Пользователь</th><th>Начало UTC (Unix)</th><th>Мс</th><th>Соединение</th><th>KS/DB</th><th>Группа</th></tr>"));
             for e in rows.iter().filter(|e| e.job == job) {
-                out.push_str(&format!("<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td{}>{}</td><td>{}</td></tr>",e.id,e.state.label(),escape(&e.result),escape(&e.url),escape(&e.source),escape(&e.user),e.start,e.elapsed.unwrap_or_else(||e.tick.elapsed().as_millis()),if e.disconnected{" class=lost"}else{""},if e.disconnected {if e.state == State::Cancelling {"отключено; ожидание безопасной остановки"} else {"отключено"}}else if e.job{"—"}else{""},e.executor.map(|v|v.to_string()).unwrap_or_default()));
+                out.push_str(&format!("<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td{}>{}</td><td>{}</td><td>{}</td></tr>",e.id,e.state.label(),escape(&e.result),escape(&e.url),escape(&e.source),escape(&e.user),e.start,e.elapsed.unwrap_or_else(||e.tick.elapsed().as_millis()),if e.disconnected{" class=lost"}else{""},if e.disconnected {if e.state == State::Cancelling {"отключено; ожидание безопасной остановки"} else {"отключено"}}else if e.job{"—"}else{""},e.executor.map(|v|v.to_string()).unwrap_or_default(),e.group));
             }
             out.push_str("</table></div>");
         }

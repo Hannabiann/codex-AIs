@@ -63,13 +63,11 @@ impl Decimal {
     // 005d8610/005d8890: 25-byte signed binary fraction and 7-byte
     // signed binary exponent, each serialized as little-endian 16-bit units.
     pub fn from_native(bytes: &[u8; 34]) -> Result<Self, String> {
-        fn unpack(src: &[u8], n: usize) -> Vec<u8> {
-            (0..n)
-                .map(|i| if i == n - 1 { src[i] } else { src[i ^ 1] })
-                .collect()
+        fn unpack<const N: usize>(src: &[u8]) -> [u8; N] {
+            std::array::from_fn(|i| if i == N - 1 { src[i] } else { src[i ^ 1] })
         }
-        let m = unpack(&bytes[..26], 25);
-        let e = unpack(&bytes[26..], 7);
+        let m = unpack::<25>(&bytes[..26]);
+        let e = unpack::<7>(&bytes[26..]);
         if !matches!(m[0], 0 | 255) || !matches!(e[0], 0 | 255) {
             return Err("invalid native LongDouble sign".into());
         }
@@ -83,7 +81,7 @@ impl Decimal {
         if !(-512..=512).contains(&exponent) {
             return Err("native LongDouble exponent exceeds supported precision".into());
         }
-        let mut magnitude = m[1..].to_vec();
+        let mut magnitude: [u8; 24] = m[1..].try_into().unwrap();
         if m[0] == 255 {
             let mut carry = 1u16;
             for b in magnitude.iter_mut().rev() {
@@ -92,6 +90,69 @@ impl Decimal {
                 carry = n >> 8;
             }
         }
+        if magnitude.iter().all(|&byte| byte == 0) {
+            return Ok(Self {
+                coefficient: 0,
+                scale: 0,
+            });
+        }
+        if exponent <= 127 {
+            // Round (magnitude * 10^scale) / 2^(192-exponent) directly.
+            // Five binary limbs cover the complete 192-bit mantissa and all
+            // 28 decimal places. No floating point or intermediate rounding.
+            let mut limbs = [0u64; 5];
+            for (i, chunk) in magnitude.rchunks_exact(8).enumerate() {
+                limbs[i] = u64::from_be_bytes(chunk.try_into().unwrap());
+            }
+            fn shifted(limbs: &[u64; 5], shift: usize) -> u128 {
+                let word = shift / 64;
+                let bit = shift % 64;
+                let get = |n| limbs.get(n).copied().unwrap_or(0);
+                let part = |n| {
+                    (get(n) >> bit)
+                        | if bit == 0 {
+                            0
+                        } else {
+                            get(n + 1) << (64 - bit)
+                        }
+                };
+                part(word) as u128 | ((part(word + 1) as u128) << 64)
+            }
+            let shift = (192 - exponent) as usize;
+            let mut integer = shifted(&limbs, shift);
+            let mut integer_digits = 0u32;
+            while integer != 0 {
+                integer /= 10;
+                integer_digits += 1;
+            }
+            let scale = 28.min(38u32.saturating_sub(integer_digits));
+            for _ in 0..scale {
+                let mut carry = 0u128;
+                for limb in &mut limbs {
+                    let product = *limb as u128 * 10 + carry;
+                    *limb = product as u64;
+                    carry = product >> 64;
+                }
+                debug_assert_eq!(carry, 0);
+            }
+            let round =
+                (limbs.get((shift - 1) / 64).copied().unwrap_or(0) >> ((shift - 1) % 64)) & 1;
+            let coefficient = shifted(&limbs, shift)
+                .checked_add(round as u128)
+                .and_then(|n| i128::try_from(n).ok())
+                .ok_or("LongDouble precision overflow")?;
+            return Ok(Self {
+                coefficient: if m[0] == 255 {
+                    -coefficient
+                } else {
+                    coefficient
+                },
+                scale,
+            }
+            .normalize());
+        }
+        // Keep the general conversion for non-normalized values whose binary
+        // exponent is larger than the integer range handled above.
         fn mul(d: &mut Vec<u8>, n: u32, mut carry: u32) {
             for v in d.iter_mut() {
                 let z = *v as u32 * n + carry;
@@ -260,8 +321,14 @@ impl Decimal {
     }
     fn multiply(self, other: Self) -> Result<Self, String> {
         if let Some(coefficient) = self.coefficient.checked_mul(other.coefficient) {
-            let value = Self { coefficient, scale: self.scale + other.scale }.normalize();
-            if value.scale <= 28 { return Ok(value); }
+            let value = Self {
+                coefficient,
+                scale: self.scale + other.scale,
+            }
+            .normalize();
+            if value.scale <= 28 {
+                return Ok(value);
+            }
         }
         // Keep the complete intermediate product: fractional coefficients can
         // overflow i128 even when the value (for example a probability) is small.
@@ -277,21 +344,36 @@ impl Decimal {
             digits[i + 1] += digits[i] / 10;
             digits[i] %= 10;
         }
-        while digits.len() > 1 && digits.last() == Some(&0) { digits.pop(); }
+        while digits.len() > 1 && digits.last() == Some(&0) {
+            digits.pop();
+        }
         let scale = self.scale + other.scale;
-        let drop = scale.saturating_sub(28).max(digits.len().saturating_sub(38) as u32);
-        if drop > scale { return Err("LongDouble precision overflow".into()); }
+        let drop = scale
+            .saturating_sub(28)
+            .max(digits.len().saturating_sub(38) as u32);
+        if drop > scale {
+            return Err("LongDouble precision overflow".into());
+        }
         let mut coefficient = 0i128;
         for &digit in digits.iter().skip(drop as usize).rev() {
-            coefficient = coefficient.checked_mul(10)
+            coefficient = coefficient
+                .checked_mul(10)
                 .and_then(|n| n.checked_add(digit as i128))
                 .ok_or("LongDouble precision overflow")?;
         }
         if drop > 0 && digits.get(drop as usize - 1).copied().unwrap_or(0) >= 5 {
-            coefficient = coefficient.checked_add(1).ok_or("LongDouble precision overflow")?;
+            coefficient = coefficient
+                .checked_add(1)
+                .ok_or("LongDouble precision overflow")?;
         }
-        if (self.coefficient < 0) != (other.coefficient < 0) { coefficient = -coefficient; }
-        Ok(Self { coefficient, scale: scale - drop }.normalize())
+        if (self.coefficient < 0) != (other.coefficient < 0) {
+            coefficient = -coefficient;
+        }
+        Ok(Self {
+            coefficient,
+            scale: scale - drop,
+        }
+        .normalize())
     }
     pub fn formatted(self, places: u32) -> Result<String, String> {
         if places > 28 {

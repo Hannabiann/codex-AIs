@@ -1,0 +1,241 @@
+{
+  "date": "2026-11-23",
+  "version": "0.23",
+  "control": "Previous local Rust 0.23 build; unchanged report calculations",
+  "dataset": {
+    "registered_volumes": 49,
+    "approx_gb": 194,
+    "report_period": "2026-10-01",
+    "workers": 6,
+    "heavy_workers": 4,
+    "queue": 16,
+    "connections": 64
+  },
+  "report_routes": [
+    {
+      "route": "StatOtchet1",
+      "entries": [
+        "Отчет о работе суда (2008)"
+      ]
+    },
+    {
+      "route": "StatOtchet111",
+      "entries": [
+        "Отчет о работе суда ф.1 (2011)"
+      ]
+    },
+    {
+      "route": "StatOtchet191",
+      "entries": [
+        "Отчет о работе суда ф.1АС (2019)"
+      ]
+    },
+    {
+      "route": "StatOtchet221",
+      "entries": [
+        "Отчет о работе суда ф.1АС (2024)"
+      ]
+    },
+    {
+      "route": "StatOtchetBankr",
+      "entries": [
+        "Отчет о работе суда (банкротство) (2008)"
+      ]
+    },
+    {
+      "route": "StatOtchetBankr11",
+      "entries": [
+        "Отчет о работе суда (банкротство) ф.1а (2011)"
+      ]
+    },
+    {
+      "route": "StatOtchetBankr16",
+      "entries": [
+        "Отчет о работе суда (банкротство) ф.1а (2017)"
+      ]
+    },
+    {
+      "route": "StatOtchetBankr22",
+      "entries": [
+        "Отчет о работе суда (банкротство) ф.1б (2024)"
+      ]
+    },
+    {
+      "route": "checkStatCard2",
+      "entries": [
+        "Пересмотр СА в апелляционном порядке",
+        "Пересмотр СА в кассационном порядке"
+      ]
+    },
+    {
+      "route": "checkStatCard3",
+      "entries": [
+        "Справка о нагрузке на судей",
+        "Итоги работы суда",
+        "Сведения для анализа статистических данных"
+      ]
+    },
+    {
+      "route": "stat3",
+      "entries": [
+        "Справка о нарушении срока изготовления финальных СА в полном объеме",
+        "Справка о нарушении срока изготовления финальных СА в полном объеме по обособленным спорам"
+      ]
+    },
+    {
+      "route": "statNoReglament",
+      "entries": [
+        "Нерегламентная статистика ф.Z22.1"
+      ]
+    },
+    {
+      "route": "statNoReglament2",
+      "entries": [
+        "Оперативная отчетность ф.01АС"
+      ]
+    },
+    {
+      "route": "statNoReglament24",
+      "entries": [
+        "Оперативная отчетность ф.01АС (2024)"
+      ]
+    },
+    {
+      "route": "statReportCard",
+      "entries": [
+        "Справка о суммах исковых требований"
+      ]
+    },
+    {
+      "route": "statistica1",
+      "entries": [
+        "Реестр зарегистрированных документов",
+        "Реестр передачи документов в судебные составы",
+        "Поступившие заявления (по категориям споров)",
+        "Движение дел (по судьям)",
+        "Справка о госпошлине",
+        "Справка об исполнительных листах",
+        "Справка о приостановленных делах",
+        "Справка о требованиях, жалобах, разногласиях (банкротство)",
+        "Справка о ходатайствах (заявлениях) в делах о банкротстве учитываемых в нагрузку",
+        "Справка о ходатайствах (заявлениях) в делах о банкротстве",
+        "Справка об упрощенном производстве",
+        "Справка о нарушении срока отправки завершающих СА"
+      ]
+    }
+  ],
+  "menu_entries": 33,
+  "report_entries": 31,
+  "report_route_count": 16,
+  "owner_editors": [
+    "statcard171",
+    "statcard111"
+  ],
+  "interface_menu": "/20a?statistica1",
+  "forms": {
+    "http_200": 34,
+    "groups": {
+      "Тяжёлые": 31,
+      "Владелец": 2,
+      "Интерфейс": 1
+    }
+  },
+  "html_checks": {
+    "responses": 31,
+    "matching": 31,
+    "comparison": "Cell text/structure; form 26 with missing amount compares validation text. A separate valid-amount case verifies its table. Only generation time/date in two registers normalized.",
+    "valid_amount_cells": 156,
+    "valid_amount_equal": true
+  },
+  "xls": [
+    {
+      "route": "/20a?StatOtchetBankr16",
+      "sha256": "a6c9ab0491a3a234aec642a415b80bd79fe946d2abb032f5eccc21b1d563fada",
+      "bytes_equal": true
+    },
+    {
+      "route": "/20a?StatOtchetBankr11",
+      "sha256": "403e6c329795efd79c485aff86fd2b1ac6b3e0c4f7ae9288388e21e080038319",
+      "bytes_equal": true
+    },
+    {
+      "route": "/20a?statNoReglament24",
+      "sha256": "4437cb6fbc80c3d60fe3c37b038c724e9dc32d923d66ea00aaf5bc7af34a647c",
+      "bytes_equal": true
+    }
+  ],
+  "concurrent_observations": {
+    "probes": {
+      "/20a/": {
+        "count": 23,
+        "median_ms": 51,
+        "max_ms": 1905
+      },
+      "/99?testconnection": {
+        "count": 23,
+        "median_ms": 33,
+        "max_ms": 1263
+      },
+      "/20a?statistica1": {
+        "count": 23,
+        "median_ms": 55,
+        "max_ms": 112
+      }
+    },
+    "heavy_executors": [
+      "3",
+      "4",
+      "5",
+      "6"
+    ]
+  },
+  "full_queue": {
+    "route": "/20a?statNoReglament24",
+    "active": 4,
+    "queued": 16,
+    "cancel_ms": 688,
+    "requests": [
+      {
+        "uri": "/20a/",
+        "status": 200,
+        "bytes": 20759,
+        "elapsed_ms": 47,
+        "sha256": "1401803614894980b954caab70b3b394e684ef5f9df8b22d8e597c41892d6788",
+        "content_type": "text/html; charset=windows-1251",
+        "content_disposition": null
+      },
+      {
+        "uri": "/99?testconnection",
+        "status": 204,
+        "bytes": 0,
+        "elapsed_ms": 27,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "content_type": "text/html; charset=windows-1251",
+        "content_disposition": null
+      },
+      {
+        "uri": "/20a?statistica1",
+        "status": 200,
+        "bytes": 52301,
+        "elapsed_ms": 54,
+        "sha256": "340574efce5b572f0bc8ab68c3625f188875798ecb632f911af710f54d0f61a8",
+        "content_type": "text/html; charset=windows-1251",
+        "content_disposition": null
+      }
+    ],
+    "executors": [
+      "3",
+      "4",
+      "5",
+      "6"
+    ]
+  },
+  "routing_tests": {
+    "passed": 12,
+    "failed": 0
+  },
+  "binaries": {
+    "baseline_sha256": "650dedab78d25a481dec1ede40610db3d94b28a66fe98f644edaf3519a809568",
+    "updated_sha256": "fe687cacff695225e17c076dd918e058d9049c067795fcbdf6d197d4658ecaec"
+  }
+}

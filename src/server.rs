@@ -5,6 +5,8 @@ use crate::{
 use std::{collections::HashMap, sync::Arc};
 #[path = "registration_settings.rs"]
 pub(crate) mod registration;
+#[path = "static_cache.rs"]
+mod static_cache;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -22,6 +24,7 @@ pub struct RequestContext {
     pub host: String,
     pub cookie: String,
     pub if_modified_since: String,
+    pub if_none_match: String,
     pub user: Option<crate::auth::User>,
     pub form: Vec<(String, String)>,
     pub uploads: Vec<crate::http_form::Upload>,
@@ -110,16 +113,17 @@ fn redirect(target: &str) -> Response {
         headers: Vec::new(),
     }
 }
-fn physical_resource(engine: &Db4Engine, dir: &VirtualDir, path: &str) -> Result<Response, String> {
-    use std::{
-        io::Read,
-        path::{Component, Path},
-    };
+fn physical_path(
+    engine: &Db4Engine,
+    dir: &VirtualDir,
+    path: &str,
+) -> Result<std::path::PathBuf, Response> {
+    use std::path::{Component, Path};
     let data_root = engine
         .volumes
         .first()
         .and_then(|v| v.path.parent())
-        .ok_or("data root missing")?;
+        .ok_or_else(|| message("422 Unprocessable Content", "data root missing"))?;
     let mapping = dir.mapped_to.replace('\\', "/");
     let relative = path
         .get(dir.path.trim_end_matches('/').len()..)
@@ -130,14 +134,14 @@ fn physical_resource(engine: &Db4Engine, dir: &VirtualDir, path: &str) -> Result
             .components()
             .any(|c| !matches!(c, Component::Normal(_)))
     {
-        return Ok(message("403 Forbidden", "Invalid resource path"));
+        return Err(message("403 Forbidden", "Invalid resource path"));
     }
     let folder = data_root
         .join(mapping)
         .canonicalize()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| message("422 Unprocessable Content", e.to_string()))?;
     if !folder.starts_with(data_root) {
-        return Ok(message(
+        return Err(message(
             "403 Forbidden",
             "Resource directory outside data root",
         ));
@@ -150,16 +154,24 @@ fn physical_resource(engine: &Db4Engine, dir: &VirtualDir, path: &str) -> Result
     let file = match candidate.canonicalize() {
         Ok(p) => p,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(message("404 Not Found", "Resource not found"))
+            return Err(message("404 Not Found", "Resource not found"))
         }
-        Err(e) => return Err(e.to_string()),
+        Err(e) => return Err(message("422 Unprocessable Content", e.to_string())),
     };
     if !file.starts_with(&folder) {
-        return Ok(message(
+        return Err(message(
             "403 Forbidden",
             "Resource outside configured directory",
         ));
     }
+    Ok(file)
+}
+fn physical_resource(engine: &Db4Engine, dir: &VirtualDir, path: &str) -> Result<Response, String> {
+    use std::io::Read;
+    let file = match physical_path(engine, dir, path) {
+        Ok(file) => file,
+        Err(response) => return Ok(response),
+    };
     let extension = file
         .extension()
         .and_then(|s| s.to_str())
@@ -455,23 +467,42 @@ struct RequestJob {
     reply: tokio::sync::oneshot::Sender<Response>,
     control: Arc<crate::execution::Control>,
     queued: tokio::sync::OwnedSemaphorePermit,
-    load: WorkerLoad,
-}
-struct WorkerLoad(Arc<std::sync::atomic::AtomicUsize>);
-impl WorkerLoad {
-    fn new(load: Arc<std::sync::atomic::AtomicUsize>) -> Self {
-        load.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-        Self(load)
-    }
-}
-impl Drop for WorkerLoad {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
-    }
 }
 struct Worker {
     sender: tokio::sync::mpsc::Sender<RequestJob>,
-    load: Arc<std::sync::atomic::AtomicUsize>,
+}
+type WorkerInbox = Arc<std::sync::Mutex<tokio::sync::mpsc::Receiver<RequestJob>>>;
+struct InterfaceBusy<'a>(&'a std::sync::atomic::AtomicBool);
+impl<'a> InterfaceBusy<'a> {
+    fn enter(busy: &'a std::sync::atomic::AtomicBool) -> Self {
+        busy.store(true, std::sync::atomic::Ordering::Release);
+        Self(busy)
+    }
+}
+impl Drop for InterfaceBusy<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+fn worker_channels(count: usize, capacity: usize) -> (Vec<Worker>, Vec<WorkerInbox>) {
+    let mut workers: Vec<Worker> = Vec::with_capacity(count);
+    let mut inboxes: Vec<WorkerInbox> = Vec::with_capacity(count);
+    for index in 0..count {
+        if index >= 3 {
+            // All heavy executors take the next job from one FIFO. A pending
+            // job must not remain pinned behind a report on a busy executor.
+            workers.push(Worker {
+                sender: workers[2].sender.clone(),
+            });
+            inboxes.push(inboxes[2].clone());
+        } else {
+            let (sender, receiver) = tokio::sync::mpsc::channel(capacity);
+            workers.push(Worker { sender });
+            inboxes.push(Arc::new(std::sync::Mutex::new(receiver)));
+        }
+    }
+    (workers, inboxes)
 }
 struct Dispatcher {
     workers: Vec<Worker>,
@@ -479,14 +510,81 @@ struct Dispatcher {
     ais_paths: Vec<String>,
     owner_reserve: Arc<tokio::sync::Semaphore>,
     interface_reserve: Arc<tokio::sync::Semaphore>,
+    static_cache: Arc<static_cache::Cache>,
+    static_checks: Arc<tokio::sync::Semaphore>,
 }
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Lane {
     Owner,
     Interface,
     Heavy,
 }
-fn lane(target: &str, method: &str) -> Lane {
+impl Lane {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Owner => "Владелец",
+            Self::Interface => "Интерфейс",
+            Self::Heavy => "Тяжёлые",
+        }
+    }
+}
+fn next_job(
+    primary: &WorkerInbox,
+    interface: Option<&WorkerInbox>,
+) -> Result<RequestJob, tokio::sync::mpsc::error::TryRecvError> {
+    // Release each lock before checking the other queue. The primary queue
+    // always wins; an already executing UI request is never preempted.
+    let next = primary.lock().unwrap().try_recv();
+    match next {
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+            if let Some(interface) = interface {
+                match interface.lock().unwrap().try_recv() {
+                    Ok(job) => return Ok(job),
+                    Err(_) => {}
+                }
+            }
+            next
+        }
+        _ => next,
+    }
+}
+fn notice_calculation(query: &str, request: &RequestContext) -> bool {
+    // Only the explicit HTML calculation is read-only. Opening the form may
+    // migrate column settings; save/clear and XML exports stay on the owner.
+    if !request.uploads.is_empty() || (!request.body.is_empty() && request.form.is_empty()) {
+        return false;
+    }
+    let mut values = HashMap::new();
+    for pair in query.split('&') {
+        let Some((key, value)) = pair.split_once('=') else {
+            continue;
+        };
+        let (Ok(key), Ok(value)) = (
+            percent_decode(key),
+            percent_decode(&value.replace('+', " ")),
+        ) else {
+            return false;
+        };
+        if matches!(key.as_str(), "go" | "goxml" | "mode") {
+            values.insert(key, value);
+        }
+    }
+    // Match KS request binding: form values follow and override query values.
+    for (key, value) in &request.form {
+        if matches!(key.as_str(), "go" | "goxml" | "mode") {
+            values.insert(key.clone(), value.clone());
+        }
+    }
+    matches!(values.get("go").map(String::as_str), Some("ok" | "OK"))
+        && values.get("goxml").map(String::as_str) != Some("1")
+        && matches!(
+            values.get("mode").map(String::as_str),
+            None | Some("" | "0")
+        )
+}
+fn lane(target: &str, request: &RequestContext) -> Lane {
+    let method = request.method.as_str();
+    let has_body = !request.body.is_empty() || !request.form.is_empty();
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
     let Ok(path) = percent_decode(path) else {
         return Lane::Owner;
@@ -494,19 +592,31 @@ fn lane(target: &str, method: &str) -> Lane {
     if path != "/20a" && !path.starts_with("/20a/") {
         return Lane::Owner;
     }
-    let name = path
-        .strip_prefix("/20a/")
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| {
-            query
-                .split('&')
-                .next()
-                .filter(|s| !s.is_empty())
-                .unwrap_or("default")
-        });
-    let Ok(name) = percent_decode(name) else {
+    // Use the execution router's action precedence and empty-query handling.
+    // A path looking like a UI form may select a different action in the query.
+    let dir = VirtualDir {
+        path: "/20a".into(),
+        ..Default::default()
+    };
+    let Ok(name) = object_name(&path, query, &dir) else {
         return Lane::Owner;
     };
+    if name == "anshlag" {
+        return if notice_calculation(query, request) {
+            Lane::Heavy
+        } else {
+            Lane::Owner
+        };
+    }
+    // The bare catalogue only renders the statistics menu. The same script
+    // calculates reports when supplied query/form parameters, even on GET.
+    if name == "statistica1"
+        && method == "GET"
+        && !has_body
+        && !query.split('&').any(|part| part.contains('='))
+    {
+        return Lane::Interface;
+    }
     // Only routes whose request-local state has been verified are replicated.
     // Job queues, custom scripts and the complete Word protocol keep one owner.
     // User administration (/99 and /users) also stays on that owner: duplicate
@@ -514,8 +624,25 @@ fn lane(target: &str, method: &str) -> Lane {
     if matches!(
         name.as_str(),
         "DeleteObject"
+            // Exact report entry points from the judicial-statistics catalogue.
+            // statcard* editors may create/save DB4 records and keep the owner.
+            | "statistica1"
+            | "StatOtchet1"
+            | "StatOtchet111"
             | "StatOtchet221"
+            | "StatOtchetBankr"
+            | "StatOtchetBankr11"
+            | "StatOtchetBankr16"
+            | "StatOtchetBankr22"
+            | "StatOtchet191"
             | "statNoReglament"
+            | "statNoReglament2"
+            | "statNoReglament24"
+            | "checkStatCard2"
+            | "checkStatCard3"
+            | "statReportCard"
+            | "stat3"
+            | "dateandjudgeanshlag"
             | "convertToExcel"
             | "converttoexcel"
             | "pfind"
@@ -526,7 +653,14 @@ fn lane(target: &str, method: &str) -> Lane {
     } else if method == "GET"
         && (matches!(
             name.as_str(),
-            "default" | "d" | "hdoc" | "doc" | "Word" | "ispravlenieForm" | "classifforispr"
+            "default"
+                | "d"
+                | "hdoc"
+                | "doc"
+                | "Word"
+                | "ispravlenieForm"
+                | "classifforispr"
+                | "gen_anshlag"
         ) || name.starts_with("css/")
             || name.starts_with("images/")
             || name.starts_with("word/"))
@@ -557,9 +691,10 @@ impl Dispatcher {
             let tail = decoded.strip_prefix(path)?;
             (tail.is_empty() || tail.starts_with('/')).then(|| format!("/20a{tail}{query}"))
         });
-        let lane = route
-            .map(|r| lane(&r, &request.method))
-            .unwrap_or(Lane::Owner);
+        let lane = route.map(|r| lane(&r, &request)).unwrap_or(Lane::Owner);
+        if let Some((monitor, id)) = &request.monitor {
+            monitor.group(*id, lane.label());
+        }
         // A full heavy queue must not consume the last admission slot for the
         // UI or Word. These reserves do not admit heavy requests.
         let queued = self
@@ -584,16 +719,15 @@ impl Dispatcher {
                     0
                 }
             }
-            (n, Lane::Heavy) => ((if n >= 3 { 2 } else { 1 })..n)
-                .min_by_key(|&i| {
-                    self.workers[i]
-                        .load
-                        .load(std::sync::atomic::Ordering::Acquire)
-                })
-                .unwrap(),
+            (n, Lane::Heavy) => {
+                if n >= 3 {
+                    2
+                } else {
+                    1
+                }
+            }
         };
         let worker = &self.workers[index];
-        let load = WorkerLoad::new(worker.load.clone());
         worker
             .sender
             .try_send(RequestJob {
@@ -603,7 +737,6 @@ impl Dispatcher {
                 reply,
                 control,
                 queued,
-                load,
             })
             .map_err(|_| ())
     }
@@ -714,6 +847,7 @@ fn start_dispatcher(
     engine: Arc<Db4Engine>,
     monitor: Arc<crate::monitor::Monitor>,
     settings: &crate::settings::Settings,
+    worker_count: usize,
 ) -> std::io::Result<Arc<Dispatcher>> {
     let root = engine
         .volumes
@@ -723,10 +857,12 @@ fn start_dispatcher(
         .to_owned();
     let (warm_tx, warm_rx) = tokio::sync::mpsc::channel(32);
     let mut warm_rx = Some(warm_rx);
-    let mut workers = Vec::new();
-    for index in 0..settings.workers {
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<RequestJob>(settings.queue + 1);
-        let load = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (workers, inboxes) = worker_channels(worker_count, settings.queue + 1);
+    let interface = (worker_count >= 3).then(|| inboxes[1].clone());
+    let interface_busy = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    for (index, rx) in inboxes.into_iter().enumerate() {
+        let interface = if index >= 2 { interface.clone() } else { None };
+        let interface_busy = interface_busy.clone();
         let root = root.clone();
         let monitor = monitor.clone();
         let owner = if index == 0 {
@@ -757,7 +893,15 @@ fn start_dispatcher(
                             }
                         }
                     }
-                    match rx.try_recv() {
+                    // Drop the inbox lock before any KS/DB execution, waiting,
+                    // cancellation or sleep. Runtime state stays on its thread.
+                    // Let an idle dedicated UI worker take its own next request.
+                    // Otherwise a cold helper can turn a fast page into startup.
+                    let help = interface
+                        .as_ref()
+                        .filter(|_| interface_busy.load(std::sync::atomic::Ordering::Acquire));
+                    let next = next_job(&rx, help);
+                    match next {
                         Ok(RequestJob {
                             id,
                             request,
@@ -765,8 +909,9 @@ fn start_dispatcher(
                             reply,
                             control,
                             queued,
-                            load: _load,
                         }) => {
+                            let _busy = (index == 1 && worker_count >= 3)
+                                .then(|| InterfaceBusy::enter(&interface_busy));
                             drop(queued);
                             let _scope = crate::execution::Scope::enter(control.clone());
                             if reply.is_closed() || control.cancelled() {
@@ -849,7 +994,6 @@ fn start_dispatcher(
                     }
                 }
             })?;
-        workers.push(Worker { sender: tx, load });
     }
     Ok(Arc::new(Dispatcher {
         workers,
@@ -862,20 +1006,44 @@ fn start_dispatcher(
             .collect(),
         owner_reserve: Arc::new(tokio::sync::Semaphore::new(1)),
         interface_reserve: Arc::new(tokio::sync::Semaphore::new(1)),
+        static_cache: Arc::new(static_cache::Cache::default()),
+        static_checks: Arc::new(tokio::sync::Semaphore::new(4)),
     }))
 }
+async fn reject_overloaded(stream: &mut TcpStream) {
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(100), async {
+        stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await?;
+        // Closing a TCP socket with unread request bytes can reset the peer
+        // before it receives 503. Send FIN, then drain until the client closes.
+        // The whole rejection, including a stalled peer, keeps the 100 ms bound.
+        stream.shutdown().await?;
+        let mut discarded = [0u8; 1024];
+        while stream.read(&mut discarded).await? != 0 {}
+        Ok::<(), std::io::Error>(())
+    }).await;
+}
+
 pub async fn run_server(engine: Arc<Db4Engine>, host: &str, port: u16) -> std::io::Result<()> {
     let settings = Arc::new(crate::settings::Store::load()?);
     let listener = TcpListener::bind((host, port)).await?;
     eprintln!("codex-AIs HTTP server: http://{host}:{port}; KS compatibility runtime");
     let connections = Arc::new(tokio::sync::Semaphore::new(settings.active.connections));
-    let monitor = Arc::new(crate::monitor::Monitor::new(settings.active.clone()));
+    eprintln!("KS pool: {}", settings.worker_selection.explanation);
+    let monitor = Arc::new(crate::monitor::Monitor::new(
+        settings.active.clone(),
+        settings.worker_selection.clone(),
+    ));
     let status_checks = Arc::new(tokio::sync::Semaphore::new(4));
-    let dispatcher = start_dispatcher(engine.clone(), monitor.clone(), &settings.active)?;
+    let dispatcher = start_dispatcher(
+        engine.clone(),
+        monitor.clone(),
+        &settings.active,
+        settings.worker_selection.workers,
+    )?;
     loop {
         let (mut stream, peer) = listener.accept().await?;
         let Ok(permit) = connections.clone().try_acquire_owned() else {
-            let _=tokio::time::timeout(std::time::Duration::from_millis(100),stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")).await;
+            reject_overloaded(&mut stream).await;
             continue;
         };
         monitor.connected();
@@ -1077,6 +1245,7 @@ async fn connection_request(
                     "cookie" => context.cookie = value.into(),
                     "user-agent" => context.user_agent = value.into(),
                     "if-modified-since" => context.if_modified_since = value.into(),
+                    "if-none-match" => context.if_none_match = value.into(),
                     "content-length" => match value.parse::<usize>() {
                         Ok(n)
                             if n <= if crate::http_form::upload_route(&context.target) {
@@ -1203,6 +1372,36 @@ async fn connection_request(
                     headers: vec![("Cache-Control".into(), "no-store".into())],
                 };
             }
+            if static_cache::candidate(&context) {
+                // Bounded independently of monitor authentication and KS. On
+                // saturation use the ordinary dispatcher, with its admission limits.
+                if let Ok(permit) = dispatcher.static_checks.clone().try_acquire_owned() {
+                    let cache = dispatcher.static_cache.clone();
+                    let e = engine.clone();
+                    let request = context.clone();
+                    let auth = authorization.clone();
+                    let scope = control.clone();
+                    let answer = tokio::task::spawn_blocking(move || {
+                        let _permit = permit;
+                        let _scope = crate::execution::Scope::enter(scope);
+                        cache.serve(&e, &request, auth.as_deref())
+                    });
+                    let result = tokio::select! {
+                        result = answer => result,
+                        _ = disconnected(stream, pending) => { control.cancel(); return Ok(false); }
+                    };
+                    match result {
+                        Ok(Some(response)) => break response,
+                        Ok(None) => {}
+                        Err(_) => {
+                            break message(
+                                "500 Internal Server Error",
+                                "Static resource worker failed",
+                            )
+                        }
+                    }
+                }
+            }
             let (reply, answer) = tokio::sync::oneshot::channel();
             monitor.state(id, crate::monitor::State::Queued);
             if dispatcher
@@ -1229,7 +1428,7 @@ async fn connection_request(
         .unwrap_or(response.mime);
     let connection = if keep_alive { "keep-alive" } else { "close" };
     let mut header = format!("HTTP/1.1 {}\r\nContent-Type: {content_type}\r\nConnection: {connection}\r\nX-Content-Type-Options: nosniff\r\n", response.status);
-    if response.status != "204 No Content" {
+    if !matches!(response.status, "204 No Content" | "304 Not Modified") {
         header.push_str(&format!("Content-Length: {}\r\n", response.body.len()));
     }
     if keep_alive {

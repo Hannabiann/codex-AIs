@@ -998,7 +998,7 @@ impl Runtime<'_> {
                         order: None,
                         conditions: vec![],
                         query_all: false,
-                        ids: RefCell::new(Some(ids)),
+                        ids: super::record_list::ListIds::new(Some(ids)),
                     };
                     (self.list_html(&list)?, has)
                 }
@@ -1031,7 +1031,7 @@ impl Runtime<'_> {
                         order: None,
                         conditions: vec![],
                         query_all: false,
-                        ids: RefCell::new(Some(ids)),
+                        ids: super::record_list::ListIds::new(Some(ids)),
                     };
                     (self.list_html(&list)?, has)
                 }

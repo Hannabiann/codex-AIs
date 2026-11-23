@@ -16,6 +16,26 @@ use std::{
     io::{Read, Seek, SeekFrom},
     path::Path,
 };
+
+#[cfg(windows)]
+fn open_file_size(file: &File) -> std::io::Result<u64> {
+    use std::os::windows::io::AsRawHandle;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetFileSizeEx(file: *mut std::ffi::c_void, size: *mut i64) -> i32;
+    }
+    let mut size = 0i64;
+    // The borrowed File owns a live handle; size points to a writable LARGE_INTEGER.
+    // Query only the size: File::metadata also requests volume information on Windows.
+    if unsafe { GetFileSizeEx(file.as_raw_handle(), &mut size) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    u64::try_from(size).map_err(|_| std::io::Error::other("negative file size"))
+}
+#[cfg(not(windows))]
+fn open_file_size(file: &File) -> std::io::Result<u64> {
+    file.metadata().map(|metadata| metadata.len())
+}
 #[derive(Debug, Clone, Copy)]
 pub struct Entry {
     pub oid: u32,
@@ -47,8 +67,10 @@ pub struct MainKey {
     pub bytes: u64,
     node_cache: Option<(HashMap<u32, Node>, usize)>,
     block_cache: Option<BlockCache>,
-    // Only scalar scans use read-ahead. Eight 64 KiB pages bound memory while
-    // adjacent records share disk reads; the reader is discarded after writes.
+    decoded: Option<std::sync::Arc<std::sync::Mutex<super::decoded_cache::DecodedCache>>>,
+    // Only scalar scans use read-ahead; adjacent records share disk reads.
+    // Capacity is bounded per reader; writes discard the mounted reader.
+    // See docs/SCALAR_CACHE_0.23.md for the capacity comparison.
     scalar_pages: std::collections::VecDeque<(u64, Vec<u8>)>,
 }
 type BlockKey = (u32, u8, usize);
@@ -323,6 +345,7 @@ impl MainKey {
             bytes: 0,
             node_cache: None,
             block_cache: None,
+            decoded: None,
             scalar_pages: std::collections::VecDeque::new(),
         };
         let h = r.read(0, 289)?;
@@ -366,6 +389,12 @@ impl MainKey {
         self.node_cache = Some((HashMap::new(), 0));
         self.block_cache = Some(BlockCache::default());
     }
+    pub(super) fn cache_records(
+        &mut self,
+        cache: std::sync::Arc<std::sync::Mutex<super::decoded_cache::DecodedCache>>,
+    ) {
+        self.decoded = Some(cache);
+    }
     pub(super) fn validate_size(&self, expected: u64) -> Result<(), String> {
         if self.size == expected && self.snapshot.bytes.get().is_some() {
             return Ok(());
@@ -374,12 +403,8 @@ impl MainKey {
         let current = if self.snapshot.bytes.get().is_some() {
             self.size
         } else {
-            self.file
-                .as_ref()
-                .ok_or("DB40 snapshot file missing")?
-                .metadata()
+            open_file_size(self.file.as_ref().ok_or("DB40 snapshot file missing")?)
                 .map_err(|e| e.to_string())?
-                .len()
         };
         if self.size != expected || current != expected {
             return Err("volume size changed; restart using a stable snapshot".into());
@@ -387,14 +412,43 @@ impl MainKey {
         Ok(())
     }
     pub(super) fn record(&mut self, entry: Entry) -> Result<super::fields::Record, String> {
-        let offset = self.record_offset(entry)?;
+        crate::execution::check()?;
+        if entry.block == u32::MAX {
+            return Err("deleted MainKey entry".into());
+        }
+        if let Some(cache) = &self.decoded {
+            if let Some(record) = cache
+                .lock()
+                .map_err(|_| "decoded record cache poisoned")?
+                .get(&self.snapshot, entry)
+            {
+                return Ok(record);
+            }
+        }
+        let offset = self.offset(entry.block);
         let header = self.header;
-        let payload =
-            super::payload_from_reader(&header, self.size, offset, |p, n| self.read(p, n))?;
+        // Validate the MainKey checksum on the header already requested by
+        // the C-stream reader, instead of seeking and reading it twice.
+        let payload = super::payload_from_reader(&header, self.size, offset, |p, n| {
+            let bytes = self.read(p, n)?;
+            if p == offset && (bytes[4] != b'C' || u16at(&bytes, 5) != entry.checksum) {
+                return Err(format!(
+                    "MainKey/record header mismatch for OID {}",
+                    entry.oid
+                ));
+            }
+            Ok(bytes)
+        })?;
         let record = super::fields::parse_record(&payload)
             .map_err(|e| format!("OID {} block {}: {e}", entry.oid, entry.block))?;
         if record.integer(0x400) != Some(entry.oid) {
             return Err("record OID changed".into());
+        }
+        if let Some(cache) = &self.decoded {
+            cache
+                .lock()
+                .map_err(|_| "decoded record cache poisoned")?
+                .insert(&self.snapshot, entry, &record);
         }
         Ok(record)
     }
@@ -485,6 +539,7 @@ impl MainKey {
     }
     fn read_scalar(&mut self, at: u64, len: usize) -> Result<Vec<u8>, String> {
         const PAGE: u64 = 64 * 1024;
+        const MAX_PAGES: usize = 64;
         if at
             .checked_add(len as u64)
             .filter(|&end| end <= self.size)
@@ -508,7 +563,7 @@ impl MainKey {
             let take = (len - result.len()).min(entry.1.len() - offset);
             result.extend_from_slice(&entry.1[offset..offset + take]);
             self.scalar_pages.push_back(entry);
-            if self.scalar_pages.len() > 8 {
+            if self.scalar_pages.len() > MAX_PAGES {
                 self.scalar_pages.pop_front();
             }
         }
