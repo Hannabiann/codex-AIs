@@ -61,10 +61,9 @@ fn log_relative(root: &Path, name: &str) -> Option<PathBuf> {
             normalized.file_name()?.to_string_lossy()
         )));
     }
-    let prefix = root.join("log");
     let direct = (|| {
         let mut components = normalized.components();
-        for expected in prefix.components() {
+        for expected in root.components() {
             let actual = components.next()?;
             let equal = if cfg!(windows) {
                 actual.as_os_str().to_string_lossy().to_lowercase()
@@ -75,6 +74,12 @@ fn log_relative(root: &Path, name: &str) -> Option<PathBuf> {
             if !equal {
                 return None;
             }
+        }
+        // The KS namespace spells this logical directory both "log" and
+        // "Log". Redirect either spelling on Unix too, without making the
+        // actual data-root prefix or journal filenames case-insensitive.
+        if !matches!(components.next()?, Component::Normal(n) if n.eq_ignore_ascii_case("log")) {
+            return None;
         }
         Some(components.collect())
     })();
