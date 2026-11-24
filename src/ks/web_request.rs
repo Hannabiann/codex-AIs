@@ -295,8 +295,6 @@ impl Runtime<'_> {
             .split_once('?')
             .unwrap_or((&request.target, ""));
         let command = query.split('&').next().unwrap_or("");
-        self.p_edit_guard_required = path.trim_end_matches('/') == "/20a"
-            && command == "ispravlenieForm";
         let mut participant_mode = String::new();
         for (key, value) in query.split('&').filter_map(|p| p.split_once('=')) {
             if crate::server::percent_decode(key)?.eq_ignore_ascii_case("mode") {
@@ -472,10 +470,6 @@ impl Runtime<'_> {
                 .borrow_mut()
                 .insert(key.clone(), Value::String(value.clone()));
             self.request_parameters.push(key.clone());
-        }
-        if self.p_edit_guard_required {
-            self.p_edit_submitted = request.form.iter().filter(|(key, _)|
-                super::p_edit::draft_key(key)).cloned().collect();
         }
         for upload in &request.uploads {
             self.check_request_key(&upload.name)?;
@@ -680,10 +674,6 @@ impl Runtime<'_> {
         self.cursor_projections = false;
         self.schedule_export_allowed = false;
         self.kod_snapshot_loaded = false;
-        self.p_edit_guard_required = false;
-        self.p_edit_submitted.clear();
-        self.p_edit_checked = None;
-        self.p_edit_snapshot = None;
         self.scheduled_request = false;
         self.registration_write_allowed = false;
         self.attachment_write_allowed = false;

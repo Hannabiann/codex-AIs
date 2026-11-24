@@ -7,6 +7,31 @@ mod fingerprint;
 fn matches_source(source: &str, expected: (usize, [u8; 32])) -> bool {
     source.len() == expected.0 && fingerprint::sha256(source.as_bytes()) == expected.1
 }
+
+const REPOSITORY_LOOKUP_ID: (usize, [u8; 32]) = (
+    283,
+    [220, 77, 132, 205, 106, 108, 21, 194, 0, 22, 61, 5, 156, 24, 156, 233,
+     122, 158, 10, 123, 75, 0, 235, 112, 179, 15, 10, 52, 144, 228, 168, 176],
+);
+fn repository_lookup(source: &str) -> Option<&str> {
+    let start = source.find("function lRegDoc_getBasicPath(")?;
+    let body = source.get(start..start + REPOSITORY_LOOKUP_ID.0)?;
+    matches_source(body, REPOSITORY_LOOKUP_ID).then_some(body)
+}
+const READ_ONLY_REPOSITORY_LOOKUP: &str = r#"function lRegDoc_getBasicPath( sFullYear , sNumberMonth ){#
+    var sVd = mp_getCurrentVdName();
+    var sOrigin = MP_REG_KODWEB_ROOT;
+    if (!mp_isEmptyStr(sVd)) {
+        var sKeyName = mp_getRegKeyNameByVdName(sVd);
+        if (!sKeyName) throw MP_EXCEPTION_INVALID_ARG;
+        sOrigin += '\' + sKeyName;
+    }
+    var sPath = 'Настройки\Файловое хранилище\' + sFullYear + '\' + sNumberMonth;
+    if (RegistryRoot.OpenKey(sOrigin + '\' + sPath) == null) return null;
+    var oRegistry = new mp_CReg(sPath, sVd);
+    return oRegistry.getValue(REG_DOC_BASICPATH_NAME);
+}#
+"#;
 const DELETE_OBJECT_ID: (usize, [u8; 32]) = (
     32432,
     [
@@ -187,28 +212,18 @@ pub fn request_source<'a>(name: &str, source: &'a str) -> Cow<'a, str> {
             }
             __codex_ImportKod(nDoc, writeVol);"###,
         );
-        fixed = fixed.replacen(
-            "var bfNewDoc\t=\t\"\"+deepnumber==\"\";",
-            r#"var bfNewDoc = ""+deepnumber=="";
-    if (bkod != 1 && !bfNewDoc && !__codex_PEditCheck(parseInt(deepnumber,10), codex_p_version)) {
-        __codexPConflict();
-        return;
-    }"#, 1);
-        fixed = fixed.replacen("var nDoc = mp_tryCreateDocByOid(prevdoc);",
-            "var nDoc = mp_tryCreateDocByOid(prevdoc);\n            var __codex_p_version = nDoc == null ? \"\" : __codex_PEditVersion(nDoc);", 1);
-        fixed = fixed.replacen("<INPUT TYPE=\"HIDDEN\" NAME=\"deepnumber\"",
-            "<INPUT TYPE=\"HIDDEN\" NAME=\"codex_p_version\" VALUE=\" %__codex_p_version \">\n            <INPUT TYPE=\"HIDDEN\" NAME=\"deepnumber\"", 1);
+        // A comparison page opened before 0.25.1 may still be submitted.
+        // Respect its selected fields, but no longer inject a browser version
+        // check or generate the custom comparison page for ordinary editing.
         fixed = fixed.replacen("var value = this['a' + deffield.Attr];", r#"if (codex_p_merge == '1' && this['codex_pick_a' + deffield.Attr] != 'draft') continue;
                 var value = this['a' + deffield.Attr];
                 if (codex_p_merge == '1' && this['codex_absent_a' + deffield.Attr] == '1') value = null;"#, 1);
-        fixed = fixed.replacen("switch(x.Code){", "if (x.codexPConflict) { __codexPConflict(); return; }\n        switch(x.Code){", 1);
         // This form displays byte counts, not formatted text. Counting the
         // decoded text stream also supports embedded objects and old style tables
         // without invoking the HTML/RTF renderer or rewriting their metadata.
         let count_start = fixed.find("for(i in fld){").unwrap();
         let count_end = count_start + fixed[count_start..].find("{/ <OPTION > %tVal").unwrap();
         fixed.replace_range(count_start..count_end, "tVal += __codex_TextFieldSize(fld);\n");
-        fixed.push_str(P_CONFLICT_HELPER);
         return Cow::Owned(fixed);
     }
     if name == "createnewuser" && matches_source(source, USER_REGISTRATION_ID) {
@@ -304,6 +319,15 @@ pub fn request_source<'a>(name: &str, source: &'a str) -> Cow<'a, str> {
 }
 
 pub fn document_source(oid: u32, attribute: u16, source: &str) -> Cow<'_, str> {
+    // mp_CReg creates its origin even for a read. For a missing year/month,
+    // native kodweb creates empty keys, reads no BasicPath, and falls back to
+    // FileDocPath. Keep that lookup/fallback without a configuration write.
+    // Existing monthly settings still use the native value conversion.
+    if oid == 730099378 && attribute == 3 {
+        if let Some(body) = repository_lookup(source) {
+            return Cow::Owned(source.replacen(body, READ_ONLY_REPOSITORY_LOOKUP, 1));
+        }
+    }
     // Native integer division rounds this page count down. The source
     // interpreter uses floating-point numbers, so retain the explicit floor
     // in this vendor paginator (otherwise three rows show a spurious Next).
@@ -337,27 +361,3 @@ pub fn document_source(oid: u32, attribute: u16, source: &str) -> Cow<'_, str> {
     }
     Cow::Borrowed(source)
 }
-
-// Serialize comparison cells with the same date/number rules as the native form.
-// Strings are passed unescaped; the Rust renderer escapes every HTML boundary.
-const P_CONFLICT_HELPER: &str = r#"
-function __codexPConflict() {
-    var doc = __codex_PEditPrepare(parseInt(deepnumber,10));
-    var rows = [];
-    if (doc != null) {
-        var defs = Request.PathObject.Base.Struct[doc.Area];
-        for (var i in defs) {
-            var field = defs[i];
-            if (field.Type != 1 && field.Type != 2 && field.Type != 3 && field.Type != 5 && field.Type != 12 && field.Type != 13) continue;
-            var values = [];
-            var names = [];
-            for (var value = doc.Attr(field.Attr,false); value != null; value = doc.Next(value,false)) {
-                values.push(field.Type == 2 ? value.Value : getValue(value,field.Type));
-                names.push(getNiceValue(value,field.Type));
-            }
-            rows.push([field.Attr, field.Name, field.Type, values.join(';'), names.join(';'), values.length > 0]);
-        }
-    }
-    __codex_PEditConflict(parseInt(deepnumber,10), rows);
-}
-"#;

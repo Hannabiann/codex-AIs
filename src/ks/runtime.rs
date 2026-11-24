@@ -20,8 +20,6 @@ mod database_lifetime;
 pub(crate) mod decimal;
 #[path = "document_fields.rs"]
 mod document_fields;
-#[path = "p_edit.rs"]
-mod p_edit;
 #[path = "document_kod.rs"]
 mod document_kod;
 #[path = "document_write.rs"]
@@ -367,10 +365,6 @@ pub struct Runtime<'a> {
     cursor_projections: bool,
     schedule_export_allowed: bool,
     kod_snapshot_loaded: bool,
-    p_edit_guard_required: bool,
-    p_edit_submitted: std::collections::BTreeMap<String, String>,
-    p_edit_checked: Option<(u32, u32)>,
-    p_edit_snapshot: Option<(u32, u32, crate::db::fields::Record)>,
     scheduled_request: bool,
     registration_write_allowed: bool,
     attachment_write_allowed: bool,
@@ -442,10 +436,6 @@ impl<'a> Runtime<'a> {
             cursor_projections: false,
             schedule_export_allowed: false,
             kod_snapshot_loaded: false,
-            p_edit_guard_required: false,
-            p_edit_submitted: Default::default(),
-            p_edit_checked: None,
-            p_edit_snapshot: None,
             scheduled_request: false,
             registration_write_allowed: false,
             attachment_write_allowed: false,
@@ -818,9 +808,6 @@ impl<'a> Runtime<'a> {
         if let Some(d) = self.document_edits.borrow().get(&(scope, oid)) {
             return Ok(d.borrow().record());
         }
-        if let Some((owner, id, record)) = &self.p_edit_snapshot {
-            if (*owner, *id) == (scope, oid) { return Ok(record.clone()); }
-        }
         (if let Some(host) = &self.dbhost {
             host.borrow().read(scope, oid)?
         } else {
@@ -844,8 +831,7 @@ impl<'a> Runtime<'a> {
     ) -> Result<crate::db::fields::RecordMetadata, Fault> {
         // Pending edits take precedence over the mounted snapshot, just as for
         // a full read. The metadata type cannot be saved as a full document.
-        if self.document_edits.borrow().contains_key(&(scope, oid)) || self.dbhost.is_none()
-            || self.p_edit_snapshot.as_ref().is_some_and(|(owner, id, _)| (*owner, *id) == (scope, oid)) {
+        if self.document_edits.borrow().contains_key(&(scope, oid)) || self.dbhost.is_none() {
             return Ok((&self.read_document(oid, scope)?).into());
         }
         self.dbhost
@@ -1213,10 +1199,6 @@ impl<'a> Runtime<'a> {
             "StartProfile"
             | "__codex_LinkFields"
             | "__codex_TextFieldSize"
-            | "__codex_PEditVersion"
-            | "__codex_PEditCheck"
-            | "__codex_PEditPrepare"
-            | "__codex_PEditConflict"
             | "__codex_ImportKod"
             | "__codex_DistributionJudges"
             | "__codex_PAreaPage"
@@ -4819,10 +4801,6 @@ impl<'a> Runtime<'a> {
                     }
                     Ok(Value::Number(crate::rich_text::attribute_text_size(field.data())? as f64))
                 }
-                "__codex_PEditVersion" => self.p_edit_version(&values),
-                "__codex_PEditCheck" => self.p_edit_check(&values),
-                "__codex_PEditPrepare" => self.p_edit_prepare(&values),
-                "__codex_PEditConflict" => self.p_edit_conflict(&values),
                 "__codex_ImportKod" => self.import_kod_document(&values),
                 "attachment.shell" => self.attachment_shell(&values),
                 n if n.starts_with("report.collection.") => self.report_collection_call(n.trim_start_matches("report.collection."),receiver.ok_or("Report receiver missing")?,&values),

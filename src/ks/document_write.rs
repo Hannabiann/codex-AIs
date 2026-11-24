@@ -446,13 +446,6 @@ impl Runtime<'_> {
             return Err("Document lock/write expects no arguments".into());
         }
         if method == "Lock" {
-            let d = doc.borrow();
-            if d.oid != 0 && self.p_edit_guard_required
-                && self.p_edit_checked != Some((d.scope, d.oid))
-            {
-                return Err("Карточка устарела. Откройте объект заново перед сохранением.".into());
-            }
-            drop(d);
             let mut d = doc.borrow_mut();
             if d.locked {
                 return Ok(Value::Bool(true));
@@ -480,7 +473,7 @@ impl Runtime<'_> {
                     .as_ref()
                     != Some(expected)
                 {
-                    return Err(self.p_edit_fault("Документ изменён. Откройте актуальную редакцию.".into()));
+                    return Err("Документ изменён. Откройте актуальную редакцию.".into());
                 }
             }
             if self
@@ -520,8 +513,7 @@ impl Runtime<'_> {
                 .as_ref()
                 .ok_or("Document writer missing")?
                 .borrow_mut()
-                .write_document(d.scope, &record, d.expected.as_ref())
-                .map_err(|e| self.p_edit_fault(e))?;
+                .write_document(d.scope, &record, d.expected.as_ref())?;
             d.expected = Some(record);
             return Ok(Value::Null);
         }
