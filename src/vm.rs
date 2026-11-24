@@ -225,6 +225,15 @@ impl Sessions {
                     .unwrap()
                     .allow_distribution_writes(request.user.is_some());
             }
+            if object.eq_ignore_ascii_case("reportForPostServices")
+                && dir.mapped_to.eq_ignore_ascii_case("spb.dbs")
+                && matches!(request.method.as_str(), "GET" | "POST")
+            {
+                if let Some(sender) = &request.response_stream {
+                    self.runtimes.get_mut(&dir.path).unwrap()
+                        .enable_report_stream(sender.clone());
+                }
+            }
             let mut body = self.render_record(dir, record, object)?;
             if object == "raspred_settings" {
                 body = distribution::decorate_compiled(

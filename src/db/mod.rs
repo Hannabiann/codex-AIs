@@ -8,6 +8,7 @@ pub mod morphology;
 pub mod registry;
 pub mod schema;
 mod shared_query;
+mod text_column;
 pub mod text_query;
 pub mod volume;
 use encoding_rs::WINDOWS_1251;

@@ -3,14 +3,19 @@
 use super::*;
 use std::path::{Component, Path, PathBuf};
 
-fn resolved(path: &Path) -> Result<PathBuf, Fault> {
-    if std::fs::symlink_metadata(path).is_ok() {
-        return path
-            .canonicalize()
-            .map_err(|e| Fault::Script(Value::String(e.to_string())));
+fn resolved(path: &Path) -> std::io::Result<PathBuf> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => path.canonicalize(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // A missing leaf may be created later. An unavailable drive/share
+            // has no existing ancestor: retain its I/O error for KS catch(...).
+            match (path.parent(), path.file_name()) {
+                (Some(parent), Some(name)) => Ok(resolved(parent)?.join(name)),
+                _ => Err(error),
+            }
+        }
+        Err(error) => Err(error),
     }
-    let parent = path.parent().ok_or("attachment path has no parent")?;
-    Ok(resolved(parent)?.join(path.file_name().ok_or("attachment path has no name")?))
 }
 
 impl Runtime<'_> {
@@ -77,22 +82,7 @@ impl Runtime<'_> {
             }
             pending.extend(&key.children);
         }
-        let data = data.canonicalize().map_err(|e| e.to_string())?;
-        let mut allowed = Vec::new();
-        for root in roots {
-            let root = resolved(&root)?;
-            // A repository cannot grant writes to the entire data root or disk.
-            if root.parent().is_none() || data.starts_with(&root) {
-                return Err("attachment repository overlaps data root".into());
-            }
-            if root.is_file() {
-                return Err("attachment repository is not a directory".into());
-            }
-            if !allowed.contains(&root) {
-                allowed.push(root);
-            }
-        }
-        Ok(allowed)
+        Ok(roots)
     }
 
     pub(super) fn attachment_destination(&self, name: &str) -> Result<Option<PathBuf>, Fault> {
@@ -133,12 +123,25 @@ impl Runtime<'_> {
                 }
             }
         }
-        let path = resolved(&path)?;
-        Ok(self
-            .attachment_roots()?
-            .into_iter()
-            .any(|base| path.starts_with(base))
-            .then_some(path))
+        let path = resolved(&path).map_err(|e| {
+            Fault::Script(Value::String(format!("Attachment path {}: {e}", path.display())))
+        })?;
+        let data = data.canonicalize().map_err(|e| {
+            Fault::Script(Value::String(format!("Attachment data root {}: {e}", data.display())))
+        })?;
+        for root in self.attachment_roots()? {
+            // A stale optional repository must not break unrelated File probes.
+            // Never grant access on a resolution failure. The requested path
+            // above is resolved separately, so its own I/O error is preserved.
+            let Ok(base) = resolved(&root) else { continue };
+            if base.parent().is_none() || data.starts_with(&base) || base.is_file() {
+                continue;
+            }
+            if path.starts_with(&base) {
+                return Ok(Some(path));
+            }
+        }
+        Ok(None)
     }
 
     pub(super) fn attachment_shell(&self, values: &[Value]) -> Result<Value, Fault> {

@@ -23,12 +23,14 @@ pub(super) fn path_key(path: &Path) -> PathBuf {
 pub(super) enum BuildKey {
     Reverse(PathBuf, u16, u64),
     Range(PathBuf, u16, u64, String),
+    TextColumn(PathBuf, u16, u16, u64, u64),
 }
 
 #[derive(Debug, Default)]
 pub(super) struct SharedQueries {
     pub(super) reverse_links: Mutex<ReverseLinks>,
     pub(super) ranges: Mutex<RangeCache>,
+    pub(super) text_columns: Mutex<super::text_column::TextColumns>,
     flights: Mutex<BTreeMap<BuildKey, Weak<Flight>>>,
 }
 

@@ -11,6 +11,8 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
+#[path = "http_stream.rs"]
+pub(crate) mod streaming;
 pub struct Response {
     pub status: &'static str,
     pub mime: &'static str,
@@ -20,6 +22,7 @@ pub struct Response {
 }
 #[derive(Clone, Default)]
 pub struct RequestContext {
+    pub response_stream: Option<streaming::Sender>,
     pub target: String,
     pub host: String,
     pub cookie: String,
@@ -663,6 +666,7 @@ fn lane(target: &str, request: &RequestContext) -> Lane {
             | "statReportCard"
             | "stat3"
             | "dateandjudgeanshlag"
+            | "reportForPostServices"
             | "convertToExcel"
             | "converttoexcel"
             | "pfind"
@@ -1046,6 +1050,8 @@ async fn reject_overloaded(stream: &mut TcpStream) {
 pub async fn run_server(engine: Arc<Db4Engine>, host: &str, port: u16) -> std::io::Result<()> {
     let settings = Arc::new(crate::settings::Store::load()?);
     let listener = TcpListener::bind((host, port)).await?;
+    let port = listener.local_addr()?.port();
+    crate::listen_config::bound(port);
     eprintln!("codex-AIs HTTP server: http://{host}:{port}; KS compatibility runtime");
     let connections = Arc::new(tokio::sync::Semaphore::new(settings.active.connections));
     eprintln!("KS pool: {}", settings.worker_selection.explanation);
@@ -1423,6 +1429,9 @@ async fn connection_request(
                 }
             }
             let (reply, answer) = tokio::sync::oneshot::channel();
+            let (chunks, events) = streaming::channel();
+            context.response_stream = Some(chunks);
+            let http11 = context.protocol == "HTTP/1.1";
             monitor.state(id, crate::monitor::State::Queued);
             if dispatcher
                 .submit(id, context, authorization, reply, control.clone())
@@ -1433,10 +1442,13 @@ async fn connection_request(
                     "KS queue full or dispatcher stopped",
                 );
             }
-            break tokio::select! {
-                response=answer => response.unwrap_or_else(|_|message("500 Internal Server Error","KS worker failed")),
-                _=disconnected(stream, pending) => { control.cancel(); return Ok(false); }
-            };
+            match streaming::wait(
+                stream, pending, events, answer, keep_alive, http11,
+                &settings.active, monitor, id, &control,
+            ).await? {
+                streaming::Answer::Buffered(response) => break response,
+                streaming::Answer::Sent(keep_alive) => return Ok(keep_alive),
+            }
         }
     };
     monitor.state(id, crate::monitor::State::Writing);

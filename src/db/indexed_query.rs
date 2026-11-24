@@ -179,7 +179,7 @@ fn needs_native_text_index(p: &P, area: &Area) -> bool {
     }
 }
 impl Db4Engine {
-    fn query_generation(&self, v: usize) -> Result<u64, String> {
+    pub(super) fn query_generation(&self, v: usize) -> Result<u64, String> {
         let path = &self.volumes[v].path;
         super::writer::ensure_recovered(path)?;
         let _publication = super::writer::open_guard()?;
@@ -388,6 +388,18 @@ impl Db4Engine {
     ) -> Result<Vec<u32>, String> {
         candidates.sort_unstable();
         candidates.dedup();
+        if let P::Text {
+            attribute, pattern, ..
+        } = predicate
+        {
+            if area.fields.get(attribute).is_some_and(|f| f.flags & 1 == 0) {
+                if let Some(ids) =
+                    self.cached_text_matches(v, area.id, *attribute, pattern, &candidates)?
+                {
+                    return Ok(ids);
+                }
+            }
+        }
         let mut result = Vec::new();
         for batch in candidates.chunks(1024) {
             self.with_reader(v, |tree| {

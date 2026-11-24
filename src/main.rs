@@ -6,6 +6,7 @@ mod execution;
 mod http_form;
 mod ks;
 mod monitor;
+mod listen_config;
 mod product;
 mod rich_text;
 mod runtime_logs;
@@ -438,11 +439,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
         }
     }
-    let port = std::env::var("KODEKS_PORT")
-        .ok()
-        .map(|s| s.parse::<u16>())
-        .transpose()?
-        .unwrap_or(8070);
     let host = std::env::var("KODEKS_HOST").unwrap_or_else(|_| "127.0.0.1".into());
     let root = std::env::var_os("KODEKS_DATA_DIR")
         .map(PathBuf::from)
@@ -506,7 +502,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some("serve") => {
-            server::run_server(Arc::new(engine), &host, port).await?;
+            let selected = listen_config::configured(Some(&engine.registry))
+                .map_err(std::io::Error::other)?;
+            eprintln!("HTTP port: {} ({})", selected.port, selected.source);
+            server::run_server(Arc::new(engine), &host, selected.port).await?;
         }
         _ => {
             return Err(

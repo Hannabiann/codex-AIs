@@ -397,6 +397,7 @@ pub struct Runtime<'a> {
     include_depth: usize,
     scopes: Vec<Object>,
     output: String,
+    http_stream: Option<crate::server::streaming::Producer>,
     binary_output: Option<Vec<u8>>,
     rtf_styles: RefCell<Option<Value>>,
     steps: usize,
@@ -468,6 +469,7 @@ impl<'a> Runtime<'a> {
             include_depth: 0,
             scopes: vec![Rc::new(RefCell::new(global))],
             output: String::new(),
+            http_stream: None,
             binary_output: None,
             rtf_styles: RefCell::new(None),
             steps: 0,
@@ -1119,6 +1121,11 @@ impl<'a> Runtime<'a> {
             .try_reserve(s.len())
             .map_err(|e| format!("KS output allocation: {e}"))?;
         self.output.push_str(s);
+        if self.http_stream.as_ref().is_some_and(|stream| stream.ready(&self.output, s))
+            && !self.http_output.borrow().get("\0buffering").is_some_and(Value::truth)
+        {
+            self.flush_http_stream()?;
+        }
         Ok(())
     }
     fn write_filtered(&mut self, text: &str) -> Result<(), Fault> {
@@ -2030,10 +2037,7 @@ impl<'a> Runtime<'a> {
                     (
                         "port".into(),
                         Value::Number(
-                            std::env::var("KODEKS_PORT")
-                                .ok()
-                                .and_then(|s| s.parse::<u16>().ok())
-                                .unwrap_or(8070) as f64,
+                            crate::listen_config::effective_port(self.registry.as_ref())? as f64,
                         ),
                     ),
                     ("prefix".into(), Value::String(String::new())),
@@ -2070,7 +2074,7 @@ impl<'a> Runtime<'a> {
             (Value::Application(_), "RuntimeListenAddress") => Ok(Value::String(format!(
                 "{}:{}",
                 std::env::var("KODEKS_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
-                std::env::var("KODEKS_PORT").unwrap_or_else(|_| "8070".into())
+                crate::listen_config::effective_port(self.registry.as_ref())?
             ))),
             (Value::Native(n), "UseWinInet") if n == "InetConnection" => Ok(Value::Bool(false)),
             // Compatibility identity used by mp__ctxGetKsContext, recovered from
@@ -5057,6 +5061,9 @@ impl<'a> Runtime<'a> {
                         "\0buffering".into(),
                         Value::Bool(n == "stream.StartBuffMode"),
                     );
+                    if n == "stream.StopBuffMode" {
+                        self.flush_http_stream()?;
+                    }
                     Ok(Value::Null)
                 }
                 "__codex_LinkFields" => self.selected_schema_links(&values),
@@ -5489,6 +5496,30 @@ impl<'a> Runtime<'a> {
             _ => Err("break/continue escaped function".into()),
         }
     }
+    pub fn enable_report_stream(&mut self, sender: crate::server::streaming::Sender) {
+        if self.get("mode").is_ok_and(|v| v.text() == "1") {
+            self.http_stream = Some(crate::server::streaming::Producer::new(sender));
+        }
+    }
+    fn flush_http_stream(&mut self) -> Result<(), Fault> {
+        if self.http_stream.is_none() {
+            return Ok(());
+        }
+        let (code, headers) = self.response_headers()?;
+        let compatible = code == 200 && !headers.iter().any(|(key, value)| {
+            key.eq_ignore_ascii_case("Content-Type")
+                && !value.eq_ignore_ascii_case("text/html; charset=windows-1251")
+        });
+        if !compatible && !self.http_stream.as_ref().unwrap().started() {
+            self.http_stream = None;
+            return Ok(());
+        }
+        if self.binary_output.is_some() {
+            return Err("Binary output is not supported in an incremental HTML report".into());
+        }
+        self.http_stream.as_mut().unwrap().flush(&mut self.output, code, headers)?;
+        Ok(())
+    }
     pub fn take_binary_output(&mut self) -> Option<Vec<u8>> {
         self.binary_output.take()
     }
@@ -5497,7 +5528,10 @@ impl<'a> Runtime<'a> {
         self.output.clear();
         self.binary_output = None;
         match self.list(stmts).map_err(|e| e.to_string())? {
-            Flow::Next | Flow::Return(_) => Ok(std::mem::take(&mut self.output)),
+            Flow::Next | Flow::Return(_) => {
+                self.flush_http_stream().map_err(|e| e.to_string())?;
+                Ok(std::mem::take(&mut self.output))
+            }
             _ => Err("break/continue outside loop".into()),
         }
     }

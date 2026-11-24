@@ -388,6 +388,7 @@ impl Runtime<'_> {
         self.scopes[0]
             .borrow_mut()
             .insert("this".into(), Value::Object(directory.clone()));
+        self.http_stream = None;
         self.http_output.borrow_mut().clear();
         // These values describe this HTTP listener, independent of the legacy
         // server's compression and trusted-proxy configuration.
@@ -707,6 +708,7 @@ impl Runtime<'_> {
         self.request_parameters.clear();
         self.profile = None;
         self.output_stream = None;
+        self.http_stream = None;
         self.release_unused_databases();
     }
     /// Only known native jobs with a recorded creator may write from At.
