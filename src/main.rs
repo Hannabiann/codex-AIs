@@ -439,10 +439,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
         }
     }
-    let host = std::env::var("KODEKS_HOST").unwrap_or_else(|_| "127.0.0.1".into());
-    let root = std::env::var_os("KODEKS_DATA_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    let root = listen_config::data_root(std::env::var_os("KODEKS_DATA_DIR").map(PathBuf::from),
+        &std::env::current_exe()?,&std::env::current_dir()?,command=="serve");
     eprintln!(
         "codex-AIs {}; data directory: {}",
         product::version(),
@@ -505,7 +503,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let selected = listen_config::configured(Some(&engine.registry))
                 .map_err(std::io::Error::other)?;
             eprintln!("HTTP port: {} ({})", selected.port, selected.source);
-            server::run_server(Arc::new(engine), &host, selected.port).await?;
+            server::run_server(Arc::new(engine), selected.port).await?;
         }
         _ => {
             return Err(

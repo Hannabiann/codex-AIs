@@ -1,4 +1,6 @@
-//! Rust-specific settings. Native config.db4 is never opened for writing here.
+//! Rust settings file; the separate network form writes the native HTTP port.
+#[path = "network_settings.rs"]
+mod network;
 use std::{
     collections::HashSet,
     io::{Read, Write},
@@ -16,6 +18,7 @@ pub struct Settings {
     pub history: usize,
     pub workers: crate::worker_config::Mode,
     pub keep_alive_seconds: u64,
+    pub listen_scope: crate::listen_config::Scope,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -28,10 +31,11 @@ impl Default for Settings {
             history: 128,
             workers: crate::worker_config::Mode::Auto,
             keep_alive_seconds: 60,
+            listen_scope: crate::listen_config::Scope::All,
         }
     }
 }
-const FIELDS: [(&str, &str, usize, usize); 8] = [
+const FIELDS: [(&str, &str, usize, usize); 9] = [
     ("connections", "Одновременные HTTP-соединения", 8, 4096),
     ("queue", "Ожидающие запросы KS", 1, 256),
     ("header_seconds", "Чтение HTTP-заголовков, секунд", 1, 300),
@@ -45,9 +49,10 @@ const FIELDS: [(&str, &str, usize, usize); 8] = [
         0,
         600,
     ),
+    ("listen_scope", "Сетевые интерфейсы", 0, 0),
 ];
 impl Settings {
-    fn values(&self) -> [String; 8] {
+    fn values(&self) -> [String; 9] {
         [
             self.connections.to_string(),
             self.queue.to_string(),
@@ -57,11 +62,13 @@ impl Settings {
             self.history.to_string(),
             self.workers.to_string(),
             self.keep_alive_seconds.to_string(),
+            self.listen_scope.text().into(),
         ]
     }
     fn from_pairs(pairs: &[(String, String)]) -> Result<Self, String> {
         let mut values = [0; 8];
         let mut workers = crate::worker_config::Mode::Auto;
+        let mut listen_scope = crate::listen_config::Scope::All;
         let mut seen = HashSet::new();
         for (key, value) in pairs {
             let Some(index) = FIELDS.iter().position(|f| f.0 == key) else {
@@ -72,6 +79,10 @@ impl Settings {
             }
             if key == "workers" {
                 workers = crate::worker_config::Mode::parse(value)?;
+                continue;
+            }
+            if key == "listen_scope" {
+                listen_scope = crate::listen_config::Scope::parse(value)?;
                 continue;
             }
             let n = value
@@ -97,6 +108,7 @@ impl Settings {
             history: values[5],
             workers,
             keep_alive_seconds: values[7] as u64,
+            listen_scope,
         })
     }
     fn parse(text: &str) -> Result<Self, String> {
@@ -113,6 +125,7 @@ impl Settings {
         // Old six-key files retain every saved setting and gain new defaults.
         for (key, value) in [
             ("workers", Self::default().workers.to_string()),
+            ("listen_scope", Self::default().listen_scope.text().into()),
             (
                 "keep_alive_seconds",
                 Self::default().keep_alive_seconds.to_string(),
@@ -135,6 +148,7 @@ impl Settings {
 pub struct Store {
     pub active: Settings,
     pub worker_selection: crate::worker_config::Selection,
+    pub host: crate::listen_config::Host,
     saved: Mutex<Settings>,
     path: PathBuf,
     token: String,
@@ -242,12 +256,37 @@ impl Store {
             Err(e) => return Err(e),
         };
         Ok(Self {
+            host: crate::listen_config::host(active.listen_scope).map_err(std::io::Error::other)?,
             worker_selection: active.workers.resolve(),
             saved: Mutex::new(active.clone()),
             active,
             path,
             token: nonce()?,
         })
+    }
+    pub fn advanced(
+        &self,
+        engine: &crate::db::Db4Engine,
+        method: &str,
+        fields: &[(String, String)],
+    ) -> crate::server::Response {
+        if fields.iter().any(|(k, v)| k == "action" && v == "set-port") {
+            return network::save(engine, &self.token, method, fields);
+        }
+        let mut response = self.response(method, fields);
+        if response.mime.starts_with("text/html") {
+            let form = network::form(engine, &self.token).unwrap_or_else(|e| {
+                format!(
+                    "<p class=error>Не удалось прочитать порт: {}</p>",
+                    crate::monitor::escape(&e)
+                )
+            });
+            let mut html = String::from_utf8(response.body).unwrap();
+            let at = html.rfind("</html>").unwrap_or(html.len());
+            html.insert_str(at, &form);
+            response.body = html.into_bytes();
+        }
+        response
     }
     fn save(&self, settings: Settings) -> std::io::Result<()> {
         let mut saved = self.saved.lock().unwrap();
@@ -314,6 +353,24 @@ impl Store {
         html.push_str(&format!("<p>Файл: <code>{}</code>. Предыдущая версия сохраняется в <code>codex-AIs.settings.bak</code>.</p><form method=post action='/admin?advanced'><input type=hidden name=csrf value='{}'><table><tr><th>Параметр</th><th>Работает сейчас</th><th>После перезапуска</th></tr>", escape(&self.path.display().to_string()), self.token));
         for ((field, active), value) in FIELDS.iter().zip(self.active.values()).zip(saved.values())
         {
+            if field.0 == "listen_scope" {
+                html.push_str(&format!(
+                    "<tr><td>Сетевые интерфейсы</td><td>{} ({})</td><td><select name=listen_scope>",
+                    escape(&self.host.value),
+                    self.host.source
+                ));
+                for (option, title) in [
+                    ("all", "Все IPv4-интерфейсы (0.0.0.0)"),
+                    ("localhost", "Только localhost (127.0.0.1)"),
+                ] {
+                    html.push_str(&format!(
+                        "<option value='{option}'{}>{title}</option>",
+                        if value == option { " selected" } else { "" }
+                    ));
+                }
+                html.push_str("</select></td></tr>");
+                continue;
+            }
             if field.0 == "workers" {
                 let current = match self.active.workers {
                     crate::worker_config::Mode::Auto => {
@@ -340,7 +397,7 @@ impl Store {
             }
             html.push_str(&format!("<tr><td><label for='{}'>{}</label> ({}–{})</td><td>{active}</td><td><input required type=number id='{}' name='{}' min='{}' max='{}' value='{value}'></td></tr>", field.0, field.1, field.2, field.3, field.0, field.0, field.2, field.3));
         }
-        html.push_str("</table><button type=submit>Сохранить настройки Rust</button></form><h2>Параметры оригинального сервера</h2><p>config.db4 используется для каталогов, томов и прав доступа и здесь не изменяется. Число исполнителей и очередь Rust задаются выше. По умолчанию действует auto: при запуске выбирается 3, 4 или 6 исполнителей по доступным CPU. Два из них выделены для владельца каталогов/Word/At и интерфейса /20a. Ручное число 1–32 имеет приоритет над auto, включая сохранённые настройки прежних версий. При 1 исполнителе работа последовательная, при 2 интерфейс разделяет владельца. Увеличение числа исполнителей увеличивает потребление памяти кэшами. Публикация DB4 согласована и последовательна; расчёты идут параллельно. Ограничение памяти старого Win32-процесса не применяется к Rust: кэши имеют собственные пределы, это не жёсткий предел всей памяти процесса.</p><p>HTTP/1.1 keep-alive включён по умолчанию, HTTP/1.0 — по запросу клиента. Таймаут выше относится только к ожиданию следующего запроса, в том числе Word /99, и не ограничивает длительность расчёта. Сжатие ответов пока не реализовано. Периодическую очистку нативного хэша заменяют ограниченные кэши Rust. Заголовок X-Real-IP не подменяет адрес клиента. Журналы KS задаются KODEKS_LOG_DIR, адрес слушателя — KODEKS_HOST. Порт читается при запуске из config.db4 (SOFTWARE\\Kodeks\\Web, Port); KODEKS_PORT имеет приоритет. Если параметра нет, используется 8070. Для смены порта нужен перезапуск. Таймаут отправки ответа отсчитывается после вычисления результата и не ограничивает длительность отчёта.</p><p><a href='/admin?status'>Состояние сервера и очереди</a></p></html>");
+        html.push_str("</table><button type=submit>Сохранить настройки Rust</button></form><h2>Параметры оригинального сервера</h2><p>Порт HTTP сохраняется в config.db4 отдельной кнопкой ниже. Остальные параметры этой страницы сохраняются в codex-AIs.settings. Число исполнителей и очередь Rust задаются выше. По умолчанию действует auto: при запуске выбирается 3, 4 или 6 исполнителей по доступным CPU. Два из них выделены для владельца каталогов/Word/At и интерфейса /20a. Ручное число 1–32 имеет приоритет над auto, включая сохранённые настройки прежних версий. При 1 исполнителе работа последовательная, при 2 интерфейс разделяет владельца. Увеличение числа исполнителей увеличивает потребление памяти кэшами. Публикация DB4 согласована и последовательна; расчёты идут параллельно. Ограничение памяти старого Win32-процесса не применяется к Rust: кэши имеют собственные пределы, это не жёсткий предел всей памяти процесса.</p><p>HTTP/1.1 keep-alive включён по умолчанию, HTTP/1.0 — по запросу клиента. Таймаут выше относится только к ожиданию следующего запроса, в том числе Word /99, и не ограничивает длительность расчёта. Сжатие ответов пока не реализовано. Периодическую очистку нативного хэша заменяют ограниченные кэши Rust. Заголовок X-Real-IP не подменяет адрес клиента. Журналы KS задаются KODEKS_LOG_DIR. По умолчанию доступны все IPv4-интерфейсы; выше можно выбрать только localhost. Явный KODEKS_HOST имеет приоритет над сохранённым выбором. Порт читается при запуске из config.db4 (SOFTWARE\\Kodeks\\Web, Port); KODEKS_PORT имеет приоритет. Если параметра нет, используется 8070. Для смены порта нужен перезапуск. Таймаут отправки ответа отсчитывается после вычисления результата и не ограничивает длительность отчёта.</p><p><a href='/admin?status'>Состояние сервера и очереди</a></p></html>");
         crate::server::Response {
             status,
             mime: "text/html; charset=utf-8",

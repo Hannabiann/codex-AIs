@@ -1051,12 +1051,14 @@ async fn reject_overloaded(stream: &mut TcpStream) {
     }).await;
 }
 
-pub async fn run_server(engine: Arc<Db4Engine>, host: &str, port: u16) -> std::io::Result<()> {
+pub async fn run_server(engine: Arc<Db4Engine>, port: u16) -> std::io::Result<()> {
     let settings = Arc::new(crate::settings::Store::load()?);
+    let host=settings.host.value.as_str();
     let listener = TcpListener::bind((host, port)).await?;
     let port = listener.local_addr()?.port();
-    crate::listen_config::bound(port);
+    crate::listen_config::bound(listener.local_addr()?);
     eprintln!("codex-AIs HTTP server: http://{host}:{port}; KS compatibility runtime");
+    eprintln!("HTTP interfaces: {} ({}); local browser: http://localhost:{port}/20a/",host,settings.host.source);
     let connections = Arc::new(tokio::sync::Semaphore::new(settings.active.connections));
     eprintln!("KS pool: {}", settings.worker_selection.explanation);
     let monitor = Arc::new(crate::monitor::Monitor::new(
@@ -1386,8 +1388,9 @@ async fn connection_request(
                 }
                 if advanced {
                     let settings = settings.clone();
+                    let engine=engine.clone();
                     break tokio::task::spawn_blocking(move || {
-                        settings.response(&method, &context.form)
+                        settings.advanced(&engine,&method, &context.form)
                     })
                     .await
                     .unwrap_or_else(|_| {
