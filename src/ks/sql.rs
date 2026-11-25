@@ -1,6 +1,8 @@
 //! Parsed, bounded read-only SELECT subset. Never accepts an unparsed suffix.
 use super::host::{Column, Projection};
 use std::sync::Arc;
+#[path = "sql_field_contains.rs"]
+mod field_contains;
 
 pub const MAX_SQL_ROWS: usize = 1_000_000;
 // The stock Word template opens a document with over ninety requested
@@ -51,6 +53,21 @@ pub fn numeric_sort_key(text: &str) -> Option<u64> {
         !bits
     })
 }
+/// Native KODEKS_DOCLIST number-string keys pad digit runs to ten places.
+/// Longer runs keep their width, so a barcode is not ordered as an f64.
+/// This does not change numeric predicates or persistent index writes.
+pub(crate) fn list_number_key(text: &str) -> Vec<u8> {
+    let mut out=String::new();let mut chars=text.chars().peekable();
+    while let Some(c)=chars.next() {
+        if c.is_ascii_digit() {
+            let mut digits=c.to_string();
+            while chars.peek().is_some_and(char::is_ascii_digit) {digits.push(chars.next().unwrap());}
+            out.extend(std::iter::repeat_n('0',10usize.saturating_sub(digits.len())));
+            out.push_str(&digits);
+        } else {out.push(c);}
+    }
+    encoding_rs::WINDOWS_1251.encode(&out.to_lowercase()).0.into_owned()
+}
 fn canonical_date(s: &str, kind: u16) -> Result<String, String> {
     let parts = s
         .split(|c: char| !c.is_ascii_digit())
@@ -90,6 +107,7 @@ fn canonical_date(s: &str, kind: u16) -> Result<String, String> {
 pub enum Predicate {
     None,
     Contains(String),
+    FieldContains {field: String, text: String},
     FreeText(String),
     Compare {
         field: String,
@@ -442,6 +460,13 @@ impl Predicate {
     }
     pub fn bind(&self, area: &crate::db::schema::Area) -> Result<BoundPredicate, String> {
         Ok(match self {
+            Self::FieldContains {field,text} => {
+                let definition=if field.eq_ignore_ascii_case("KODEKS_NAME") {area.fields.get(&1)} else {area.fields.values().find(|f|f.name==*field)}
+                    .ok_or_else(||format!("SQL field {field} absent"))?;
+                if !matches!(definition.kind,2|3){return Err("CONTAINS field must be a string".into());}
+                BoundPredicate::Text{attribute:definition.id,kind:definition.kind,
+                    pattern:Matcher::Contains(field_contains::parse(text)?),folded:String::new(),like:true}
+            }
             Self::None => BoundPredicate::None,
             Self::Set { field, ids } => {
                 let attribute = if field.eq_ignore_ascii_case("OID") {
@@ -692,11 +717,13 @@ impl Parser {
             if !self.sym('(') {
                 return Err("CONTAINS requires parentheses".into());
             }
-            if !self.sym('*') {
-                if self.id()? != area || !self.sym('.') || !self.sym('*') {
-                    return Err("CONTAINS requires the current area's * fields".into());
-                }
-            }
+            let field=if self.sym('*'){None}else{
+                let first=self.id()?;
+                if self.sym('.') {
+                    if first!=area{return Err("CONTAINS area mismatch".into());}
+                    if self.sym('*'){None}else{Some(self.id()?)}
+                }else{Some(first)}
+            };
             if !self.sym(',') {
                 return Err("CONTAINS query missing".into());
             }
@@ -709,7 +736,7 @@ impl Parser {
             if !self.sym(')') {
                 return Err("CONTAINS closing parenthesis missing".into());
             }
-            Predicate::Contains(text)
+            if let Some(field)=field {Predicate::FieldContains{field,text}}else{Predicate::Contains(text)}
         } else if self.kw("FREETEXT") {
             if !self.sym('(') {
                 return Err("FREETEXT requires parentheses".into());
@@ -1088,6 +1115,7 @@ impl Parser {
 
 #[derive(Clone, Debug)]
 pub enum Matcher {
+    Contains(field_contains::Pattern),
     Exact(String),
     Like {
         residual: regex::Regex,
@@ -1107,6 +1135,7 @@ impl Matcher {
     }
     pub fn is_match(&self, text: &str) -> bool {
         match self {
+            Self::Contains(pattern) => pattern.matches(text),
             // Equality folds case. Native LIKE has distinct index-mask and
             // residual comparisons (notably for lowercase ё).
             Self::Exact(value) => text.to_lowercase() == value.to_lowercase(),

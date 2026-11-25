@@ -219,7 +219,10 @@ fn physical_resource(engine: &Db4Engine, dir: &VirtualDir, path: &str) -> Result
 }
 fn object_name(path: &str, query: &str, dir: &VirtualDir) -> Result<String, String> {
     if let Some(action) = query.split('&').find(|s| !s.is_empty()) {
-        if !action.contains('=') {
+        // GET forms submit their command as an empty named input (`find=`).
+        // A nonempty value is an ordinary parameter, not a script name.
+        let action = action.strip_suffix('=').unwrap_or(action);
+        if !action.is_empty() && !action.contains('=') {
             return percent_decode(action);
         }
     }
@@ -833,6 +836,7 @@ pub fn dispatch_http(
                 }
                 200 => "200 OK",
                 204 if response.body.is_empty() => "204 No Content",
+                301 => "301 Moved Permanently",
                 302 => "302 Found",
                 303 => "303 See Other",
                 304 => "304 Not Modified",

@@ -227,7 +227,7 @@ impl Runtime<'_> {
                 .insert("Locked".into(), Value::Bool(method == "Lock"));
             return Ok(Value::Bool(true));
         }
-        if !matches!(method, "NewField" | "Attr") || args.is_empty() || args.len() > 2 {
+        if !matches!(method, "NewField" | "Attr") || args.is_empty() || args.len() > if method == "Attr" {3} else {2} {
             return Err(
                 "Detached report documents cannot be saved; expected Attr or NewField".into(),
             );
@@ -238,6 +238,9 @@ impl Runtime<'_> {
         let definition = self.member(area, args[0].text())?;
         let key = self.member(definition.clone(), "Attr".into())?.text();
         let kind = self.member(definition, "Type".into())?.number()? as u16;
+        if method == "Attr" && args.get(2).is_some_and(|v| v.number().ok()!=Some(kind as f64)) {
+            return Ok(Value::Null);
+        }
         let fields = map(&p["\0fields"])?;
         if method == "Attr" {
             return Ok(fields.borrow().get(&key).cloned().unwrap_or(Value::Null));

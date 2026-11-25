@@ -159,6 +159,8 @@ fn add(
         return Ok(());
     }
     if let Some((_, previous)) = out.iter_mut().find(|(k, _)| *k == key) {
+        // The native all-settings form repeats this hidden marker.
+        if command=="adminsettings" && key=="clear_mark_1" && *previous==value {return Ok(());}
         // Native statistical-card fragments repeat these hidden controls.
         // A differing object/mode remains an ambiguous request.
         if matches!(command, "statcard171" | "statcard111")
@@ -205,7 +207,17 @@ fn add(
         });
         let postal_previous = command.eq_ignore_ascii_case("regletters")
             && matches!(key.as_str(), "prev_number_month" | "prev_number_first" | "prev_number_last");
-        let multi = postal_previous || stat_attribute || category
+        let settings_multi = command == "adminsettings" && (
+            matches!(key.as_str(), "stat_novisible" | "contr_novisible")
+            || ["select_", "selectmonth_", "nm_audio_years_", "nm_audio_months_"].iter().any(|prefix| {
+                key.strip_prefix(prefix).is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()))
+            })
+        ) && !value.is_empty() && !value.contains(';');
+        let find_attribute = command.eq_ignore_ascii_case("find")
+            && key.strip_prefix('a').is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+            && value.parse::<u32>().is_ok_and(|n| n != 0)
+            && previous.split(';').all(|s| s.is_empty() || s.parse::<u32>().is_ok_and(|n| n != 0));
+        let multi = find_attribute || settings_multi || postal_previous || stat_attribute || category
             || vacation
             || user_groups
             || key == "tipdoc"
@@ -222,6 +234,11 @@ fn add(
                         || !field.is_empty() && field.bytes().all(|c| c.is_ascii_digit()))
             });
         if !multi {
+            if command=="adminsettings" && key=="nm__ids"
+                && previous.len()+value.len()+1<=65536
+                && value.parse::<u32>().is_ok() && previous.split(';').all(|s|s.parse::<u32>().is_ok()) {
+                previous.push(';'); previous.push_str(&value); return Ok(());
+            }
             return Err("repeated control parameter".into());
         }
         if previous.len() + value.len() + 1 > 65536 {
@@ -229,7 +246,7 @@ fn add(
         }
         // A hidden empty control precedes a checked statistical-card checkbox.
         // Native KS receives the selected value without a leading separator.
-        if stat_attribute && previous.is_empty() {
+        if (stat_attribute || find_attribute) && previous.is_empty() {
             *previous = value;
             return Ok(());
         }
@@ -254,7 +271,7 @@ pub fn decode_for(
     } else {
         query.split('&').next().unwrap_or("")
     };
-    let command = crate::server::percent_decode(command)?;
+    let command = crate::server::percent_decode(command.strip_suffix('=').unwrap_or(command))?;
     if bytes.len() > 1024 * 1024 {
         return Err("form body limit".into());
     }

@@ -24,6 +24,9 @@ impl From<String> for DeleteError {
     }
 }
 pub trait DatabaseHost {
+    fn select_list(&self,_sql:&str,_list:&super::host::BoundList)->Result<super::host::QueryData,String>{
+        Err("SQL document list is not configured".into())
+    }
     /// Locate a bounded cursor window without loading its records.
     fn prepare_cursor(&self, _scope: u32, _oids: &[u32]) -> Result<(), String> {
         Ok(())

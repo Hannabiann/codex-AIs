@@ -219,7 +219,9 @@ impl Runtime<'_> {
                 "setContextDecor",
                 "setTitle",
             ],
-            "node" => &["createRange"],
+            "node" => &["createRange", "nodeByLocation"],
+            "NodeLocationInAncestorContainer" => &["toString"],
+            "listAttribute" => &["list"],
             "range" => &["selectNode"],
             "situations" => &["add", "pushElement", "addAttribute"],
             "KodeksTextSections" => &["searchForSectionByElement"],
@@ -282,6 +284,24 @@ impl Runtime<'_> {
             .unwrap_or_default();
         let name = name.trim_start_matches("format.");
         match name {
+            "toString" if kind == "NodeLocationInAncestorContainer" => {
+                Ok(o.borrow().get("\0field").cloned().unwrap_or(Value::Null))
+            }
+            "nodeByLocation" if kind == "node" => {
+                let location = values.first().ok_or("List location missing")?;
+                let location = match location {
+                    Value::Object(location) => location.borrow().get("\0field").cloned().unwrap_or(Value::Null).text(),
+                    other => other.text(),
+                };
+                let index = location.strip_prefix("cai1-").and_then(|v| v.parse::<usize>().ok())
+                    .ok_or("Unsupported form list location")?;
+                let field = o.borrow().get("\0field").cloned().ok_or("node field missing")?;
+                let list = self.form_embedded_list(&field, index)?;
+                self.format_object("node", vec![list])
+            }
+            "list" if kind == "listAttribute" => {
+                o.borrow().get("\0field").cloned().ok_or_else(|| "List attribute missing".into())
+            }
             "searchForSectionByElement" if kind == "KodeksTextSections" => {
                 if values.len() != 1 {
                     return Err("section search expects an element name".into());
@@ -294,14 +314,15 @@ impl Runtime<'_> {
                 if values.len() != 1 {
                     return Err("getNamedItem expects a name".into());
                 }
-                if values[0].text() != "context-count" {
-                    return Ok(Value::Null);
-                }
                 let field = o
                     .borrow()
                     .get("\0field")
                     .cloned()
                     .ok_or("node field missing")?;
+                if values[0].text() == "list" && matches!(field, Value::List(_)) {
+                    return self.format_object("listAttribute", vec![field]);
+                }
+                if values[0].text() != "context-count" { return Ok(Value::Null); }
                 let count = self.rich_html(&field)?.matches("<A NAME=\"C").count();
                 Ok(object([("value".into(), Value::Number(count as f64))]))
             }
@@ -346,7 +367,7 @@ impl Runtime<'_> {
                         self.output.clear();
                         return self.format_object("node", values);
                     }
-                    let html = self.rich_html(&values[0])?;
+                    let html = self.rich_html_with_writer(&values[0], Some(&writer))?;
                     let target = writer.borrow().get("\0field").cloned();
                     if let Some(stream) = target {
                         let print = self.member(stream.clone(), "Print".into())?;
@@ -391,7 +412,11 @@ impl Runtime<'_> {
                     .get("\0field")
                     .cloned()
                     .ok_or("range field missing")?;
-                let html = self.rich_html(&field)?;
+                let writer = match o.borrow().get("\0setHandler") {
+                    Some(Value::Object(writer)) => Some(writer.clone()),
+                    _ => None,
+                };
+                let html = self.rich_html_with_writer(&field, writer.as_ref())?;
                 self.write(&html)?;
                 Ok(Value::Null)
             }
@@ -425,16 +450,28 @@ impl Runtime<'_> {
         };
         let form_started = std::time::Instant::now();
         let record = self.read_document(oid, scope)?;
-        let form_oid = if let Some(Value::Document(id, _)) = args.get(2) {
-            *id
-        } else if let Some(id) = record.fields.iter().find_map(|f| {
-            if f.id == 1100 && f.wire_type == 5 {
-                if let crate::db::fields::Value::Integer(id) = f.value {
-                    return Some(id);
+        let mut selected = None;
+        if let Some(Value::Document(id, _)) = args.get(2) {
+            selected = Some(*id);
+        } else {
+            // Native FormDoc resolves the stored form link with link checking,
+            // like Attr(1100). A dangling link does not disable the area form.
+            // Only an absent target is skipped; I/O and decoding errors remain
+            // errors, and an explicitly requested form is still mandatory.
+            for field in record.fields.iter().filter(|f| f.id == 1100 && f.wire_type == 5) {
+                if let crate::db::fields::Value::Integer(id) = field.value {
+                    match self.read_document(id, scope) {
+                        Ok(_) => {
+                            selected = Some(id);
+                            break;
+                        }
+                        Err(Fault::Script(_)) => continue,
+                        Err(error) => return Err(error),
+                    }
                 }
             }
-            None
-        }) {
+        }
+        let form_oid = if let Some(id) = selected {
             id
         } else {
             let host = self
@@ -661,35 +698,67 @@ impl Runtime<'_> {
                 vec![Value::RichField(field.clone())],
             )?;
         } else {
-            let html = self.expand_form(tab.oid, tab.scope, &tab.source, 0)?;
-            field
-                .borrow_mut()
-                .parts
-                .push(Rc::new(RefCell::new(HashMap::from([(
-                    "\0html".into(),
-                    Value::String(html),
-                )]))));
+            // Keep embedded lists as lists until HTML conversion. Flattening
+            // them here loses the writer's page size, ordering and navigation.
+            let mut lists = Some(Vec::new());
+            let html = self.render_parts(
+                tab.oid, tab.scope, &template(&tab.source, false)?, 0, None, &mut lists,
+            )?.0;
+            let mut rest = html.as_str();
+            for (index, list) in lists.unwrap().into_iter().enumerate() {
+                let marker = format!("<!--codex-form-list:{index}-->");
+                let (before, after) = rest.split_once(&marker).ok_or("Form list marker missing")?;
+                field.borrow_mut().parts.push(Rc::new(RefCell::new(HashMap::from([
+                    ("\0html".into(), Value::String(before.into())),
+                ]))));
+                field.borrow_mut().parts.push(Rc::new(RefCell::new(HashMap::from([
+                    ("List".into(), list),
+                ]))));
+                rest = after;
+            }
+            field.borrow_mut().parts.push(Rc::new(RefCell::new(HashMap::from([
+                ("\0html".into(), Value::String(rest.into())),
+            ]))));
         }
         let value = Value::RichField(field);
         self.form_fields.borrow_mut().insert(key, value.clone());
         Ok(value)
     }
     pub(super) fn rich_html(&mut self, field: &Value) -> Result<String, Fault> {
+        self.rich_html_with_writer(field, None)
+    }
+    pub(super) fn form_field_is_empty(&mut self, field: &Value) -> Result<bool, Fault> {
+        if let Value::RichField(text) = field {
+            for part in &text.borrow().parts {
+                if let Some(Value::List(list)) = part.borrow().get("List") {
+                    if self.list_len(&list.borrow())? != 0 {
+                        // Tab visibility needs existence, not annotations for
+                        // every document on every page of every tab.
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+        Ok(is_empty_html(&self.rich_html(field)?))
+    }
+    fn rich_html_with_writer(&mut self, field: &Value, writer: Option<&Object>) -> Result<String, Fault> {
         match field {
             Value::RichField(text) => {
                 let parts = text.borrow().parts.clone();
                 let mut out = String::new();
+                let mut list_index = 0;
                 for part in parts {
                     let m = part.borrow().clone();
                     if let Some(Value::String(html)) = m.get("\0html") {
                         out.push_str(html);
                     } else if let Some(Value::List(list)) = m.get("List") {
-                        out.push_str(&self.list_html(&list.borrow())?);
-                    } else if let Some(Value::TextStream(text) | Value::RichStream(text)) =
+                        out.push_str(&self.form_list_html_at(&list.borrow(), writer, list_index)?);
+                        list_index += 1;
+                    } else if let Some(text @ (Value::TextStream(_) | Value::RichStream(_) | Value::ReadStream(_))) =
                         m.get("Text")
                     {
                         let value = super::report_cells::formatted_text(
-                            &text.borrow(),
+                            &super::report_document::text_value(text)?,
                             m.get("\0font_ranges"),
                         )?;
                         let tag = match m.get("Format").and_then(|v| v.number().ok()).unwrap_or(0.0)
@@ -787,7 +856,7 @@ impl Runtime<'_> {
             if let Some(f) = record.fields.iter().find(|f| f.id == 5 && f.wire_type == 4) {
                 let source = crate::db::decode(crate::document::bytes(f)?);
                 return self
-                    .render_parts(oid, scope, &template(&source, !omit_empty)?, 0, None)
+                    .render_parts(oid, scope, &template(&source, !omit_empty)?, 0, None, &mut None)
                     .map(|p| p.0);
             }
             Ok(String::new())
@@ -799,7 +868,7 @@ impl Runtime<'_> {
         self.include_depth -= 1;
         result
     }
-    fn list_html(&mut self, list: &super::record_list::RecordList) -> Result<String, Fault> {
+    pub(super) fn list_html(&mut self, list: &super::record_list::RecordList) -> Result<String, Fault> {
         let ids = self.list_ids(list)?;
         if ids.is_empty() {
             return Ok(String::new());
@@ -915,7 +984,7 @@ impl Runtime<'_> {
         source: &str,
         depth: usize,
     ) -> Result<String, Fault> {
-        self.render_parts(oid, scope, &template(source, false)?, depth, None)
+        self.render_parts(oid, scope, &template(source, false)?, depth, None, &mut None)
             .map(|p| p.0)
     }
     fn render_parts(
@@ -925,6 +994,7 @@ impl Runtime<'_> {
         parts: &[Part],
         depth: usize,
         occurrence: Option<usize>,
+        lists: &mut Option<Vec<Value>>,
     ) -> Result<(String, bool), Fault> {
         if depth > 32 {
             return Err("Form rendering nesting limit".into());
@@ -983,7 +1053,7 @@ impl Runtime<'_> {
                 }
                 Part::Optional(children) => {
                     let (html, has) =
-                        self.render_parts(oid, scope, children, depth + 1, occurrence)?;
+                        self.render_parts(oid, scope, children, depth + 1, occurrence, lists)?;
                     (if has { html } else { String::new() }, has)
                 }
                 Part::List(attr) => {
@@ -1009,7 +1079,7 @@ impl Runtime<'_> {
                         query_all: false,
                         ids: super::record_list::ListIds::new(Some(ids)),
                     };
-                    (self.list_html(&list)?, has)
+                    (self.capture_form_list(Value::List(Rc::new(RefCell::new(list))), lists)?, has)
                 }
                 Part::AutoList(area_id, attr, sort) => {
                     let ids = {
@@ -1037,12 +1107,12 @@ impl Runtime<'_> {
                     let list = super::record_list::RecordList {
                         scope,
                         area: *area_id,
-                        order: None,
+                        order: sort.map(|attr| vec![attr]),
                         conditions: vec![],
                         query_all: false,
                         ids: super::record_list::ListIds::new(Some(ids)),
                     };
-                    (self.list_html(&list)?, has)
+                    (self.capture_form_list(Value::List(Rc::new(RefCell::new(list))), lists)?, has)
                 }
                 Part::ScriptList(name, sort) => {
                     let value = self.form_function(oid, scope, name, vec![])?;
@@ -1050,9 +1120,10 @@ impl Runtime<'_> {
                         Value::List(l) => {
                             if let Some(attr) = sort {
                                 self.list_sort(&mut l.borrow_mut(), *attr)?;
+                                l.borrow_mut().order = Some(vec![*attr]);
                             }
-                            let html = self.list_html(&l.borrow())?;
-                            let has = !html.is_empty();
+                            let has = self.list_len(&l.borrow())? != 0;
+                            let html = self.capture_form_list(Value::List(l), lists)?;
                             (html, has)
                         }
                         Value::Null => (String::new(), false),
@@ -1071,7 +1142,7 @@ impl Runtime<'_> {
                         out.push_str(&html);
                         present |= has;
                         let (html, has) =
-                            self.render_parts(oid, scope, &parts[index + 1..], depth + 1, Some(n))?;
+                            self.render_parts(oid, scope, &parts[index + 1..], depth + 1, Some(n), lists)?;
                         out.push_str(&html);
                         present |= has;
                         if n + 1 < count {

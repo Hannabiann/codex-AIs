@@ -9,6 +9,8 @@ mod base64;
 mod compiled_runtime;
 #[path = "path_settings.rs"]
 mod path_settings;
+#[path = "system_settings.rs"]
+mod system_settings;
 
 #[path = "attachment_files.rs"]
 mod attachment_files;
@@ -31,6 +33,10 @@ mod kjson;
 
 #[path = "form_doc.rs"]
 mod form_doc;
+#[path = "form_list.rs"]
+mod form_list;
+#[path = "packing_vars.rs"]
+mod packing_vars;
 #[path = "record_list.rs"]
 mod record_list;
 #[path = "report_cells.rs"]
@@ -377,6 +383,10 @@ pub struct Runtime<'a> {
     dbhost: Option<RefCell<Box<dyn super::database::DatabaseHost + 'a>>>,
     dbobjects: RefCell<HashMap<u32, Object>>,
     registry: Option<crate::db::registry::Registry>,
+    settings_edit: Option<system_settings::Settings>,
+    settings_generation: u64,
+    startup_registry_defaults: bool,
+    pub(crate) settings_revision: String,
     documents: Option<Documents<'a>>,
     data_root: Option<String>,
     log_root: Option<std::path::PathBuf>,
@@ -449,6 +459,10 @@ impl<'a> Runtime<'a> {
             dbhost: None,
             dbobjects: RefCell::new(HashMap::new()),
             registry: None,
+            settings_edit: None,
+            settings_generation: 0,
+            startup_registry_defaults: false,
+            settings_revision: String::new(),
             documents: None,
             data_root: None,
             log_root: crate::runtime_logs::configured_root(),
@@ -529,11 +543,13 @@ impl<'a> Runtime<'a> {
             fields.insert("\0enumerate_numeric".into(), Value::Bool(true));
             fields.insert("Name".into(), Value::String(a.name.clone()));
             fields.insert("Area".into(), Value::Number(a.id as f64));
+            fields.insert("Tag".into(), Value::Number(a.flags as f64));
             for f in a.fields.values() {
                 let obj = Value::ReadOnlyObject(Rc::new(RefCell::new(HashMap::from([
                     ("Name".into(), Value::String(f.name.clone())),
                     ("Attr".into(), Value::Number(f.id as f64)),
                     ("Type".into(), Value::Number(f.kind as f64)),
+                    ("Tag".into(), Value::Number(f.flags as f64)),
                     ("Link".into(), Value::Number(f.reference as f64)),
                 ]))));
                 fields.insert(f.id.to_string(), obj.clone());
@@ -800,6 +816,15 @@ impl<'a> Runtime<'a> {
             *file.charset.borrow_mut() = charset;
             return Ok(());
         }
+        let v = if key == "List" && matches!(&obj, Value::Object(o) if o.borrow().contains_key("SetContextString")) {
+            self.form_list_value(v)?
+        } else { v };
+        if let Value::TempDocument(doc) = &obj {
+            if doc.borrow().properties.borrow().len() >= 10000 { return Err("Document member limit".into()); }
+            doc.borrow().properties.borrow_mut().insert(key, v);
+            return Ok(());
+        }
+        if let Value::ReadOnlyObject(o)=&obj {if self.settings_edit.is_some(){return self.assign_config_setting(o,&key,v);}}
         match obj{Value::EditDocument(d)=>self.edit_set(d,&key,v),Value::WritableField(f)=>self.writable_set(f,&key,v),Value::List(l)=>self.list_set(&mut l.borrow_mut(), &key, v),Value::Array(o)=>{
  self.numeric_arrays.invalidate(&o);
  let mut map=o.borrow_mut();
@@ -1679,6 +1704,11 @@ impl<'a> Runtime<'a> {
     }
     fn member(&self, base: Value, key: String) -> Result<Value, Fault> {
         if let Value::Object(o) = &base {
+            if key == "toString" && o.borrow().contains_key("\0packing") {
+                return packing_vars::serialize(&o.borrow()).map(Value::String);
+            }
+        }
+        if let Value::Object(o) = &base {
             if let Some(Value::String(kind))=o.borrow().get("\0report_collection") {
                 if (kind=="rows" && matches!(key.as_str(),"Add"|"Remove")) ||
                     (kind=="parts" && matches!(key.as_str(),"InsertText"|"InsertTable"|"Insert"|"TextLength")) {
@@ -1750,11 +1780,17 @@ impl<'a> Runtime<'a> {
             }),
             (
                 Value::List(list),
-                "AddCondition" | "Add" | "Find" | "AddEmptyCondition" | "Delete" | "IsInArray",
+                "AddCondition" | "Add" | "Find" | "AddEmptyCondition" | "Delete" | "IsInArray" | "CRC",
             ) => Ok(Value::ListMethod(list, key)),
             (Value::List(list), "Size" | "length") => {
                 Ok(Value::Number(self.list_len(&list.borrow())? as f64))
             }
+            (Value::List(list), "Area") => Ok(Value::Number(list.borrow().area as f64)),
+            (Value::List(list), "isReverse") => Ok(Value::Bool(list.borrow().ids.reverse.get())),
+            (Value::List(_), "Context") => Ok(Value::Null),
+            (Value::List(list), "Order") => Ok(list.borrow().order.as_ref()
+                .and_then(|fields| fields.first()).map(|attr| Value::Number(*attr as f64))
+                .unwrap_or(Value::Number(0.0))),
             (Value::List(list), _) => {
                 let l = list.borrow();
                 let index = key
@@ -1938,7 +1974,7 @@ impl<'a> Runtime<'a> {
                 Ok(Value::StreamMethod(t, format!("rich.{key}")))
             }
             (Value::Date(d), _) => Ok(Value::DateMethod(d, key)),
-            (Value::Database(o), "Open" | "Remove" | "OpenExclusive" | "Create") => {
+            (Value::Database(o), "Open" | "Remove" | "OpenExclusive" | "Create" | "FindAllValuesByAttribute") => {
                 Ok(Value::DatabaseMethod(o, key))
             }
             (Value::Database(o), _) => {
@@ -2206,6 +2242,9 @@ impl<'a> Runtime<'a> {
                 Err(format!("Application.{key}: host binding not implemented").into())
             }
             (Value::ReadOnlyObject(o), _) => {
+                if key=="At" && self.settings_edit.is_some() && self.settings_paths().iter().any(|p|Rc::ptr_eq(p,&o)) {
+                    return Ok(Value::Native("settings.At".into()));
+                }
                 match o.borrow().get(&key).cloned().unwrap_or(Value::Null) {
                     Value::ReadStream(stream)
                         if key == "Text" && o.borrow().contains_key("\0fonts") =>
@@ -2227,7 +2266,7 @@ impl<'a> Runtime<'a> {
                 if let Some(value) = Self::property(&o, &key)? {
                     return Ok(value);
                 }
-                if o.borrow().contains_key("\0json") {
+                if o.borrow().contains_key("\0json") || o.borrow().contains_key("\0packing") {
                     return Ok(Value::Null);
                 }
                 if o.borrow().len() >= 10000 {
@@ -2442,6 +2481,7 @@ impl<'a> Runtime<'a> {
                             | "KodeksDOMParser"
                             | "KodeksFormatHTMLWriter"
                             | "KodeksFormatRTFWriter"
+                            | "NodeLocationInAncestorContainer"
                             | "KodeksTextSections" => {
                                 let values = args
                                     .iter()
@@ -2455,6 +2495,14 @@ impl<'a> Runtime<'a> {
                                     .map(|a| self.eval(a))
                                     .collect::<Result<Vec<_>, _>>()?;
                                 return self.make_form(values);
+                            }
+                            "PackingVars" => {
+                                let values = args.iter().map(|a|self.eval(a)).collect::<Result<Vec<_>,_>>()?;
+                                return packing_vars::construct(&values);
+                            }
+                            "FindAttrs" => {
+                                let values=args.iter().map(|a|self.eval(a)).collect::<Result<Vec<_>,_>>()?;
+                                return self.find_attrs(&values);
                             }
                             "List" => {
                                 if args.len() > 2 {
@@ -2821,6 +2869,9 @@ impl<'a> Runtime<'a> {
                         return Ok(Value::Decimal(a.op(op, b)?));
                     }
                 }
+                if let Some(result) = null_arithmetic(op, &x, &y) {
+                    return result;
+                }
                 match op.as_str() {
                     "instanceof" => {
                         let Value::Function(constructor) = y else {
@@ -2985,6 +3036,12 @@ impl<'a> Runtime<'a> {
         receiver: Option<Value>,
         label: String,
     ) -> Result<Value, Fault> {
+        // A plain List has no cached alternative annotation. CRC zero selects
+        // the same document name as the property form used by unsorted lists.
+        if label == "Name" && matches!(receiver, Some(Value::Document(_, _)))
+            && matches!(values.as_slice(), [Value::Number(n)] if *n==0.0) {
+            return Ok(f);
+        }
         match f {
             Value::EditMethod(doc, method) => self.edit_call(doc, &method, &values),
             Value::StoredFieldMethod(field, method) => {
@@ -3173,12 +3230,35 @@ impl<'a> Runtime<'a> {
                 Ok(Value::Null)
             }
             Value::RegistryMethod(id, method) => {
+                if method == "SetValue" && self.initialize_startup_export_date(id, &values)? {
+                    return Ok(Value::Null);
+                }
+                if self.settings_edit.is_some() && matches!(method.as_str(),"CreateKey"|"SetValue"|"DeleteValue") {
+                    let edit=self.settings_edit.as_mut().unwrap();
+                    match method.as_str() {
+                        "CreateKey"=>{
+                            let [Value::String(path)]=values.as_slice() else{return Err("CreateKey expects an absolute path".into())};
+                            edit.transaction.create_key(path)?;
+                        }
+                        "SetValue"=>{
+                            let [Value::String(name),Value::Number(kind),value]=values.as_slice() else{return Err("SetValue expects name, type, value".into())};
+                            let kind=match *kind {1.0=>"REG_SZ",4.0=>"REG_DWORD",_=>return Err("Unsupported registry value type".into())};
+                            edit.transaction.set(id,name,kind,Some(&value.text()))?;
+                        }
+                        _=>{
+                            let [Value::String(name)]=values.as_slice() else{return Err("DeleteValue expects a name".into())};
+                            edit.transaction.set(id,name,"REG_SZ",None)?;
+                        }
+                    }
+                    self.registry=Some(edit.transaction.registry.clone());
+                    return Ok(Value::Null);
+                }
                 let reg = self
                     .registry
                     .as_ref()
                     .ok_or("RegistryRoot is not configured")?;
                 let entry_value = |e: &crate::db::registry::Entry| -> Result<Value, Fault> {
-                    let current = e.current_value(self.data_root.as_deref(), id == reg.root)?;
+                    let current = if self.settings_edit.is_some(){e.value.clone()}else{e.current_value(self.data_root.as_deref(), id == reg.root)?};
                     Ok(Value::ReadOnlyObject(Rc::new(RefCell::new(HashMap::from(
                         [
                             ("NameVal".into(), Value::String(e.name.clone())),
@@ -3459,6 +3539,9 @@ impl<'a> Runtime<'a> {
             }
             Value::DatabaseMethod(db, method) => {
                 let scope = Self::db_scope(&db)?;
+                if method == "FindAllValuesByAttribute" {
+                    return self.list_attribute_values(scope, &values);
+                }
                 if method == "Remove" {
                     let [Value::Volume(owner, id)] = values.as_slice() else {
                         return Err(Fault::Script(Value::String(
@@ -4476,11 +4559,18 @@ impl<'a> Runtime<'a> {
                         }
                         Value::String(s) => Ok(super::host::Arg::String(s.clone())),
                         Value::Number(n) => Ok(super::host::Arg::Number(*n)),
+                        Value::List(list) => {
+                            let list=list.borrow();Ok(super::host::Arg::List(super::host::BoundList{
+                                scope:list.scope,area:list.area,ids:std::sync::Arc::new(self.list_ids(&list)?),
+                            }))
+                        }
                         _ => Err(Fault::Host("unsupported SQL argument type".into())),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                let bound_list=host.bound_list();
                 let query = |scope, sql: &str| {
                     if let Some(host) = &self.dbhost {
+                        if let Some(list)=&bound_list {return host.borrow().select_list(sql,list);}
                         if self.cursor_projections { host.borrow().select_cursor(scope, sql) }
                         else { host.borrow().select(scope, sql) }
                     } else {
@@ -4501,7 +4591,15 @@ impl<'a> Runtime<'a> {
                 if let Some(database) = &self.dbhost {
                     host.prepare_row(&method, &**database.borrow())?;
                 }
-                let result = host.call(&method, &args, &query)?;
+                let result = host.call(&method, &args, &query).map_err(|e| {
+                    let syntax=e.strip_prefix("CONTAINS syntax (").and_then(|s| s.split_once(')'))
+                        .and_then(|(code, text)|code.parse::<u32>().ok().filter(|c|(720..=728).contains(c)).map(|c|(c,text.strip_prefix(':').unwrap_or(text))));
+                    if let Some((code,text))=syntax {
+                        Fault::Script(Value::Object(Rc::new(RefCell::new(HashMap::from([
+                            ("Code".into(),Value::Number(code as f64)),("errText".into(),Value::String(text.into())),
+                        ])))))
+                    } else {Fault::Host(e)}
+                })?;
                 use super::host::ResultValue as H;
                 Ok(match result {
                     H::Null => Value::Null,
@@ -4612,8 +4710,7 @@ impl<'a> Runtime<'a> {
             }
             Value::FormTabMethod(tab, _) => {
                 let field = self.tab_field(&tab)?;
-                let html = self.rich_html(&field)?;
-                Ok(Value::Bool(form_doc::is_empty_html(&html)))
+                Ok(Value::Bool(self.form_field_is_empty(&field)?))
             }
             Value::RichMethod(field, method) => {
                 if matches!(method.as_str(),"InsertText"|"InsertTable"|"Insert"|"TextLength") {
@@ -4647,6 +4744,10 @@ impl<'a> Runtime<'a> {
                     return Err("rich field insertion expects no arguments".into());
                 }
                 let mut m = HashMap::new();
+                if method == "InsertList" {
+                    m.insert("SetContextString".into(), Value::Native("formList.SetContextString".into()));
+                    m.insert("SetWhereObj".into(), Value::Native("formList.SetWhereObj".into()));
+                }
                 if method == "InsertText" {
                     m.insert(
                         "SetFontAttributes".into(),
@@ -4662,6 +4763,15 @@ impl<'a> Runtime<'a> {
                 Ok(Value::Object(object))
             }
             Value::ListMethod(list, method) => {
+                if method == "CRC" {
+                    let [index] = values.as_slice() else {return Err("List.CRC expects an index".into());};
+                    let index=index.number()?;
+                    if !index.is_finite() || index<0.0 || index.fract()!=0.0
+                        || self.list_item(&list.borrow(),index as usize)?.is_none() {
+                        return Err("List.CRC index outside list".into());
+                    }
+                    return Ok(Value::Number(0.0));
+                }
                 if method == "IsInArray" {
                     let [value] = values.as_slice() else {
                         return Err("List.IsInArray expects a document id".into());
@@ -4795,6 +4905,17 @@ impl<'a> Runtime<'a> {
                 }
             }
             Value::Native(n) => match n.as_str() {
+                "formList.SetContextString" | "formList.SetWhereObj" => {
+                    let Some(Value::Object(part)) = receiver else { return Err("List node receiver missing".into()); };
+                    let context = n.ends_with("SetContextString");
+                    if context && !matches!(values.as_slice(), [_, Value::Bool(_)])
+                        || !context && !matches!(values.as_slice(), [Value::Array(_)]) {
+                        return Err("Invalid list metadata arguments".into());
+                    }
+                    part.borrow_mut().insert(if context {"Context"} else {"WhereObj"}.into(), values[0].clone());
+                    if context {part.borrow_mut().insert("ContextAdvanced".into(),values[1].clone());}
+                    Ok(Value::Null)
+                }
                 "Document.ReadFromStream" => self.read_kod_document(&values),
                 "__codex_TextFieldSize" => {
                     let [Value::StoredField(field)] = values.as_slice() else {
@@ -4829,6 +4950,8 @@ impl<'a> Runtime<'a> {
                     Ok(fonts)
                 }
                 "path.SaveState" => self.save_path_settings(receiver, &values, false),
+                "settings.SaveState" => self.save_system_path(receiver,&values),
+                "settings.At" => self.settings_at(receiver,&values),
                 "path.SaveCalendarAccess" => self.save_path_settings(receiver, &values, true),
                 "field.InsertText" => self.writable_insert_text(receiver, &values),
                 "rtf.mapping" => {
@@ -5571,6 +5694,26 @@ fn to_i32(n: f64) -> i32 {
         0
     } else {
         n.trunc().rem_euclid(4294967296.0) as u32 as i32
+    }
+}
+// KS distinguishes absent data from numeric zero. Keep this separate from
+// number(): explicit conversions and LongDouble operations have other rules.
+fn null_arithmetic(op: &str, left: &Value, right: &Value) -> Option<Result<Value, Fault>> {
+    use Value::{Bool, Null, Number, String};
+    match (op, left, right) {
+        ("+" | "-", Null, Null)
+        | ("*", Null, Null | Number(_))
+        | ("*", Number(_), Null)
+        | ("/", Null, Number(_)) => Some(Ok(Null)),
+        ("-", Null, String(_))
+        | ("-", String(_), Null)
+        | ("*" | "/" | "%", Null, Null | Number(_) | Bool(_) | String(_))
+        | ("*" | "/" | "%", Number(_) | Bool(_) | String(_), Null) => {
+            Some(Err(Fault::Script(Value::ScriptException(format!(
+                "Invalid operands for KS arithmetic operator {op}"
+            )))))
+        }
+        _ => None,
     }
 }
 fn field_equal(a: &Value, b: &Value) -> bool {

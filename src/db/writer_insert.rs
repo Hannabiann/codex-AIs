@@ -23,6 +23,9 @@ pub(super) fn delete(
 pub(super) const REBUILD_NUMERIC: &str = "numeric index needs a complete merge";
 
 fn compare(kind: u16, a: &[u8], b: &[u8]) -> Result<Ordering, String> {
+    if kind==14 {
+        return Ok(crate::db::mainkey::word_index::key(a)?.cmp(&crate::db::mainkey::word_index::key(b)?));
+    }
     let min = match kind {
         0 => 10,
         1 => 8,
@@ -59,6 +62,52 @@ struct Tree<'a> {
     attr: u16,
     kind: u16,
     staged: BTreeMap<u32, WriterNode>,
+}
+
+// Registry title changes touch only the affected word ranges. Some historical
+// config catalogs have unreadable unrelated word nodes; rebuilding the entire
+// dictionary would unnecessarily make an ordinary settings update depend on them.
+pub(in crate::db::writer) fn registry_words(index:&mut MainKey,image:&mut Image,root:u32,changes:&[Record],deletions:&[(u32,bool)],unindexed_titles:&BTreeSet<u32>)->Result<u32,String>{
+    use crate::db::mainkey::word_index;
+    let mut words=BTreeMap::<Vec<u8>,(BTreeSet<u32>,BTreeSet<u32>)>::new();
+    for oid in changes.iter().filter_map(|r|r.integer(1024)).chain(deletions.iter().map(|x|x.0)) {
+        if unindexed_titles.contains(&oid) {continue;}
+        let old=index.lookup(oid)?.map(|e|index.record(e)).transpose()?;
+        let new=changes.iter().find(|r|r.integer(1024)==Some(oid));
+        let before=old.as_ref().and_then(|r|r.string(1));
+        let after=new.and_then(|r|r.string(1));
+        if before==after {continue;}
+        for w in before.map(super::super::user_index::words).unwrap_or_default(){words.entry(w).or_default().0.insert(oid);}
+        for w in after.map(super::super::user_index::words).unwrap_or_default(){words.entry(w).or_default().1.insert(oid);}
+    }
+    if words.is_empty(){return Ok(root);}
+    let mut tree=Tree{index,image,area:65535,attr:2,kind:14,staged:BTreeMap::new()};
+    fn collect(tree:&mut Tree,id:u32,word:&[u8],depth:usize,out:&mut Vec<Vec<u8>>)->Result<(),String>{
+        if id==0{return Ok(());}
+        if depth>=32{return Err("registry word index depth".into());}
+        let n=tree.load(id)?;
+        for i in 0..=n.keys.len(){
+            let lower=if i==0{None}else{Some(word_index::key(&n.keys[i-1])?.0)};
+            let upper=if i==n.keys.len(){None}else{Some(word_index::key(&n.keys[i])?.0)};
+            if !n.children.is_empty() && lower.is_none_or(|w|w<=word) && upper.is_none_or(|w|w>=word){collect(tree,n.children[i],word,depth+1,out)?;}
+            if i<n.keys.len() && upper==Some(word){out.push(n.keys[i].clone());}
+        }
+        Ok(())
+    }
+    let mut root=root;
+    for (word,(remove,add)) in words {
+        let mut keys=Vec::new();collect(&mut tree,root,&word,0,&mut keys).map_err(|e|format!("registry word {}: {e}",crate::db::decode(&word)))?;
+        let mut postings=BTreeMap::new();
+        for k in &keys {
+            for (oid,weight) in word_index::postings(k)? {if postings.insert(oid,weight).is_some(){return Err("overlapping registry word postings".into());}}
+        }
+        for oid in remove {postings.remove(&oid);}
+        for oid in add {postings.insert(oid,0x600);}
+        for k in keys {let (next,removed)=tree.remove(root,&k)?;if !removed{return Err("registry word key disappeared".into());}root=next;}
+        let postings=postings.into_iter().collect::<Vec<_>>();
+        for chunk in postings.chunks(250){root=tree.upsert(root,super::super::user_index::encode(&word,chunk))?;}
+    }
+    Ok(root)
 }
 impl Tree<'_> {
     fn size(&self) -> Option<usize> {
@@ -180,7 +229,7 @@ impl Tree<'_> {
                 0
             }
             + n.children.len() * 4;
-        if bytes <= 4089 {
+        if bytes <= if self.kind == 14 {4085} else {4089} {
             return Ok((self.save(n)?, None));
         }
         let middle = n.keys.len() / 2;

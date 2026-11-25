@@ -60,6 +60,29 @@ pub struct Registry {
     keys: BTreeMap<u32, Key>,
 }
 impl Registry {
+    pub(crate) fn child(&self, parent:u32, name:&str) -> Result<Option<u32>,String> {
+        let mut found=None;
+        for id in &self.key(parent)?.children {
+            if self.key(*id)?.name.to_lowercase()==name.to_lowercase() {
+                if found.replace(*id).is_some(){return Err("ambiguous registry key".into());}
+            }
+        }
+        Ok(found)
+    }
+    pub(crate) fn insert_key(&mut self,parent:u32,id:u32,name:&str)->Result<(),String>{
+        if self.keys.contains_key(&id){return Err("registry key already exists".into());}
+        self.keys.get_mut(&parent).ok_or("registry parent absent")?.children.push(id);
+        self.keys.insert(id,Key{name:name.into(),children:Vec::new(),values:Vec::new()});
+        Ok(())
+    }
+    pub(crate) fn remove_value(&mut self,parent:u32,name:&str)->Result<(),String>{
+        self.keys.get_mut(&parent).ok_or("registry parent absent")?.values.retain(|e|e.name.to_lowercase()!=name.to_lowercase()); Ok(())
+    }
+    pub(crate) fn insert_value(&mut self,parent:u32,value:Entry)->Result<(),String>{
+        self.remove_value(parent,&value.name)?;
+        let key=self.keys.get_mut(&parent).ok_or("registry parent absent")?;
+        key.values.push(value);key.values.sort_by_key(|e|e.oid);Ok(())
+    }
     pub fn from_records(records: &[Record], root: u32) -> Result<Self, String> {
         // Native QueryValue (0072ad50) intersects name and parent, then reads
         // result index zero (0072ae75). DB4 result OIDs are ascending.

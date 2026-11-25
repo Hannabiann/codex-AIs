@@ -4,6 +4,8 @@ use crate::{
 };
 #[path = "distribution.rs"]
 pub(crate) mod distribution;
+#[path = "system_settings.rs"]
+mod system_settings;
 #[derive(Debug)]
 pub struct VmError(pub String);
 pub fn named_with_startup(
@@ -78,7 +80,7 @@ fn create_runtime_mode<'a>(
         let source = startup
             .source()
             .ok_or_else(|| VmError("startup has no KS source".into()))?;
-        if let Err(e) = runtime.load(&decode(source)) {
+        if let Err(e) = runtime.load_startup(&decode(source)) {
             runtime.end_request();
             return Err(VmError(format!("{}/startup: {e}", dir.mapped_to)));
         }
@@ -172,11 +174,17 @@ impl Sessions {
             }
         }
         let result = (|| {
+            if dir.path.trim_end_matches('/')=="/20a" && object=="adminsettings" {
+                self.runtimes.get_mut(&dir.path).unwrap().load_system_settings_view().map_err(VmError)?;
+            }
             self.runtimes
                 .get_mut(&dir.path)
                 .unwrap()
                 .begin_request(request)
                 .map_err(VmError)?;
+            if dir.path.trim_end_matches('/')=="/20a" && object=="adminsettings" {
+                if let Some(reply)=system_settings::guard(&engine,request,self.runtimes.get_mut(&dir.path).unwrap()).map_err(VmError)? {return Ok(reply);}
+            }
             if dir.path.trim_end_matches('/') == "/20a"
                 && object == "RaspredSettingsBlockedInnForJudges"
                 && record.source().is_none_or(|s| s.is_empty())
@@ -235,6 +243,12 @@ impl Sessions {
                 }
             }
             let mut body = self.render_record(dir, record, object)?;
+            if dir.path.trim_end_matches('/')=="/20a" && object=="adminsettings" {
+                if let Err(error) = self.runtimes.get_mut(&dir.path).unwrap().commit_system_settings() {
+                    return Ok(system_settings::save_error(&error));
+                }
+                body=system_settings::decorate(&self.runtimes[&dir.path].settings_revision,body).map_err(VmError)?;
+            }
             if object == "raspred_settings" {
                 body = distribution::decorate_compiled(
                     &engine,
@@ -247,7 +261,7 @@ impl Sessions {
             let (code, mut headers) = self.runtimes[&dir.path]
                 .response_headers()
                 .map_err(VmError)?;
-            if object == "raspred_settings" {
+            if matches!(object, "raspred_settings" | "adminsettings") {
                 headers.push(("Cache-Control".into(), "no-store".into()));
             }
             Ok((body, code, headers))
@@ -416,11 +430,6 @@ impl Sessions {
             return Ok(bytes);
         }
         let html = crate::classifier_html::adapt(html, object);
-        let html = if dir.path.trim_end_matches('/') == "/20a" && object == "adminsettings" {
-            crate::server::registration::controls(html).map_err(VmError)?
-        } else {
-            html
-        };
         let (bytes, _, bad) = encoding_rs::WINDOWS_1251.encode(&html);
         if bad {
             return Err(VmError("output cannot be encoded as Windows-1251".into()));

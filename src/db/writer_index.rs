@@ -4,6 +4,7 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 #[path = "writer_insert.rs"]
 mod insert;
+pub(super) use insert::registry_words;
 
 fn groups(items: &[Vec<u8>]) -> Result<BTreeMap<u32, Vec<u32>>, String> {
     let mut result = BTreeMap::<u32, Vec<u32>>::new();

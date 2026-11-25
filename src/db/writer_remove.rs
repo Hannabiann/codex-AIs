@@ -15,7 +15,7 @@ impl Tree<'_> {
         self.staged.remove(&id);
         Ok(())
     }
-    fn remove(&mut self, root: u32, key: &[u8]) -> Result<(u32, bool), String> {
+    pub(super) fn remove(&mut self, root: u32, key: &[u8]) -> Result<(u32, bool), String> {
         if root == 0 {
             return Ok((0, false));
         }

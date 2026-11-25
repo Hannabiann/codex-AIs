@@ -149,6 +149,16 @@ const USERBASE_LOGIN_CHECK: &str = r#"
 "#;
 
 pub fn request_source<'a>(name: &str, source: &'a str) -> Cow<'a, str> {
+    // These stored navigation scripts use integer division for page offsets.
+    // Keep that local semantic without changing KS floating-point arithmetic.
+    if name == "navigator" && matches_source(source, (1896, [252,174,107,189,120,154,188,162,21,73,64,19,182,123,26,142,247,117,230,149,181,98,231,81,33,75,222,187,254,36,3,177])) {
+        return Cow::Owned(source.replace("(ix / 20) * 20", "Math.floor(ix / 20) * 20")
+            .replace("((lsz + ix - 1)/ 20) * 20", "Math.floor((lsz + ix - 1)/ 20) * 20"));
+    }
+    if name == "find" && matches_source(source, (171836, [56,165,45,32,132,108,50,125,50,119,112,61,8,54,234,176,149,45,149,242,118,113,74,14,179,188,113,39,45,216,159,184])) {
+        return Cow::Owned(source.replace("parseInt(pack.listpos) / 20 * 20", "Math.floor(parseInt(pack.listpos) / 20) * 20")
+            .replace("((lsz + parseInt(pack.listpos) - 1)/ 20) * 20", "Math.floor((lsz + parseInt(pack.listpos) - 1)/ 20) * 20"));
+    }
     // Stored anshlag 52571 contains a semicolon before this function's body.
     // Its native bytecode executes that body; correct only this verified source.
     if name == "anshlag" && matches_source(source, (106160, [153, 94, 29, 88, 8, 129, 155, 92, 167, 92, 210, 153, 32, 250, 168, 7, 123, 138, 177, 18, 168, 178, 121, 113, 98, 45, 97, 19, 49, 60, 121, 109])) {
@@ -319,6 +329,19 @@ pub fn request_source<'a>(name: &str, source: &'a str) -> Cow<'a, str> {
 }
 
 pub fn document_source(oid: u32, attribute: u16, source: &str) -> Cow<'_, str> {
+    // This native registry wrapper stringifies booleans as True/False.
+    // Preserve explicit string values and the interpreter's existing HTML/JS
+    // formatting; change only the verified registry serialization function.
+    if attribute == 3 {
+        if let Some(start) = source.find("function mp_CReg_setValue (") {
+            if let Some(body) = source.get(start..start + 548) {
+                if matches_source(body, (548, [121,244,83,141,41,53,163,115,137,122,224,49,122,57,145,60,236,25,9,182,134,78,127,193,137,156,150,206,57,164,187,170])) {
+                    let fixed = body.replacen("Value\t=\t''+Value;", "Value = typeof(Value) == 'boolean' ? (Value ? 'True' : 'False') : ''+Value;", 1);
+                    return Cow::Owned(source.replacen(body, &fixed, 1));
+                }
+            }
+        }
+    }
     // mp_CReg creates its origin even for a read. For a missing year/month,
     // native kodweb creates empty keys, reads no BasicPath, and falls back to
     // FileDocPath. Keep that lookup/fallback without a configuration write.

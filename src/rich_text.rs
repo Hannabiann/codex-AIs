@@ -7,6 +7,10 @@ pub use rtf_writer::rtf;
 
 #[derive(Clone, Debug)]
 pub enum Item {
+    Inline {
+        text: Box<Item>,
+        pictures: Vec<(usize, std::sync::Arc<Item>)>,
+    },
     Table {
         rows: Vec<Row>,
         children: Vec<Item>,
@@ -118,16 +122,30 @@ pub fn items(field: &Field) -> Result<Vec<Item>, String> {
 /// render hyperlinks, OLE data or the optional style dictionary after the runs.
 pub fn attribute_text_size(field: &Field) -> Result<usize, String> {
     let text = document::bytes(field)?;
-    if text.is_empty() || document::metadata(field).is_empty() { return Ok(text.len()); }
+    if text.is_empty() || document::metadata(field).is_empty() {
+        return Ok(text.len());
+    }
     let data = unpack(document::metadata(field))?;
-    let mut c = Cursor { bytes: &data, at: 0 };
+    let mut c = Cursor {
+        bytes: &data,
+        at: 0,
+    };
     let mut start = 0;
     let objects = read_items(&mut c, text.len(), &mut start, 0, &mut 10000, true)?;
-    if start != text.len() { return Err("text object lengths do not cover field".into()); }
-    Ok(objects.iter().map(|item| match item {
-        Item::Text { length, .. } => *length,
-        _ => 0,
-    }).sum())
+    if start != text.len() {
+        return Err("text object lengths do not cover field".into());
+    }
+    Ok(objects
+        .iter()
+        .map(|item| match item {
+            Item::Text { length, .. } => *length,
+            Item::Inline { text, .. } => match text.as_ref() {
+                Item::Text { length, .. } => *length,
+                _ => 0,
+            },
+            _ => 0,
+        })
+        .sum())
 }
 /// Text controls 0/1 delimit emphasis; literal markup remains escaped.
 fn read_items(
@@ -161,6 +179,7 @@ fn read_items(
                     return Err("rich text attribute limit".into());
                 }
                 let mut styles = Vec::new();
+                let mut embedded = Vec::new();
                 for _ in 0..attrs {
                     let attr = c.u16()?;
                     match attr & 255 {
@@ -172,6 +191,10 @@ fn read_items(
                             } else {
                                 0
                             });
+                        }
+                        8 => {
+                            embedded.push((styles.len(), c.u32()? as usize));
+                            styles.push(0);
                         }
                         5 if size_only => {
                             // Native link descriptor: DWORD + 32-byte target (006293d0).
@@ -190,13 +213,38 @@ fn read_items(
                 {
                     return Err("rich text range exceeds field".into());
                 }
-                out.push(Item::Text {
+                let item = Item::Text {
                     format,
                     start: *start,
                     length,
                     styles,
-                });
+                };
                 *start += length;
+                // Attribute 8 is followed by a counted object stream, even
+                // when the paragraph has no printable text (a picture anchor).
+                if embedded.is_empty() {
+                    out.push(item);
+                } else {
+                    let objects = read_items(c, text_len, start, depth + 1, budget, size_only)?;
+                    if objects.iter().any(|o| !matches!(o, Item::Picture { .. })) {
+                        return Err("embedded non-picture text object is not implemented".into());
+                    }
+                    let objects: Vec<_> = objects.into_iter().map(std::sync::Arc::new).collect();
+                    let pictures = embedded
+                        .into_iter()
+                        .map(|(run, index)| {
+                            objects
+                                .get(index)
+                                .cloned()
+                                .map(|p| (run, p))
+                                .ok_or_else(|| "embedded picture index outside stream".to_string())
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    out.push(Item::Inline {
+                        text: Box::new(item),
+                        pictures,
+                    });
+                }
             }
             2 => {
                 let width = c.u16()?;
@@ -264,7 +312,11 @@ fn read_items(
                     // Row format occupies the first WORD, followed by the
                     // signed left margin and the cell padding, in screen units.
                     let margin = i16::from_le_bytes([data[2], data[3]]);
-                    rows.push(Row { cells, padding, margin });
+                    rows.push(Row {
+                        cells,
+                        padding,
+                        margin,
+                    });
                 }
                 let children = read_items(c, text_len, start, depth + 1, budget, size_only)?;
                 if total != children.len() {
@@ -314,15 +366,25 @@ pub fn item_at(items: &[Item], index: usize) -> Option<&Item> {
                     return Some(found);
                 }
             }
+            if let Item::Inline { pictures, .. } = item {
+                for (_, picture) in pictures {
+                    if let Some(found) = walk(std::slice::from_ref(picture.as_ref()), index, at) {
+                        return Some(found);
+                    }
+                }
+            }
         }
         None
     }
     walk(items, index, &mut 0)
 }
 fn styled_fragment(text: &str, styles: &[u32]) -> String {
+    styled_fragment_images(text, styles, &[])
+}
+fn styled_fragment_images(text: &str, styles: &[u32], pictures: &[(usize, String)]) -> String {
     let mut result = String::new();
     let mut at = 0;
-    let mut next_style = styles.iter();
+    let mut next_style = styles.iter().enumerate();
     let mut stack: Vec<Vec<&str>> = Vec::new();
     for (offset, c) in text.char_indices() {
         if c != '\0' && c != '\x01' {
@@ -330,7 +392,15 @@ fn styled_fragment(text: &str, styles: &[u32]) -> String {
         }
         result.push_str(&fragment(&text[at..offset]));
         if c == '\0' {
-            let flags = next_style.next().copied().unwrap_or(1);
+            let (run, flags) = next_style
+                .next()
+                .map(|(i, f)| (i, *f))
+                .unwrap_or((usize::MAX, 1));
+            if let Some((_, image)) = pictures.iter().find(|(i, _)| *i == run) {
+                result.push_str(image);
+                at = offset + 1;
+                continue;
+            }
             let tags: Vec<_> = ["B", "I", "U", "STRIKE"]
                 .into_iter()
                 .enumerate()
@@ -367,6 +437,40 @@ pub fn html(field: &Field, mut picture_url: impl FnMut(usize) -> String) -> Resu
             let i = *index;
             *index += 1;
             match item {
+                Item::Inline { text, pictures } => {
+                    let Item::Text {
+                        format,
+                        start,
+                        length,
+                        styles,
+                    } = text.as_ref()
+                    else {
+                        return Err("invalid embedded paragraph".into());
+                    };
+                    let mut images = Vec::new();
+                    for (run, picture) in pictures {
+                        let Item::Picture { width, height, .. } = picture.as_ref() else {
+                            return Err("invalid embedded picture".into());
+                        };
+                        images.push((
+                            *run,
+                            format!(
+                                "<IMG border=\"0\" src=\"{}\" height={height} width={width}>",
+                                crate::monitor::escape(&picture_url(*index))
+                            ),
+                        ));
+                        *index += 1;
+                    }
+                    let align = ["left", "right", "center", "justify"][(format & 3) as usize];
+                    html.push_str(&format!(
+                        "<P align={align}>\r\n{}<BR>",
+                        styled_fragment_images(
+                            &crate::db::decode(&bytes[*start..start + length]),
+                            styles,
+                            &images
+                        )
+                    ));
+                }
                 Item::Text {
                     format,
                     start,

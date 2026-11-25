@@ -17,9 +17,21 @@ struct State {
 #[derive(Default)]
 struct Paragraph {
     bytes: Vec<u8>,
-    styles: Vec<u32>,
+    attributes: Vec<Attribute>,
+    pictures: Vec<Picture>,
     active: u32,
     align: u16,
+}
+enum Attribute {
+    Style(u32),
+    Picture(u32),
+}
+struct Picture {
+    width: u16,
+    height: u16,
+    flags: u16,
+    kind: u16,
+    data: Vec<u8>,
 }
 struct Part {
     meta: Vec<u8>,
@@ -29,7 +41,8 @@ struct Part {
 struct Row {
     widths: Vec<u16>,
     cells: Vec<Vec<Part>>,
-    left: i16,
+    // Keep the source offset in twips until column boundaries are converted.
+    left: i32,
     gap: u16,
 }
 fn word(b: &mut Vec<u8>, n: u16) {
@@ -49,7 +62,7 @@ impl Paragraph {
             }
             if state.flags != 0 {
                 self.bytes.push(0);
-                self.styles.push(state.flags);
+                self.attributes.push(Attribute::Style(state.flags));
             }
             self.active = state.flags;
         }
@@ -65,6 +78,20 @@ impl Paragraph {
             self.bytes.extend_from_slice(bytes);
         }
     }
+    fn put_picture(&mut self, mut picture: Picture, state: &State) {
+        // Images consume their own text marker, outside any active style run.
+        // The next text run reopens the surrounding RTF style if necessary.
+        if self.active != 0 {
+            self.bytes.push(1);
+            self.active = 0;
+        }
+        self.align = state.align;
+        picture.flags = state.align;
+        self.bytes.push(0);
+        self.attributes
+            .push(Attribute::Picture(self.pictures.len() as u32));
+        self.pictures.push(picture);
+    }
     fn finish(&mut self) -> Part {
         let mut p = std::mem::take(self);
         if p.active != 0 {
@@ -74,11 +101,31 @@ impl Paragraph {
         word(&mut m, 1);
         word(&mut m, p.align);
         long(&mut m, p.bytes.len() as u32);
-        word(&mut m, p.styles.len() as u16);
-        for flags in p.styles {
-            word(&mut m, 9);
-            word(&mut m, 0x40);
-            long(&mut m, flags);
+        word(&mut m, p.attributes.len() as u16);
+        for attribute in p.attributes {
+            match attribute {
+                Attribute::Style(flags) => {
+                    word(&mut m, 9);
+                    word(&mut m, 0x40);
+                    long(&mut m, flags);
+                }
+                Attribute::Picture(index) => {
+                    word(&mut m, 8);
+                    long(&mut m, index);
+                }
+            }
+        }
+        if !p.pictures.is_empty() {
+            word(&mut m, p.pictures.len() as u16);
+            for picture in p.pictures {
+                word(&mut m, 2);
+                word(&mut m, picture.width);
+                word(&mut m, picture.height);
+                word(&mut m, picture.flags);
+                word(&mut m, picture.kind);
+                long(&mut m, picture.data.len() as u32);
+                m.extend(picture.data);
+            }
         }
         Part {
             meta: m,
@@ -102,7 +149,12 @@ fn table(row: Row) -> Result<Part, String> {
     }
     long(&mut meta, 6);
     word(&mut meta, 17);
-    word(&mut meta, row.left as u16);
+    // Native RTF import clips the displayed margin at zero. A negative margin
+    // in DB4 causes the original RTF writer to fail when opening the table.
+    word(
+        &mut meta,
+        i16::try_from((row.left / 15).max(0)).map_err(|_| "RTF row margin")? as u16,
+    );
     word(&mut meta, row.gap);
     let count: usize = row.cells.iter().map(Vec::len).sum();
     if count > 10000 {
@@ -125,10 +177,14 @@ fn flush(p: &mut Paragraph, parts: &mut Vec<Part>, cell: &mut Vec<Part>, row: bo
         }
     }
 }
-fn picture(input: &[u8], i: &mut usize) -> Result<(), String> {
+fn picture(input: &[u8], i: &mut usize) -> Result<Option<Picture>, String> {
     let mut data = Vec::new();
     let mut hex = None;
     let mut depth = 0usize;
+    let mut wmf = false;
+    let mut bitmap = false;
+    let mut goal = [2880i32; 2];
+    let mut scale = [100i32; 2];
     while *i < input.len() {
         let b = input[*i];
         if b == b'}' && depth == 0 {
@@ -137,6 +193,9 @@ fn picture(input: &[u8], i: &mut usize) -> Result<(), String> {
         *i += 1;
         if b == b'{' {
             depth += 1;
+            if depth > 512 {
+                return Err("RTF picture nesting limit".into());
+            }
             continue;
         }
         if b == b'}' {
@@ -176,10 +235,24 @@ fn picture(input: &[u8], i: &mut usize) -> Result<(), String> {
                     .filter(|e| *e <= input.len())
                     .ok_or("Truncated picture")?;
                 if depth == 0 {
+                    if hex.is_some() || end - *i > 16 * 1024 * 1024 - data.len() {
+                        return Err("RTF picture binary size or alignment".into());
+                    }
                     data.extend_from_slice(&input[*i..end]);
                 }
                 *i = end;
                 continue;
+            }
+            if depth == 0 {
+                match ctl {
+                    "wmetafile" => wmf = true,
+                    "picbmp" => bitmap = true,
+                    "picwgoal" => goal[0] = n,
+                    "pichgoal" => goal[1] = n,
+                    "picscalex" => scale[0] = n,
+                    "picscaley" => scale[1] = n,
+                    _ => {}
+                }
             }
         } else if depth == 0 && !b.is_ascii_whitespace() {
             let v = (b as char).to_digit(16).ok_or("Invalid RTF picture hex")? as u8;
@@ -196,9 +269,25 @@ fn picture(input: &[u8], i: &mut usize) -> Result<(), String> {
     if *i == input.len() || hex.is_some() || data.is_empty() {
         return Err("Incomplete RTF picture".into());
     }
-    // Native FromStream("RTF") omits pictures in this text representation.
-    // The original image remains intact in the separate Word/RTF attachment.
-    Ok(())
+    // Native FromStream uses the WMF fallback, including its picbmp extension.
+    // Direct PNG/JPEG/DIB remain in the separate, unchanged RTF attachment.
+    if !wmf {
+        return Ok(None);
+    }
+    let dimension = |axis: usize| -> Result<u16, String> {
+        if goal[axis] < 0 || scale[axis] < 0 {
+            return Err("Invalid RTF picture dimensions".into());
+        }
+        u16::try_from(i64::from(goal[axis]) * i64::from(scale[axis]) / 1500)
+            .map_err(|_| "RTF picture dimensions overflow".into())
+    };
+    Ok(Some(Picture {
+        width: dimension(0)?,
+        height: dimension(1)?,
+        flags: 0,
+        kind: u16::from(bitmap),
+        data,
+    }))
 }
 pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
     if !crate::document::has_rtf_header(input) {
@@ -324,7 +413,7 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
                     }
                     continue;
                 }
-                if state.star && !matches!(control, "fldrslt" | "shppict" | "nesttableprops") {
+                if state.star && !matches!(control, "fldrslt" | "nesttableprops") {
                     state.skip = true;
                 }
                 state.star = false;
@@ -367,7 +456,7 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
                         | "themedata"
                         | "colorschememapping"
                         | "fldinst"
-                        | "nonshppict"
+                        | "shppict"
                         | "nonesttables"
                 ) {
                     state.skip = true;
@@ -491,7 +580,7 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
                     }
                     "trleft" => {
                         if let Some(r) = &mut row {
-                            r.left = (v / 15).try_into().map_err(|_| "RTF row margin")?;
+                            r.left = v;
                         }
                     }
                     "trgaph" => {
@@ -503,8 +592,8 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
                         let r = row
                             .as_mut()
                             .ok_or_else(|| format!("RTF cell properties outside row at {i}"))?;
-                        let end = v / 15;
-                        let old = r.left as i32 + r.widths.iter().map(|v| *v as i32).sum::<i32>();
+                        let end = (i64::from(v) - i64::from(r.left)) / 15;
+                        let old = r.widths.iter().map(|v| i64::from(*v)).sum::<i64>();
                         r.widths
                             .push((end - old).try_into().map_err(|_| "RTF cell width")?);
                     }
@@ -537,7 +626,14 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
                             parts.push(part);
                         }
                     }
-                    "pict" => picture(input, &mut i)?,
+                    "pict" => {
+                        if let Some(picture) = picture(input, &mut i)? {
+                            if p.align != state.align {
+                                flush(&mut p, &mut parts, &mut cell, row.is_some(), false);
+                            }
+                            p.put_picture(picture, &state);
+                        }
+                    }
                     "object" => return Err(format!("Unsupported RTF object: {control}")),
                     _ => {}
                 }
@@ -561,7 +657,7 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
                 .as_ref()
                 .is_some_and(|r| r.cells.len() > 1000 || r.widths.len() > 1000)
             || p.bytes.len() > 16 * 1024 * 1024
-            || p.styles.len() > 4096
+            || p.attributes.len() > 4096
         {
             return Err("RTF object limit".into());
         }

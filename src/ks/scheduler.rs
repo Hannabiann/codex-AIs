@@ -4,7 +4,7 @@ struct Daily {
     minute: u16,
     last_day: i64,
 }
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Scheduler {
     daily: BTreeMap<String, Daily>,
     once: Vec<(u64, String)>,

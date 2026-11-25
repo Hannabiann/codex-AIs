@@ -15,6 +15,7 @@ pub(super) fn item(item: &crate::rich_text::Item, bytes: &[u8]) -> Result<Value,
     use crate::rich_text::Item;
     let mut map = HashMap::new();
     match item {
+        Item::Inline { text, .. } => return self::item(text, bytes),
         Item::Text {
             format,
             start,
@@ -124,7 +125,8 @@ pub(super) fn item(item: &crate::rich_text::Item, bytes: &[u8]) -> Result<Value,
                         .insert("\0enumerate_numeric".into(), Value::Bool(true));
                     a.borrow_mut()
                         .insert("Gap".into(), Value::Number(row.padding as f64));
-                    a.borrow_mut().insert("Margin".into(), Value::Number(row.margin as f64));
+                    a.borrow_mut()
+                        .insert("Margin".into(), Value::Number(row.margin as f64));
                 }
                 out.push(value);
             }

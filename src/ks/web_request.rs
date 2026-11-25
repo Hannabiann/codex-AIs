@@ -32,7 +32,8 @@ fn array(values: impl IntoIterator<Item = Value>) -> Value {
 }
 impl Runtime<'_> {
     pub(super) fn get_find_objects(&mut self, values: &[Value]) -> Result<Value, Fault> {
-        if !values.is_empty() {
+        if values.len()>3 || values.iter().take(2).any(|v|!matches!(v,Value::Null))
+            || values.get(2).is_some_and(|v|!matches!(v,Value::Null|Value::Bool(_))) {
             return Err("GetFindObjects optional arguments not implemented".into());
         }
         let Value::Application(app) = self.get("Application")? else {
@@ -70,6 +71,36 @@ impl Runtime<'_> {
             }
         }
         Ok(pool)
+    }
+    pub(super) fn find_attrs(&mut self, values:&[Value])->Result<Value,Fault>{
+        let [Value::Array(selected)]=values else{return Err("FindAttrs expects an array of search branches".into());};
+        let Value::Application(app)=self.get("Application")? else{return Err("Application missing".into());};
+        let pool=app.borrow().get("\0find_objects").cloned().ok_or("Search branches missing")?;
+        let count=selected.borrow().get("length").ok_or("Array length missing")?.number()? as usize;
+        let mut attrs=Vec::new();let mut area=None;let mut seen=std::collections::HashSet::new();
+        for i in 0..count {
+            let index=selected.borrow().get(&i.to_string()).cloned().unwrap_or(Value::Null).text();
+            let branch=self.member(pool.clone(),index)?;
+            let a=self.member(branch.clone(),"Area".into())?.number()? as u16;
+            area=Some(if area.is_none_or(|old|old==a){a}else{u16::MAX});
+            let fields=self.member(branch,"Fields".into())?;
+            if let Value::Array(fields)=fields {
+                let count=fields.borrow().get("length").ok_or("Array length missing")?.number()? as usize;
+                for i in 0..count {
+                    let item=fields.borrow().get(&i.to_string()).ok_or("Find attribute missing")?.text();
+                    let (number,name)=item.split_once(';').unwrap_or((&item,""));
+                    let attr=number.trim().parse::<u16>().map_err(|_|"Invalid find attribute")?;
+                    if seen.insert((a,attr)){attrs.push(object(HashMap::from([("Name".into(),Value::String(name.trim().into())),("Attr".into(),Value::Number(attr as f64)),("Area".into(),Value::Number(a as f64))])));}
+                }
+            }
+        }
+        let result=array(attrs);
+        if let Value::Array(m)=&result {
+            let mut m=m.borrow_mut();m.insert("\0enumerate_numeric".into(),Value::Bool(true));
+            m.insert("Area".into(),Value::Number(area.unwrap_or(u16::MAX) as f64));
+            m.insert("GetLinks".into(),Value::Native("findAttrs.GetLinks".into()));
+        }
+        Ok(result)
     }
     pub(super) fn add_find_object(&mut self, values: Vec<Value>) -> Result<Value, Fault> {
         if !(6..=7).contains(&values.len()) {
@@ -289,12 +320,14 @@ impl Runtime<'_> {
         scheduled: bool,
     ) -> Result<(), String> {
         self.end_request();
+        self.refresh_system_settings()?;
         self.scheduled_request = scheduled;
         let (path, query) = request
             .target
             .split_once('?')
             .unwrap_or((&request.target, ""));
         let command = query.split('&').next().unwrap_or("");
+        let command = command.strip_suffix('=').unwrap_or(command);
         let mut participant_mode = String::new();
         for (key, value) in query.split('&').filter_map(|p| p.split_once('=')) {
             if crate::server::percent_decode(key)?.eq_ignore_ascii_case("mode") {
@@ -436,9 +469,15 @@ impl Runtime<'_> {
             .target
             .split_once('?')
             .unwrap_or((&request.target, ""));
-        for pair in query.split('&') {
-            if let Some((key, value)) = pair.split_once('=') {
-                let key = crate::server::percent_decode(key)?;
+        let query_fields = if command.eq_ignore_ascii_case("find") {
+            crate::http_form::decode_for(&request.target, "application/x-www-form-urlencoded", query.as_bytes())?
+        } else {
+            query.split('&').filter_map(|p| p.split_once('=')).map(|(k,v)|
+                Ok((crate::server::percent_decode(k)?,crate::server::percent_decode(&v.replace('+'," "))?))
+            ).collect::<Result<Vec<_>,String>>()?
+        };
+        for (key, value) in query_fields {
+            {
                 self.check_request_key(&key)?;
                 // Parameters cannot replace the execution database or directory metadata.
                 if matches!(
@@ -449,7 +488,7 @@ impl Runtime<'_> {
                 }
                 dir.borrow_mut().insert(
                     key.clone(),
-                    Value::String(crate::server::percent_decode(&value.replace('+', " "))?),
+                    Value::String(value),
                 );
                 self.scopes[0]
                     .borrow_mut()
@@ -658,6 +697,7 @@ impl Runtime<'_> {
         Ok(())
     }
     pub fn end_request(&mut self) {
+        self.abort_system_settings();
         // Fatal cancellation bypasses KS finally; do not strand a named lock.
         self.mutex_handles.retain(|handle| {
             if let Some(handle) = handle.upgrade() {

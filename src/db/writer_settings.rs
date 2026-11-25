@@ -2,6 +2,7 @@
 use super::*;
 use crate::db::{mainkey::MainKey, registry::Entry};
 use std::sync::Arc;
+use std::collections::BTreeSet;
 
 fn find(index: &mut MainKey, parent: u32, name: &str) -> Result<Option<Record>, String> {
     let key = text_key(name.as_bytes());
@@ -147,7 +148,7 @@ pub(crate) fn save(path: &Path, parent: u32, updates: &[Update]) -> Result<(), S
         return Ok(());
     }
     let candidate = if u16at(&old, 5) == 0x612 {
-        legacy(&mut index, &old, &changes, &deletions)?
+        legacy(&mut index, &old, &changes, &deletions, &BTreeSet::new())?
     } else {
         index_delta::candidate_from_image(path, &changes, &deletions, old.clone())?
     };
@@ -164,20 +165,27 @@ pub(crate) fn save(path: &Path, parent: u32, updates: &[Update]) -> Result<(), S
     }
     publish_checked(path, old, candidate, started)
 }
-fn legacy(
+pub(super) fn legacy(
     index: &mut MainKey,
     old: &[u8],
     changes: &[Record],
     deletions: &[(u32, bool)],
+    unindexed_titles: &BTreeSet<u32>,
 ) -> Result<Vec<u8>, String> {
     let (header, mut directory) = index.writer_parts();
     let mut image = Image::for_version(old.to_vec(), 0x612)?;
+    if let Some(d)=directory.chunks_exact_mut(10).find(|d|u16at(d,6)==65535 && u16at(d,8)==2) {
+        let old_root=u32at(d,2);
+        let root=index_delta::registry_words(index,&mut image,old_root,changes,deletions,unindexed_titles)?;
+        if root!=old_root {let generation=u16at(d,0).wrapping_add(1);d[..2].copy_from_slice(&generation.to_le_bytes());d[2..6].copy_from_slice(&root.to_le_bytes());}
+    }
     let mut main = index.writer_tree(65535, 0, Some(10))?;
     let mut indexes = Vec::new();
-    for attr in [1, 3, 4, 5] {
+    for (area, attr) in [(620,1),(620,3),(621,1),(621,3),(621,4),(621,5)] {
         indexes.push((
+            area,
             attr,
-            index.writer_tree(621, attr, if attr == 3 { Some(8) } else { None })?,
+            index.writer_tree(area, attr, if attr == 3 { Some(8) } else { None })?,
         ));
     }
     for oid in changes
@@ -190,6 +198,7 @@ fn legacy(
             let previous = index.record(entry)?;
             let replacement = changes.iter().find(|r| r.integer(1024) == Some(oid));
             for f in previous.fields.iter() {
+                if f.id==1 {continue;} // Updated in the title index above.
                 // Unchanged name/type fields keep their existing postings.
                 // Only removal or replacement of a string requires this check.
                 if replacement.is_some_and(|r| {
@@ -200,6 +209,9 @@ fn legacy(
                     continue;
                 }
                 if let Value::String(s) = &f.value {
+                    // Registry value/type fields have exact indexes, but are
+                    // not full-text fields. Names retain their title postings.
+                    if matches!(f.id,4|5) {continue;}
                     // Numeric values may be empty or a list of identifiers.
                     // Separators are not part of full-text number tokens.
                     let words = if f.id == 4
@@ -227,7 +239,7 @@ fn legacy(
             image.release_frame(entry.block, b'C')?;
         }
         main.items.retain(|k| u32at(k, 0) != oid);
-        for (attr, tree) in &mut indexes {
+        for (_, attr, tree) in &mut indexes {
             tree.items
                 .retain(|k| u32at(k, if *attr == 3 { 4 } else { 0 }) != oid);
         }
@@ -239,7 +251,8 @@ fn legacy(
         key.extend(block.to_le_bytes());
         key.extend(crc.to_le_bytes());
         main.items.push(key);
-        for (attr, tree) in &mut indexes {
+        for (area, attr, tree) in &mut indexes {
+            if r.area != *area {continue;}
             if *attr == 3 {
                 tree.items.retain(|k| u32at(k, 4) != oid);
                 let mut key = r
@@ -251,9 +264,12 @@ fn legacy(
                 tree.items.push(key);
             } else {
                 tree.items.retain(|k| u32at(k, 0) != oid);
-                let mut key = oid.to_le_bytes().to_vec();
-                key.extend(text_key(r.string(*attr).ok_or("setting attribute absent")?));
-                tree.items.push(key);
+                for f in r.fields.iter().filter(|f|f.id==*attr) {
+                    let Value::String(s)=&f.value else {return Err("registry index field type".into())};
+                    let mut key = oid.to_le_bytes().to_vec();
+                    key.extend(text_key(s));
+                    tree.items.push(key);
+                }
             }
         }
     }
@@ -292,13 +308,13 @@ fn legacy(
     }
     presence.resize((presence.len() + 7).div_ceil(128) * 128 - 7, 0);
     let mut trees = vec![(65535, 0, main, false)];
-    for (attr, mut tree) in indexes {
+    for (area, attr, mut tree) in indexes {
         if attr == 3 {
             tree.items.sort_by_key(|k| (u32at(k, 0), u32at(k, 4)));
         } else {
             tree.items = sort_field_items(2, tree.items)?.0;
         }
-        trees.push((621, attr, tree, attr != 3));
+        trees.push((area, attr, tree, attr != 3));
     }
     for (area, attr, tree, variable) in trees {
         for block in tree.blocks {

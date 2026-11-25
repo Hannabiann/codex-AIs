@@ -8,6 +8,15 @@ pub enum Handle {
     Rows(Rc<RefCell<Rows>>),
 }
 impl Handle {
+    pub(crate) fn bound_list(&self) -> Option<BoundList> {
+        match self {Self::Statement(s)=>s.borrow().bound_list.clone(),_=>None}
+    }
+    pub(crate) fn list_snapshot(&self) -> Result<(u32,u16,Vec<u32>),String> {
+        let Self::Rows(r)=self else{return Err("Expected SQL result list".into());};
+        let r=r.borrow();if r.closed||r.connection.borrow().closed{return Err("SQL result closed".into());}
+        let scope = r.connection.borrow().scope;
+        Ok((scope,r.area.unwrap_or(0),r.oids.clone()))
+    }
     pub(crate) fn database_scope(&self) -> Option<u32> {
         match self {
             Self::Manager => None,
@@ -28,7 +37,10 @@ pub struct Statement {
     sql: String,
     closed: bool,
     result: Option<Rc<RefCell<Rows>>>,
+    bound_list: Option<BoundList>,
 }
+#[derive(Clone,Debug)]
+pub struct BoundList { pub scope:u32, pub area:u16, pub ids:std::sync::Arc<Vec<u32>> }
 #[derive(Debug)]
 pub struct Rows {
     pub area: Option<u16>,
@@ -58,6 +70,7 @@ impl Rows {
     }
 }
 pub enum Arg {
+    List(BoundList),
     Null,
     Database(u32),
     String(String),
@@ -300,7 +313,12 @@ impl Handle {
                     return Err("SQL connection closed".into());
                 }
                 if method == "prepareStatement" {
-                    if let [Arg::String(sql)] = args {
+                    if let [Arg::String(sql), rest @ ..] = args {
+                        let bound_list=match rest {
+                            []|[Arg::Null]=>None,
+                            [Arg::List(list)] if list.scope==c.borrow().scope=>Some(list.clone()),
+                            _=>return Err("SQL list belongs to a different database or has invalid arguments".into()),
+                        };
                         script_query(sql)?;
                         return Ok(V::Handle(Self::Statement(Rc::new(RefCell::new(
                             Statement {
@@ -308,6 +326,7 @@ impl Handle {
                                 sql: sql.clone(),
                                 closed: false,
                                 result: None,
+                                bound_list,
                             },
                         )))));
                     }
@@ -361,7 +380,7 @@ impl Handle {
                         }));
                         s.result = Some(r.clone());
                         Ok(if method == "execute" {
-                            V::Bool(true)
+                            V::Bool(!r.borrow().oids.is_empty())
                         } else {
                             V::Handle(Self::Rows(r))
                         })

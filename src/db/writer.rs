@@ -9,6 +9,8 @@ pub(crate) mod counters;
 pub(crate) mod kod;
 #[path = "writer_settings.rs"]
 pub(crate) mod settings;
+#[path = "writer_registry.rs"]
+pub(crate) mod registry;
 #[path = "writer_user_index.rs"]
 mod user_index;
 

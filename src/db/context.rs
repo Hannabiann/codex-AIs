@@ -1005,6 +1005,24 @@ impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
         self.refresh_writes();
         self.query_select(scope, &crate::ks::sql::parse(sql)?)
     }
+    fn select_list(&self,sql:&str,list:&crate::ks::host::BoundList)->Result<crate::ks::host::QueryData,String>{
+        use crate::ks::sql::Predicate;
+        self.refresh_writes();
+        let mut q=crate::ks::sql::parse(sql)?;
+        if !q.area.eq_ignore_ascii_case("KODEKS_DOCLIST"){return Err("A bound List requires KODEKS_DOCLIST".into());}
+        let schema=self.shared_schema(list.scope)?;
+        let area=schema.areas.get(&list.area).ok_or("Bound list area missing")?;
+        q.area=area.name.clone();
+        let mut ids=(*list.ids).clone();ids.sort_unstable();ids.dedup();
+        q.predicate=Predicate::And(Box::new(Predicate::Set{field:"OID".into(),ids:std::sync::Arc::new(ids)}),Box::new(q.predicate));
+        let fields=q.fields(area)?;
+        let oids=self.query_select_mode(list.scope,&q,true)?;
+        let mut cells=Vec::with_capacity(oids.len());
+        for oid in &oids {crate::execution::check()?;cells.push(self.project_row(list.scope,*oid,area.id,&fields)?);}
+        let key=(list.scope,format!("{q:?}"));
+        let fulltext=self.fulltext.borrow().get(&key).cloned().unwrap_or_default();
+        Ok(crate::ks::host::QueryData{area:Some(area.id),oids,cells,fulltext})
+    }
     fn distribution_judges(&self, scope: u32, sql: &str) -> Result<Vec<u32>, String> {
         self.refresh_writes();
         let q = crate::ks::sql::parse(sql)?;
@@ -1154,13 +1172,16 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
         Ok(live)
     }
     fn query_select(&self, scope: u32, q: &crate::ks::sql::Select) -> Result<Vec<u32>, String> {
+        self.query_select_mode(scope, q, false)
+    }
+    fn query_select_mode(&self, scope: u32, q: &crate::ks::sql::Select, bound_list: bool) -> Result<Vec<u32>, String> {
         self.refresh_writes();
-        let key = (scope, format!("{q:?}"));
+        let key = (scope, if bound_list {format!("list:{q:?}")} else {format!("{q:?}")});
         if let Some(ids) = self.queries.borrow().get(&key) {
             return Ok(ids.clone());
         }
         let started = std::time::Instant::now();
-        let result = self.query_select_uncached(scope, q);
+        let result = self.query_select_uncached(scope, q, bound_list);
         if started.elapsed().as_millis() >= 500
             && std::env::var_os("KODEKS_PROFILE").is_some_and(|v| v == "1")
         {
@@ -1186,6 +1207,7 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
         &self,
         scope: u32,
         q: &crate::ks::sql::Select,
+        bound_list: bool,
     ) -> Result<Vec<u32>, String> {
         let _measure = Measure::new(&self.timings.query);
         if ["KODEKS_TRACE_SQL", "KODEKS_TRACE_SQL_REQUEST"]
@@ -1346,7 +1368,7 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
             .order
             .first()
             .filter(|(name, _)| {
-                !q.predicate.has_context()
+                !bound_list && !q.predicate.has_context()
                     && q.order.len() == 1
                     && area
                         .fields
@@ -1472,13 +1494,14 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
         enum Key {
             Number(u32),
             Numeric(u64),
+            ListNumeric(Vec<u8>),
             Text(Vec<u8>),
             Date(i16, u8, u8),
             Stamp([u8; 8]),
             Decimal(Vec<u8>),
             Missing,
         }
-        let key = |id: u32, r: &Record, attr: Option<u16>| {
+        let key = |id: u32, value: Option<&super::fields::Value>, attr: Option<u16>| {
             let Some(attr) = attr else {
                 return Key::Number(id);
             };
@@ -1486,7 +1509,7 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
                 return Key::Number(fulltext.ranks.get(&id).copied().unwrap_or(0));
             }
             use super::fields::Value as F;
-            match r.fields.iter().find(|f| f.id == attr).map(|f| &f.value) {
+            match value {
                 Some(F::Integer(n)) => {
                     if order.first().is_some_and(|(first, _)| *first == Some(attr)) {
                         if let Some(indexed) = link_sort_keys.get(&id) {
@@ -1506,6 +1529,7 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
                     // Native text sort uses case-folded CP1251 byte order (including Ё).
                     let lower = super::decode(v).to_lowercase();
                     if area.fields.get(&attr).is_some_and(|f| f.kind == 3) {
+                        if bound_list {return Key::ListNumeric(crate::ks::sql::list_number_key(&lower));}
                         if let Some(key) = crate::ks::sql::numeric_sort_key(&lower) {
                             return Key::Numeric(key);
                         }
@@ -1518,10 +1542,28 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
                 _ => Key::Missing,
             }
         };
-        live.sort_by(|(ai, a), (bi, b)| {
-            for (attr, desc) in &order {
-                let ak = key(*ai, a, *attr);
-                let bk = key(*bi, b, *attr);
+        // KODEKS_DOCLIST retains a row for each distinct leading sort value.
+        // The same document can therefore occupy two positions in the native
+        // result. Keep positions intact for its toolbar and page counters.
+        let mut sorted = Vec::new();
+        for (id, r) in live {
+            crate::execution::check()?;
+            let keys: Vec<_> = order.iter().map(|(attr, _)| {
+                key(id, attr.and_then(|attr| r.fields.iter().find(|f| f.id == attr)).map(|f| &f.value), *attr)
+            }).collect();
+            let mut variants = std::collections::BTreeSet::new();
+            if bound_list {
+                if let Some((Some(attr), _)) = order.first() {
+                    for f in r.fields.iter().filter(|f| f.id == *attr) {
+                        variants.insert(key(id, Some(&f.value), Some(*attr)));
+                    }
+                }
+            }
+            if variants.is_empty() {sorted.push((id, keys));}
+            else {for value in variants {let mut k=keys.clone();k[0]=value;sorted.push((id,k));}}
+        }
+        sorted.sort_by(|(_, a), (_, b)| {
+            for ((_, desc), (ak, bk)) in order.iter().zip(a.iter().zip(b)) {
                 // Native ORDER BY leaves absent fields at the end in both
                 // directions (the unsigned-document register uses DESC).
                 if matches!(ak, Key::Missing) != matches!(bk, Key::Missing) {
@@ -1531,7 +1573,7 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
                         std::cmp::Ordering::Less
                     };
                 }
-                let c = match (&ak, &bk) {
+                let c = match (ak, bk) {
                     (Key::Decimal(a), Key::Decimal(b)) => super::writer::decimal_cmp(a, b),
                     _ => ak.cmp(&bk),
                 };
@@ -1541,7 +1583,11 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
             }
             std::cmp::Ordering::Equal
         });
-        let ids: Vec<_> = live.into_iter().map(|(id, _)| id).collect();
+        let mut ids: Vec<_> = sorted.into_iter().map(|(id, _)| id).collect();
+        // The native cursor suppresses consecutive occurrences of the same
+        // object, including occurrences under different sort keys. Repeats
+        // separated by another object must retain their navigation positions.
+        if bound_list {ids.dedup();}
         if std::env::var_os("KODEKS_PROFILE").is_some_and(|v| v == "1")
             && _measure.start.elapsed().as_millis() > 100
         {

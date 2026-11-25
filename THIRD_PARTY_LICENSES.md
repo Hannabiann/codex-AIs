@@ -16,6 +16,7 @@
 | encoding_rs | 0.8.35 | (Apache-2.0 OR MIT) AND BSD-3-Clause | [Тексты](docs/licenses/encoding_rs-0.8.35/) |
 | find-msvc-tools | 0.1.15 | MIT OR Apache-2.0 | [Тексты](docs/licenses/find-msvc-tools-0.1.15/) |
 | flate2 | 1.0.35 | MIT OR Apache-2.0 | [Тексты](docs/licenses/flate2-1.0.35/) |
+| gif | 0.14.2 | MIT OR Apache-2.0 | [Тексты](docs/licenses/gif-0.14.2/) |
 | gimli | 0.34.0 | MIT OR Apache-2.0 | [Тексты](docs/licenses/gimli-0.34.0/) |
 | libc | 0.2.191 | MIT OR Apache-2.0 | [Тексты](docs/licenses/libc-0.2.191/) |
 | memchr | 2.8.3 | Unlicense OR MIT | [Тексты](docs/licenses/memchr-2.8.3/) |
@@ -40,6 +41,7 @@
 | tokio-macros | 2.5.0 | MIT | [Тексты](docs/licenses/tokio-macros-2.5.0/) |
 | unicode-ident | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 | [Тексты](docs/licenses/unicode-ident-1.0.27/) |
 | wasi | 0.11.1+wasi-snapshot-preview1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | [Тексты](docs/licenses/wasi-0.11.1+wasi-snapshot-preview1/) |
+| weezl | 0.1.12 | MIT OR Apache-2.0 | [Тексты](docs/licenses/weezl-0.1.12/) |
 | windows-link | 0.2.1 | MIT OR Apache-2.0 | [Тексты](docs/licenses/windows-link-0.2.1/) |
 | windows-sys | 0.52.0 | MIT OR Apache-2.0 | [Тексты](docs/licenses/windows-sys-0.52.0/) |
 | windows-sys | 0.61.2 | MIT OR Apache-2.0 | [Тексты](docs/licenses/windows-sys-0.61.2/) |

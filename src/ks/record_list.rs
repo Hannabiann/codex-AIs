@@ -1,7 +1,7 @@
 //! Read-only native List, backed by the same bounded database query path as SQL.
 use super::{Fault, Runtime, Value};
 use std::{
-    cell::{Ref, RefCell, RefMut},
+    cell::{Cell, Ref, RefCell, RefMut},
     collections::HashSet,
 };
 
@@ -11,12 +11,14 @@ use std::{
 pub(super) struct ListIds {
     values: RefCell<Option<Vec<u32>>>,
     members: RefCell<Option<HashSet<u32>>>,
+    pub reverse: Cell<bool>,
 }
 impl ListIds {
     pub(super) fn new(values: Option<Vec<u32>>) -> Self {
         Self {
             values: RefCell::new(values),
             members: RefCell::new(None),
+            reverse: Cell::new(false),
         }
     }
     pub(super) fn borrow(&self) -> Ref<'_, Option<Vec<u32>>> {
@@ -89,9 +91,10 @@ impl Runtime<'_> {
     }
     pub(super) fn list_item(&self, list: &RecordList, index: usize) -> Result<Option<u32>, Fault> {
         if let Some(ids) = list.ids.borrow().as_ref() {
-            return Ok(ids.get(index).copied());
+            return Ok(if list.ids.reverse.get() { ids.len().checked_sub(index.saturating_add(1)).and_then(|i|ids.get(i)) } else {ids.get(index)}.copied());
         }
-        Ok(self.list_ids(list)?.get(index).copied())
+        let ids = self.list_ids(list)?;
+        Ok(if list.ids.reverse.get() { ids.len().checked_sub(index.saturating_add(1)).and_then(|i|ids.get(i)) } else {ids.get(index)}.copied())
     }
     pub(super) fn list_area(&self, value: &Value, scope: u32) -> Result<u16, Fault> {
         let area = match value {
@@ -124,6 +127,22 @@ impl Runtime<'_> {
             Ok(n as u16)
         }
         match key {
+            "isReverse" => {
+                let reverse=value.truth();
+                if reverse != list.ids.reverse.get() {
+                    // Native reverses sort direction while keeping equal-key
+                    // records stable. Indexing below reverses traversal, so
+                    // reverse ties here before reapplying the stable sort.
+                    if let Some(order)=&list.order {
+                        if !order.is_empty() && order.iter().all(|a| *a!=0 && *a!=u16::MAX) {
+                            let mut ids=self.list_ids(list)?;ids.reverse();
+                            for attr in order.iter().rev() {ids=self.ordered_ids(ids,list.scope,*attr)?;}
+                            *list.ids.borrow_mut()=Some(ids);
+                        }
+                    }
+                    list.ids.reverse.set(reverse);
+                }
+            }
             "Area" => {
                 list.area = self.list_area(&value, list.scope)?;
                 *list.ids.borrow_mut() = None;
@@ -166,7 +185,7 @@ impl Runtime<'_> {
         *list.ids.borrow_mut() = Some(ids);
         Ok(())
     }
-    fn ordered_ids(&self, ids: Vec<u32>, scope: u32, attr: u16) -> Result<Vec<u32>, Fault> {
+    pub(super) fn ordered_ids(&self, ids: Vec<u32>, scope: u32, attr: u16) -> Result<Vec<u32>, Fault> {
         let mut keyed = Vec::new();
         for id in ids {
             let r = self.read_document(id, scope)?;

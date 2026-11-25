@@ -14,7 +14,7 @@ fn punctuation(b: u8) -> bool {
         || b == 16
         || (127..=191).contains(&b) && b != 185
 }
-fn words(bytes: &[u8]) -> BTreeSet<Vec<u8>> {
+pub(super) fn words(bytes: &[u8]) -> BTreeSet<Vec<u8>> {
     let mut out = BTreeSet::new();
     let cleaned = bytes
         .iter()
@@ -103,7 +103,7 @@ fn number(out: &mut Vec<u8>, mut n: u32) {
     }
     out.extend_from_slice(&buf[at..]);
 }
-fn encode(word: &[u8], postings: &[(u32, u32)]) -> Vec<u8> {
+pub(super) fn encode(word: &[u8], postings: &[(u32, u32)]) -> Vec<u8> {
     let uniform = postings.iter().all(|(_, weight)| *weight == 255);
     let mut out = vec![word.len() as u8 | if uniform { 128 } else { 0 }];
     out.extend(word);
