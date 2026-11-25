@@ -377,8 +377,8 @@ impl Db4Engine {
     }
     // A residual scan already has its complete candidate list. Resolve a batch
     // through MainKey once, rather than repeating the root-to-leaf lookup and
-    // file metadata check for every document. Bodies still use the strict full
-    // decoder; missing keys and tombstones have the same read_oid semantics.
+    // file metadata check for every document. Scalar predicates need no body;
+    // stream predicates and noncanonical records retain the full decoder.
     fn residual_matches(
         &self,
         v: usize,
@@ -389,7 +389,7 @@ impl Db4Engine {
         candidates.sort_unstable();
         candidates.dedup();
         if let P::Text {
-            attribute, pattern, ..
+            attribute, pattern, kind: 2 | 3, ..
         } = predicate
         {
             if area.fields.get(attribute).is_some_and(|f| f.flags & 1 == 0) {
@@ -400,6 +400,7 @@ impl Db4Engine {
                 }
             }
         }
+        let scalar_only = predicate.scalar_only();
         let mut result = Vec::new();
         for batch in candidates.chunks(1024) {
             self.with_reader(v, |tree| {
@@ -407,7 +408,7 @@ impl Db4Engine {
                     if entry.block == u32::MAX {
                         continue;
                     }
-                    let record = tree.record(entry)?;
+                    let record = if scalar_only { tree.record_attributes(entry)?.0 } else { tree.record(entry)? };
                     if record.area == area.id && predicate.matches_record(entry.oid, &record) {
                         result.push(entry.oid);
                     }

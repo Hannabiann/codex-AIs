@@ -1069,6 +1069,28 @@ impl Db4Engine {
             index.record(entry).map(RecordLookup::Present)
         })
     }
+    fn visit_attributes(
+        &self, preferred: &str, ids: &[u32],
+        visit: &mut impl FnMut(u32, Option<fields::ScalarRecord>) -> Result<(), String>,
+    ) -> Result<Option<()>, String> {
+        let Some(v) = self.volume_id(preferred)? else { return Ok(None); };
+        self.with_reader(v, |tree| {
+            for entry in tree.lookup_many(ids)? {
+                let record = if entry.block == u32::MAX { None }
+                    else { Some(tree.record_attributes(entry)?) };
+                visit(entry.oid, record)?;
+            }
+            Ok(Some(()))
+        })
+    }
+    fn lookup_attributes(&self, oid: u32, preferred: &str) -> Result<RecordLookup<fields::ScalarRecord>, String> {
+        let Some(v) = self.volume_id(preferred)? else { return Ok(RecordLookup::Missing) };
+        self.with_reader(v, |index| {
+            let Some(entry) = index.lookup_including_deleted(oid)? else { return Ok(RecordLookup::Missing) };
+            if entry.block == u32::MAX { return Ok(RecordLookup::Deleted); }
+            index.record_attributes(entry).map(RecordLookup::Present)
+        })
+    }
     pub fn lookup_metadata(
         &self,
         oid: u32,

@@ -467,6 +467,24 @@ impl MainKey {
         &mut self,
         entry: Entry,
     ) -> Result<(super::fields::RecordMetadata, Vec<(u16, u32)>), String> {
+        self.record_prefix(entry, true, super::fields::scalar_prefix, |r| (
+            super::fields::RecordMetadata::from(&r),
+            r.fields.iter().filter_map(|f| match f.value {
+                super::fields::Value::Integer(n) if f.wire_type == 5 => Some((f.id, n)),
+                _ => None,
+            }).collect(),
+        ), |(_, links)| links.iter().find(|&&(id, _)| id == 1024).map(|&(_, oid)| oid))
+    }
+    pub(super) fn record_attributes(&mut self, entry: Entry) -> Result<super::fields::ScalarRecord, String> {
+        self.record_prefix(entry, false, super::fields::scalar_record_prefix, super::fields::ScalarRecord,
+            |r| r.0.integer(1024))
+    }
+    fn record_prefix<T>(
+        &mut self, entry: Entry, cache_pages: bool,
+        parse: fn(&[u8]) -> Result<Option<T>, String>,
+        fallback: impl FnOnce(super::fields::Record) -> T,
+        oid: impl Fn(&T) -> Option<u32>,
+    ) -> Result<T, String> {
         crate::execution::check()?;
         if entry.block == u32::MAX {
             return Err("deleted MainKey entry".into());
@@ -479,7 +497,12 @@ impl MainKey {
             .size
             .checked_sub(offset)
             .ok_or("record outside volume")?;
-        let first = self.read_scalar(offset, available.min(until_map).min(2055) as usize)?;
+        let prefix_len = available.min(until_map).min(2055) as usize;
+        // Broad searches visit sparse attributes once. Prefetching 64 KiB for
+        // each tiny prefix amplifies reads and competes with interactive work.
+        // Link/metadata traversals retain their established page cache.
+        let first = if cache_pages { self.read_scalar(offset, prefix_len)? }
+            else { self.read(offset, prefix_len)? };
         if first.len() < 13 || first[4] != b'C' || u16at(&first, 5) != entry.checksum {
             return Err(format!(
                 "MainKey/record header mismatch for OID {}",
@@ -490,49 +513,25 @@ impl MainKey {
         if !(6..=super::fields::MAX_FIELD).contains(&length) {
             return Err("record length out of range".into());
         }
-        if let Ok(Some((metadata, links))) =
-            super::fields::scalar_prefix(&first[7..(7 + length).min(first.len())])
+        if let Ok(Some(value)) =
+            parse(&first[7..(7 + length).min(first.len())])
         {
-            if links
-                .iter()
-                .find(|&&(id, _)| id == 1024)
-                .is_some_and(|&(_, oid)| oid == entry.oid)
-            {
-                return Ok((metadata, links));
-            }
+            if oid(&value) == Some(entry.oid) { return Ok(value); }
         }
+
         let mut maximum = 2048;
         loop {
             let payload =
                 super::payload_prefix_from_reader(&header, self.size, offset, maximum, |p, n| {
                     self.read(p, n)
                 })?;
-            match super::fields::scalar_prefix(&payload) {
-                Ok(Some((metadata, links)))
-                    if links
-                        .iter()
-                        .find(|&&(id, _)| id == 1024)
-                        .is_some_and(|&(_, oid)| oid == entry.oid) =>
-                {
-                    return Ok((metadata, links))
-                }
+            match parse(&payload) {
+                Ok(Some(value)) if oid(&value) == Some(entry.oid) => return Ok(value),
                 Ok(None) if payload.len() == maximum && maximum < super::fields::MAX_FIELD => {
                     maximum = (maximum * 2).min(super::fields::MAX_FIELD);
                 }
                 _ => {
-                    let r = self.record(entry)?;
-                    return Ok((
-                        super::fields::RecordMetadata::from(&r),
-                        r.fields
-                            .iter()
-                            .filter_map(|f| match f.value {
-                                super::fields::Value::Integer(n) if f.wire_type == 5 => {
-                                    Some((f.id, n))
-                                }
-                                _ => None,
-                            })
-                            .collect(),
-                    ));
+                    return self.record(entry).map(fallback);
                 }
             }
         }

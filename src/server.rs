@@ -495,13 +495,12 @@ fn worker_channels(count: usize, capacity: usize) -> (Vec<Worker>, Vec<WorkerInb
     let mut workers: Vec<Worker> = Vec::with_capacity(count);
     let mut inboxes: Vec<WorkerInbox> = Vec::with_capacity(count);
     for index in 0..count {
-        if index >= 3 {
-            // All heavy executors take the next job from one FIFO. A pending
-            // job must not remain pinned behind a report on a busy executor.
+        if index >= 4 {
+            // Executor 3 has a search queue; all bulk executors share FIFO.
             workers.push(Worker {
-                sender: workers[2].sender.clone(),
+                sender: workers[3].sender.clone(),
             });
-            inboxes.push(inboxes[2].clone());
+            inboxes.push(inboxes[3].clone());
         } else {
             let (sender, receiver) = tokio::sync::mpsc::channel(capacity);
             workers.push(Worker { sender });
@@ -524,6 +523,7 @@ enum Lane {
     Owner,
     Interface,
     Heavy,
+    Search,
 }
 impl Lane {
     fn label(self) -> &'static str {
@@ -531,11 +531,13 @@ impl Lane {
             Self::Owner => "Владелец",
             Self::Interface => "Интерфейс",
             Self::Heavy => "Тяжёлые",
+            Self::Search => "Поиск",
         }
     }
 }
 fn next_job(
     primary: &WorkerInbox,
+    search: Option<&WorkerInbox>,
     interface: Option<&WorkerInbox>,
 ) -> Result<RequestJob, tokio::sync::mpsc::error::TryRecvError> {
     // Release each lock before checking the other queue. The primary queue
@@ -543,6 +545,9 @@ fn next_job(
     let next = primary.lock().unwrap().try_recv();
     match next {
         Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+            if let Some(search) = search {
+                if let Ok(job) = search.lock().unwrap().try_recv() { return Ok(job); }
+            }
             if let Some(interface) = interface {
                 match interface.lock().unwrap().try_recv() {
                     Ok(job) => return Ok(job),
@@ -647,6 +652,9 @@ fn lane(target: &str, request: &RequestContext) -> Lane {
     // Job queues, custom scripts and the complete Word protocol keep one owner.
     // User administration (/99 and /users) also stays on that owner: duplicate
     // checks and the following DB4 writes must not interleave across workers.
+    if matches!(name.as_str(), "pfind" | "find" | "freetext") {
+        return Lane::Search;
+    }
     if matches!(
         name.as_str(),
         "DeleteObject"
@@ -672,9 +680,6 @@ fn lane(target: &str, request: &RequestContext) -> Lane {
             | "reportForPostServices"
             | "convertToExcel"
             | "converttoexcel"
-            | "pfind"
-            | "find"
-            | "freetext"
     ) {
         Lane::Heavy
     } else if method == "GET"
@@ -746,8 +751,10 @@ impl Dispatcher {
                     0
                 }
             }
-            (n, Lane::Heavy) => {
-                if n >= 3 {
+            (n, Lane::Heavy | Lane::Search) => {
+                if n >= 4 && lane == Lane::Heavy {
+                    3
+                } else if n >= 3 {
                     2
                 } else {
                     1
@@ -887,10 +894,16 @@ fn start_dispatcher(
     let mut warm_rx = Some(warm_rx);
     let (workers, inboxes) = worker_channels(worker_count, settings.queue + 1);
     let interface = (worker_count >= 3).then(|| inboxes[1].clone());
+    let search = (worker_count >= 4).then(|| inboxes[2].clone());
     let interface_busy = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let search_busy = Arc::new(std::sync::atomic::AtomicBool::new(false));
     for (index, rx) in inboxes.into_iter().enumerate() {
         let interface = if index >= 2 { interface.clone() } else { None };
+        // Bulk workers help searches only when their own FIFO is empty. The
+        // dedicated search executor never starts an unbounded report/delete.
+        let search = if index >= 3 { search.clone() } else { None };
         let interface_busy = interface_busy.clone();
+        let search_busy = search_busy.clone();
         let root = root.clone();
         let monitor = monitor.clone();
         let owner = if index == 0 {
@@ -928,7 +941,9 @@ fn start_dispatcher(
                     let help = interface
                         .as_ref()
                         .filter(|_| interface_busy.load(std::sync::atomic::Ordering::Acquire));
-                    let next = next_job(&rx, help);
+                    let search_help = search.as_ref()
+                        .filter(|_| search_busy.load(std::sync::atomic::Ordering::Acquire));
+                    let next = next_job(&rx, search_help, help);
                     match next {
                         Ok(RequestJob {
                             id,
@@ -940,6 +955,8 @@ fn start_dispatcher(
                         }) => {
                             let _busy = (index == 1 && worker_count >= 3)
                                 .then(|| InterfaceBusy::enter(&interface_busy));
+                            let _search_busy = (index == 2 && worker_count >= 4)
+                                .then(|| InterfaceBusy::enter(&search_busy));
                             drop(queued);
                             let _scope = crate::execution::Scope::enter(control.clone());
                             if reply.is_closed() || control.cancelled() {

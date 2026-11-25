@@ -268,6 +268,9 @@ pub struct RecordMetadata {
     pub area: u16,
     pub name: Option<Vec<u8>>,
 }
+/// A query-only scalar projection. Never insert it into a full-record cache or
+/// pass it to the DB4 writer. Noncanonical records use the complete decoder.
+pub(super) struct ScalarRecord(pub(super) Record);
 impl From<&Record> for RecordMetadata {
     fn from(record: &Record) -> Self {
         Self {
@@ -497,4 +500,24 @@ pub(super) fn scalar_prefix(
         }
     }
     Ok(Some((RecordMetadata { area, name }, links)))
+}
+
+pub(super) fn scalar_record_prefix(payload: &[u8]) -> std::result::Result<Option<ScalarRecord>, String> {
+    // Validate scalar count/order and the boundary with the existing reader.
+    if scalar_prefix(payload)?.is_none() { return Ok(None); }
+    let count = u16::from_le_bytes([payload[4], payload[5]]);
+    let mut c = Cursor { data: payload, pos: 6 };
+    for _ in 0..count {
+        let kind = c.u16().map_err(|e| e.to_string())?;
+        c.u16().map_err(|e| e.to_string())?;
+        let n = match kind {
+            1 | 5 => 4, 12 => 8, 13 => 34,
+            2 | 3 => c.u16().map_err(|e| e.to_string())? as usize,
+            _ => return Err("noncanonical scalar order".into()),
+        };
+        c.take(n).map_err(|e| e.to_string())?;
+    }
+    let mut prefix = payload[..c.pos].to_vec();
+    prefix[2..4].copy_from_slice(&count.to_le_bytes());
+    parse_record(&prefix).map(|r| Some(ScalarRecord(r))).map_err(|e| e.to_string())
 }

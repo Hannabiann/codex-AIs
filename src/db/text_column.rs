@@ -213,7 +213,7 @@ impl Db4Engine {
                     if entry.block == u32::MAX {
                         continue;
                     }
-                    let record = tree.record(entry)?;
+                    let record = tree.record_attributes(entry)?.0;
                     if record.area != area {
                         continue;
                     }

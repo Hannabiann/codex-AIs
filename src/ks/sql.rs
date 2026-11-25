@@ -183,6 +183,16 @@ pub enum BoundPredicate {
     Or(Box<BoundPredicate>, Box<BoundPredicate>),
 }
 impl BoundPredicate {
+    /// Streams must be decoded for stream predicates (including IS NULL).
+    pub(crate) fn scalar_only(&self) -> bool {
+        match self {
+            Self::None | Self::All | Self::Oid(_) | Self::Set { .. } | Self::Link { .. } => true,
+            Self::Between { kind, .. } | Self::Compare { kind, .. }
+            | Self::IsNull { kind, .. } | Self::Text { kind, .. } => matches!(kind, 1 | 2 | 3 | 5 | 12 | 13),
+            Self::Not(p) => p.scalar_only(),
+            Self::And(a, b) | Self::Or(a, b) => a.scalar_only() && b.scalar_only(),
+        }
+    }
     /// Exact OID restrictions already resolved in this database context need
     /// only the winning mounted record, not an OID lookup in every volume.
     pub fn oid_candidates(&self) -> Option<Vec<u32>> {

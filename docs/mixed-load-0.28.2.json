@@ -1,0 +1,2096 @@
+{
+  "date": "2026-11-26",
+  "version": "0.28.2",
+  "hardware": {
+    "os": "Windows Server 2025, build 26100",
+    "cpu": "Intel Xeon Silver 4516Y+",
+    "presented_cores": 6,
+    "logical_processors": 12,
+    "ram_gib": 32
+  },
+  "method": {
+    "users": 30,
+    "distinct_accounts": true,
+    "browser": 20,
+    "word_protocol": 6,
+    "reports": 2,
+    "deletions": 2,
+    "active_seconds": 360,
+    "think_seconds": [
+      2,
+      4
+    ],
+    "closed_loop": true,
+    "report_periods": [
+      "2025-01-15",
+      "2025-01-16"
+    ],
+    "word_documents_in_one_case": true,
+    "word_actual_instances": false,
+    "cryptographic_signature": false,
+    "declared_volumes": 49,
+    "os_cache_flushed": false,
+    "runs_per_configuration": 1,
+    "native_threads": 40,
+    "native_local_reserve": 20,
+    "native_keepalive_seconds": 10,
+    "codex_ais_workers": 6,
+    "codex_ais_search_workers": 1,
+    "codex_ais_bulk_workers": 3,
+    "codex_ais_http_connections": 64,
+    "codex_ais_queue": 16,
+    "codex_ais_reserved_queue_slots": 2,
+    "codex_ais_keepalive_seconds": 60
+  },
+  "runs": [
+    {
+      "label": "kodweb",
+      "server": "kodweb",
+      "duration": 360,
+      "wall_seconds": 1846.6402669999516,
+      "users": 30,
+      "exe_sha256": "9949c3e918b763912820987b3db565b0a1865be8bee22fb38da387fedef5b799",
+      "requests": {
+        "requests": 2380,
+        "success": 2377,
+        "failed": 3,
+        "median": 0.024097099958453327,
+        "p95": 16.972506399964914,
+        "maximum": 1777.073568599997,
+        "total_seconds": 9207.836013301217,
+        "errors": {
+          "500:None": 2,
+          "200:ConnectionResetError": 1
+        }
+      },
+      "groups": {
+        "pages": {
+          "requests": 1800,
+          "success": 1800,
+          "failed": 0,
+          "median": 0.016973699996015057,
+          "p95": 14.655578700010665,
+          "maximum": 37.50095830002101,
+          "total_seconds": 3162.519939300604,
+          "errors": {}
+        },
+        "search": {
+          "requests": 65,
+          "success": 65,
+          "failed": 0,
+          "median": 17.785214900039136,
+          "p95": 33.12418330000946,
+          "maximum": 47.29049710003892,
+          "total_seconds": 1179.705859400332,
+          "errors": {}
+        },
+        "word": {
+          "requests": 511,
+          "success": 509,
+          "failed": 2,
+          "median": 0.14704430004348978,
+          "p95": 8.50349890004145,
+          "maximum": 25.367997800000012,
+          "total_seconds": 799.0606624002685,
+          "errors": {
+            "500:None": 2
+          }
+        },
+        "report-1as": {
+          "requests": 2,
+          "success": 1,
+          "failed": 1,
+          "median": 763.1891060000053,
+          "p95": 763.1891060000053,
+          "maximum": 763.1891060000053,
+          "total_seconds": 763.1891060000053,
+          "errors": {
+            "200:ConnectionResetError": 1
+          }
+        },
+        "delete": {
+          "requests": 2,
+          "success": 2,
+          "failed": 0,
+          "median": 1651.6802231000038,
+          "p95": 1777.073568599997,
+          "maximum": 1777.073568599997,
+          "total_seconds": 3303.3604462000076,
+          "errors": {}
+        }
+      },
+      "operations": {
+        "case": {
+          "requests": 183,
+          "success": 183,
+          "failed": 0,
+          "median": 0.01636139996116981,
+          "p95": 0.051065700012259185,
+          "maximum": 3.4834139999584295,
+          "total_seconds": 9.419818799826317,
+          "errors": {}
+        },
+        "case-list": {
+          "requests": 330,
+          "success": 330,
+          "failed": 0,
+          "median": 0.713120100001106,
+          "p95": 19.262886599986814,
+          "maximum": 37.50095830002101,
+          "total_seconds": 1091.8131364000146,
+          "errors": {}
+        },
+        "delete": {
+          "requests": 2,
+          "success": 2,
+          "failed": 0,
+          "median": 1651.6802231000038,
+          "p95": 1777.073568599997,
+          "maximum": 1777.073568599997,
+          "total_seconds": 3303.3604462000076,
+          "errors": {}
+        },
+        "document": {
+          "requests": 187,
+          "success": 187,
+          "failed": 0,
+          "median": 0.005374700005631894,
+          "p95": 0.029735400050412863,
+          "maximum": 0.5431572999805212,
+          "total_seconds": 2.7574563005473465,
+          "errors": {}
+        },
+        "frame": {
+          "requests": 293,
+          "success": 293,
+          "failed": 0,
+          "median": 0.005099200003314763,
+          "p95": 0.014867699996102601,
+          "maximum": 3.8653039999771863,
+          "total_seconds": 13.934394500160124,
+          "errors": {}
+        },
+        "home": {
+          "requests": 185,
+          "success": 185,
+          "failed": 0,
+          "median": 4.833199599990621,
+          "p95": 18.25787000003038,
+          "maximum": 20.213970899989363,
+          "total_seconds": 1272.6436387994909,
+          "errors": {}
+        },
+        "report-1as": {
+          "requests": 2,
+          "success": 1,
+          "failed": 1,
+          "median": 763.1891060000053,
+          "p95": 763.1891060000053,
+          "maximum": 763.1891060000053,
+          "total_seconds": 763.1891060000053,
+          "errors": {
+            "200:ConnectionResetError": 1
+          }
+        },
+        "search-fulltext": {
+          "requests": 22,
+          "success": 22,
+          "failed": 0,
+          "median": 16.727214449987514,
+          "p95": 26.481949399982113,
+          "maximum": 33.12418330000946,
+          "total_seconds": 355.23419690004084,
+          "errors": {}
+        },
+        "search-linked": {
+          "requests": 43,
+          "success": 43,
+          "failed": 0,
+          "median": 18.0765728999977,
+          "p95": 36.068311500013806,
+          "maximum": 47.29049710003892,
+          "total_seconds": 824.4716625002911,
+          "errors": {}
+        },
+        "text": {
+          "requests": 329,
+          "success": 329,
+          "failed": 0,
+          "median": 0.006973100011236966,
+          "p95": 0.01746960001764819,
+          "maximum": 4.495354400016367,
+          "total_seconds": 26.96605130052194,
+          "errors": {}
+        },
+        "toolbar": {
+          "requests": 293,
+          "success": 293,
+          "failed": 0,
+          "median": 0.03796769998734817,
+          "p95": 19.476824899960775,
+          "maximum": 25.849861499969848,
+          "total_seconds": 744.9854432000429,
+          "errors": {}
+        },
+        "word-attributes": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 1.9918254500080366,
+          "p95": 21.815418799989857,
+          "maximum": 21.815418799989857,
+          "total_seconds": 34.018395100021735,
+          "errors": {}
+        },
+        "word-bases": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 2.5958237999875564,
+          "p95": 7.8595713000395335,
+          "maximum": 7.8595713000395335,
+          "total_seconds": 16.994583199964836,
+          "errors": {}
+        },
+        "word-blank": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.5301856999867596,
+          "p95": 3.3450564999948256,
+          "maximum": 3.3450564999948256,
+          "total_seconds": 5.809198200004175,
+          "errors": {}
+        },
+        "word-case": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 4.811420349986292,
+          "p95": 23.055759400012903,
+          "maximum": 23.055759400012903,
+          "total_seconds": 58.50898759998381,
+          "errors": {}
+        },
+        "word-create": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 1.8895914500171784,
+          "p95": 8.820551600016188,
+          "maximum": 8.820551600016188,
+          "total_seconds": 16.938827299978584,
+          "errors": {}
+        },
+        "word-edit": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 1.1290757499809843,
+          "p95": 3.970734199974686,
+          "maximum": 3.970734199974686,
+          "total_seconds": 8.682977399905212,
+          "errors": {}
+        },
+        "word-existing-open": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 2.8489296499756165,
+          "p95": 2.9143086999538355,
+          "maximum": 2.9143086999538355,
+          "total_seconds": 17.095140799880028,
+          "errors": {}
+        },
+        "word-init": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.05726145001244731,
+          "p95": 0.07103050005389377,
+          "maximum": 0.07103050005389377,
+          "total_seconds": 0.3425952000543475,
+          "errors": {}
+        },
+        "word-mark": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.8270349499944132,
+          "p95": 0.8684278000146151,
+          "maximum": 0.8684278000146151,
+          "total_seconds": 4.6352176000364125,
+          "errors": {}
+        },
+        "word-open": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.3022043500095606,
+          "p95": 2.9429155999678187,
+          "maximum": 2.9429155999678187,
+          "total_seconds": 4.488805099914316,
+          "errors": {}
+        },
+        "word-read": {
+          "requests": 433,
+          "success": 433,
+          "failed": 0,
+          "median": 0.11750819999724627,
+          "p95": 8.154912900005002,
+          "maximum": 25.367997800000012,
+          "total_seconds": 601.2240486005321,
+          "errors": {}
+        },
+        "word-save": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.5911326499772258,
+          "p95": 16.428868299990427,
+          "maximum": 16.428868299990427,
+          "total_seconds": 19.1153745999909,
+          "errors": {}
+        },
+        "word-sign": {
+          "requests": 6,
+          "success": 4,
+          "failed": 2,
+          "median": 1.3004664999898523,
+          "p95": 5.6203088000183925,
+          "maximum": 5.6203088000183925,
+          "total_seconds": 9.236376799992286,
+          "errors": {
+            "500:None": 2
+          }
+        },
+        "word-signed-open": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.3080737999989651,
+          "p95": 0.588004200020805,
+          "maximum": 0.588004200020805,
+          "total_seconds": 1.9701349000097252,
+          "errors": {}
+        }
+      },
+      "phases": {
+        "light": {
+          "pages": {
+            "requests": 210,
+            "success": 210,
+            "failed": 0,
+            "median": 0.022715649974998087,
+            "p95": 21.771483599964995,
+            "maximum": 25.849861499969848,
+            "total_seconds": 688.099059399683,
+            "errors": {}
+          },
+          "search": {
+            "requests": 12,
+            "success": 12,
+            "failed": 0,
+            "median": 24.6436831500032,
+            "p95": 32.69513700000243,
+            "maximum": 32.69513700000243,
+            "total_seconds": 296.496034300013,
+            "errors": {}
+          },
+          "word": {
+            "requests": 63,
+            "success": 63,
+            "failed": 0,
+            "median": 0.14247169997543097,
+            "p95": 16.33691800001543,
+            "maximum": 17.59991649998119,
+            "total_seconds": 192.1704854000127,
+            "errors": {}
+          }
+        },
+        "mixed": {
+          "pages": {
+            "requests": 1590,
+            "success": 1590,
+            "failed": 0,
+            "median": 0.016318449983373284,
+            "p95": 12.274047799990512,
+            "maximum": 37.50095830002101,
+            "total_seconds": 2474.420879900921,
+            "errors": {}
+          },
+          "search": {
+            "requests": 53,
+            "success": 53,
+            "failed": 0,
+            "median": 16.126310500025284,
+            "p95": 36.068311500013806,
+            "maximum": 47.29049710003892,
+            "total_seconds": 883.209825100319,
+            "errors": {}
+          },
+          "word": {
+            "requests": 448,
+            "success": 446,
+            "failed": 2,
+            "median": 0.14974584997980855,
+            "p95": 7.20583330001682,
+            "maximum": 25.367997800000012,
+            "total_seconds": 606.8901770002558,
+            "errors": {
+              "500:None": 2
+            }
+          }
+        }
+      },
+      "resources": {
+        "kodweb.exe": {
+          "processes": 1,
+          "cpu_seconds": 2934.296875,
+          "read_ops": 10430197,
+          "read_bytes": 32289699682,
+          "write_ops": 16253,
+          "write_bytes": 29396759,
+          "peak_private": 1365475328
+        },
+        "kdb.exe": {
+          "processes": 2,
+          "cpu_seconds": 69.390625,
+          "read_ops": 4147,
+          "read_bytes": 1053622,
+          "write_ops": 0,
+          "write_bytes": 0,
+          "peak_private": 14229504
+        },
+        "conhost.exe": {
+          "processes": 2,
+          "cpu_seconds": 0.109375,
+          "read_ops": 24,
+          "read_bytes": 3168,
+          "write_ops": 0,
+          "write_bytes": 0,
+          "peak_private": 1900544
+        },
+        "excel.exe": {
+          "processes": 2,
+          "cpu_seconds": 446.59375,
+          "read_ops": 1173,
+          "read_bytes": 5802352,
+          "write_ops": 135,
+          "write_bytes": 219457,
+          "peak_private": 145149952
+        }
+      },
+      "documents": {
+        "created": 6,
+        "signed": 4,
+        "reopened_equal": 6
+      },
+      "connections": {
+        "unique_source_ports": 323,
+        "reused_requests": 2057
+      },
+      "full_open": {
+        "case": {
+          "requests": 144,
+          "success": 144,
+          "errors": 0,
+          "median": 1.0191885232925415,
+          "p95": 26.61288046836853,
+          "maximum": 42.21130418777466
+        },
+        "document": {
+          "requests": 149,
+          "success": 149,
+          "errors": 0,
+          "median": 0.08326554298400879,
+          "p95": 18.754934310913086,
+          "maximum": 25.835097789764404
+        }
+      },
+      "word_workflows": {
+        "requests": 6,
+        "success": 4,
+        "errors": 2,
+        "median": 39.71437168121338,
+        "p95": 42.21557140350342,
+        "maximum": 42.21557140350342
+      },
+      "heavy": [
+        {
+          "operation": "report-1as",
+          "start": 62.999648332595825,
+          "seconds": 759.9432704999927,
+          "headers_seconds": 738.5320718000294,
+          "valid": false,
+          "http": 200,
+          "transport_error": "ConnectionResetError",
+          "bytes": 4184576,
+          "scenario": "report_day_16"
+        },
+        {
+          "operation": "report-1as",
+          "start": 59.99960684776306,
+          "seconds": 763.1891060000053,
+          "headers_seconds": 762.995630200021,
+          "valid": true,
+          "http": 200,
+          "transport_error": null,
+          "bytes": 4183552,
+          "scenario": "report_day_15"
+        },
+        {
+          "operation": "delete",
+          "start": 65.99941730499268,
+          "seconds": 1526.2868776000105,
+          "headers_seconds": 1526.2867882000282,
+          "valid": true,
+          "http": 200,
+          "transport_error": null,
+          "bytes": 151,
+          "scenario": "delete_one_object"
+        },
+        {
+          "operation": "delete",
+          "start": 68.99909138679504,
+          "seconds": 1777.073568599997,
+          "headers_seconds": 1777.0734556000098,
+          "valid": true,
+          "http": 200,
+          "transport_error": null,
+          "bytes": 151,
+          "scenario": "delete_five_objects"
+        }
+      ],
+      "errors": [
+        {
+          "operation": "word-sign",
+          "elapsed": 119.80759310722351,
+          "seconds": 0.5726069000083953,
+          "http": 500,
+          "transport_error": null
+        },
+        {
+          "operation": "word-sign",
+          "elapsed": 119.80759310722351,
+          "seconds": 0.8472240000264719,
+          "http": 500,
+          "transport_error": null
+        },
+        {
+          "operation": "report-1as",
+          "elapsed": 62.999648332595825,
+          "seconds": 759.9432704999927,
+          "http": 200,
+          "transport_error": "ConnectionResetError"
+        }
+      ],
+      "status": {
+        "samples": 367,
+        "failed": 0,
+        "maximum_seconds": 0.1409226999967359
+      },
+      "interactive_success_by_360": 2374,
+      "peak_total_private": 1616392192,
+      "series": [
+        {
+          "second": 0,
+          "requests": 36,
+          "success": 36,
+          "errors": 0,
+          "median": 0.05726145001244731,
+          "p95": 2.8668849999667145,
+          "maximum": 2.9143086999538355,
+          "private_bytes_peak": 282738688
+        },
+        {
+          "second": 10,
+          "requests": 6,
+          "success": 6,
+          "errors": 0,
+          "median": 16.107055399974342,
+          "p95": 16.323490000038873,
+          "maximum": 16.323490000038873,
+          "private_bytes_peak": 350265344
+        },
+        {
+          "second": 20,
+          "requests": 68,
+          "success": 68,
+          "errors": 0,
+          "median": 0.05382770000142045,
+          "p95": 26.378288900014013,
+          "maximum": 26.496375199989416,
+          "private_bytes_peak": 392335360
+        },
+        {
+          "second": 30,
+          "requests": 119,
+          "success": 119,
+          "errors": 0,
+          "median": 0.020462699991185218,
+          "p95": 0.40151190001051873,
+          "maximum": 32.69513700000243,
+          "private_bytes_peak": 583204864
+        },
+        {
+          "second": 40,
+          "requests": 26,
+          "success": 26,
+          "errors": 0,
+          "median": 0.028030549990944564,
+          "p95": 2.025039999978617,
+          "maximum": 7.317951499950141,
+          "private_bytes_peak": 588865536
+        },
+        {
+          "second": 50,
+          "requests": 9,
+          "success": 9,
+          "errors": 0,
+          "median": 10.778946099977475,
+          "p95": 12.055073399969842,
+          "maximum": 12.055073399969842,
+          "private_bytes_peak": 588865536
+        },
+        {
+          "second": 60,
+          "requests": 120,
+          "success": 120,
+          "errors": 0,
+          "median": 0.06394309998722747,
+          "p95": 20.548484599974472,
+          "maximum": 22.909077399992384,
+          "private_bytes_peak": 633638912
+        },
+        {
+          "second": 70,
+          "requests": 51,
+          "success": 51,
+          "errors": 0,
+          "median": 0.8506614999496378,
+          "p95": 4.789504100044724,
+          "maximum": 8.820551600016188,
+          "private_bytes_peak": 668545024
+        },
+        {
+          "second": 80,
+          "requests": 7,
+          "success": 7,
+          "errors": 0,
+          "median": 3.8590467000030912,
+          "p95": 4.416643400036264,
+          "maximum": 4.416643400036264,
+          "private_bytes_peak": 668545024
+        },
+        {
+          "second": 90,
+          "requests": 22,
+          "success": 22,
+          "errors": 0,
+          "median": 9.828439500008244,
+          "p95": 25.367997800000012,
+          "maximum": 28.645660799986217,
+          "private_bytes_peak": 712761344
+        },
+        {
+          "second": 100,
+          "requests": 53,
+          "success": 53,
+          "errors": 0,
+          "median": 1.3917252999963239,
+          "p95": 34.8157121000113,
+          "maximum": 37.50095830002101,
+          "private_bytes_peak": 713379840
+        },
+        {
+          "second": 110,
+          "requests": 25,
+          "success": 25,
+          "errors": 0,
+          "median": 0.9068282999796793,
+          "p95": 7.951024900015909,
+          "maximum": 29.201440400036518,
+          "private_bytes_peak": 713379840
+        },
+        {
+          "second": 120,
+          "requests": 47,
+          "success": 45,
+          "errors": 2,
+          "median": 0.4666183000081219,
+          "p95": 21.54090449999785,
+          "maximum": 47.29049710003892,
+          "private_bytes_peak": 720695296
+        },
+        {
+          "second": 130,
+          "requests": 100,
+          "success": 100,
+          "errors": 0,
+          "median": 0.025840999995125458,
+          "p95": 7.768162299995311,
+          "maximum": 18.429556000046432,
+          "private_bytes_peak": 744415232
+        },
+        {
+          "second": 140,
+          "requests": 17,
+          "success": 17,
+          "errors": 0,
+          "median": 0.010430800030007958,
+          "p95": 5.89171970001189,
+          "maximum": 5.89171970001189,
+          "private_bytes_peak": 753446912
+        },
+        {
+          "second": 150,
+          "requests": 113,
+          "success": 113,
+          "errors": 0,
+          "median": 0.06302539998432621,
+          "p95": 11.279191399982665,
+          "maximum": 14.962928800028749,
+          "private_bytes_peak": 769425408
+        },
+        {
+          "second": 160,
+          "requests": 102,
+          "success": 102,
+          "errors": 0,
+          "median": 0.00922139995964244,
+          "p95": 0.8993352000252344,
+          "maximum": 2.3710850999923423,
+          "private_bytes_peak": 808140800
+        },
+        {
+          "second": 170,
+          "requests": 153,
+          "success": 153,
+          "errors": 0,
+          "median": 0.020192400028463453,
+          "p95": 1.2953325000125915,
+          "maximum": 36.068311500013806,
+          "private_bytes_peak": 822849536
+        },
+        {
+          "second": 180,
+          "requests": 43,
+          "success": 43,
+          "errors": 0,
+          "median": 0.007131199992727488,
+          "p95": 3.734653800027445,
+          "maximum": 5.128006300015841,
+          "private_bytes_peak": 846737408
+        },
+        {
+          "second": 190,
+          "requests": 78,
+          "success": 78,
+          "errors": 0,
+          "median": 0.03069525002501905,
+          "p95": 13.81787460000487,
+          "maximum": 16.557524500007275,
+          "private_bytes_peak": 858251264
+        },
+        {
+          "second": 200,
+          "requests": 112,
+          "success": 112,
+          "errors": 0,
+          "median": 0.013930049986811355,
+          "p95": 2.2761345999897458,
+          "maximum": 2.971408200042788,
+          "private_bytes_peak": 858255360
+        },
+        {
+          "second": 210,
+          "requests": 29,
+          "success": 29,
+          "errors": 0,
+          "median": 0.004551100020762533,
+          "p95": 2.884833099960815,
+          "maximum": 3.9964188000303693,
+          "private_bytes_peak": 858259456
+        },
+        {
+          "second": 220,
+          "requests": 66,
+          "success": 66,
+          "errors": 0,
+          "median": 0.25879654998425394,
+          "p95": 15.140047999972012,
+          "maximum": 16.972506399964914,
+          "private_bytes_peak": 871514112
+        },
+        {
+          "second": 230,
+          "requests": 95,
+          "success": 95,
+          "errors": 0,
+          "median": 0.03939430002355948,
+          "p95": 3.65836489998037,
+          "maximum": 3.90356469998369,
+          "private_bytes_peak": 871522304
+        },
+        {
+          "second": 240,
+          "requests": 73,
+          "success": 73,
+          "errors": 0,
+          "median": 0.007092099986039102,
+          "p95": 1.8108629999915138,
+          "maximum": 3.6572351999930106,
+          "private_bytes_peak": 871600128
+        },
+        {
+          "second": 250,
+          "requests": 90,
+          "success": 90,
+          "errors": 0,
+          "median": 0.07136125001125038,
+          "p95": 7.703159099968616,
+          "maximum": 11.543099100003019,
+          "private_bytes_peak": 876642304
+        },
+        {
+          "second": 260,
+          "requests": 70,
+          "success": 70,
+          "errors": 0,
+          "median": 0.042973400035407394,
+          "p95": 5.7148290000041015,
+          "maximum": 6.652159899997059,
+          "private_bytes_peak": 876642304
+        },
+        {
+          "second": 270,
+          "requests": 40,
+          "success": 40,
+          "errors": 0,
+          "median": 0.013076250004814938,
+          "p95": 6.1890404999721795,
+          "maximum": 7.640371399989817,
+          "private_bytes_peak": 876642304
+        },
+        {
+          "second": 280,
+          "requests": 107,
+          "success": 107,
+          "errors": 0,
+          "median": 0.027362999971956015,
+          "p95": 18.0765728999977,
+          "maximum": 18.415015800041147,
+          "private_bytes_peak": 884228096
+        },
+        {
+          "second": 290,
+          "requests": 88,
+          "success": 88,
+          "errors": 0,
+          "median": 0.008619650005130097,
+          "p95": 0.6315812999964692,
+          "maximum": 3.1990753999562003,
+          "private_bytes_peak": 884236288
+        },
+        {
+          "second": 300,
+          "requests": 6,
+          "success": 6,
+          "errors": 0,
+          "median": 6.935969949961873,
+          "p95": 10.8583000000217,
+          "maximum": 10.8583000000217,
+          "private_bytes_peak": 884236288
+        },
+        {
+          "second": 310,
+          "requests": 89,
+          "success": 89,
+          "errors": 0,
+          "median": 0.027685699984431267,
+          "p95": 19.620984699984547,
+          "maximum": 22.376468000002205,
+          "private_bytes_peak": 887074816
+        },
+        {
+          "second": 320,
+          "requests": 113,
+          "success": 113,
+          "errors": 0,
+          "median": 0.009047899977304041,
+          "p95": 0.24394220003159717,
+          "maximum": 0.35277250001672655,
+          "private_bytes_peak": 887074816
+        },
+        {
+          "second": 330,
+          "requests": 9,
+          "success": 9,
+          "errors": 0,
+          "median": 1.534062199993059,
+          "p95": 5.922589900030289,
+          "maximum": 5.922589900030289,
+          "private_bytes_peak": 887074816
+        },
+        {
+          "second": 340,
+          "requests": 36,
+          "success": 36,
+          "errors": 0,
+          "median": 15.950647699995898,
+          "p95": 21.673123400018085,
+          "maximum": 21.675896300002933,
+          "private_bytes_peak": 899256320
+        },
+        {
+          "second": 350,
+          "requests": 158,
+          "success": 158,
+          "errors": 0,
+          "median": 0.014319849986350164,
+          "p95": 0.9477775000268593,
+          "maximum": 1.2832556000212207,
+          "private_bytes_peak": 899256320
+        }
+      ],
+      "validation": {
+        "rtf_exact": 6,
+        "kod_cascade_equal": [
+          true,
+          true
+        ],
+        "deleted_sql_absent": true,
+        "deleted_sql_positive_control": true,
+        "search_totals": [
+          2909,
+          11174,
+          35341,
+          2909,
+          11174,
+          35341
+        ]
+      },
+      "product": "kodweb",
+      "build": "5.3.2.120 x86"
+    },
+    {
+      "label": "codex-ais-0.28.2",
+      "server": "Codex-AIs",
+      "duration": 360,
+      "wall_seconds": 364.6815483000246,
+      "users": 30,
+      "exe_sha256": "a17625b3770d73d51bbb65cc5fd584d76516dcfe7101cdeb97e12f80681d06ba",
+      "requests": {
+        "requests": 5081,
+        "success": 5081,
+        "failed": 0,
+        "median": 0.05376199999591336,
+        "p95": 0.3951015999773517,
+        "maximum": 56.15836570004467,
+        "total_seconds": 1054.957310400845,
+        "errors": {}
+      },
+      "groups": {
+        "pages": {
+          "requests": 4165,
+          "success": 4165,
+          "failed": 0,
+          "median": 0.055587699986062944,
+          "p95": 0.3578424999723211,
+          "maximum": 2.254391200025566,
+          "total_seconds": 571.5832391015138,
+          "errors": {}
+        },
+        "search": {
+          "requests": 159,
+          "success": 159,
+          "failed": 0,
+          "median": 0.13849459995981306,
+          "p95": 8.471071900043171,
+          "maximum": 21.798775999981444,
+          "total_seconds": 220.6314855000237,
+          "errors": {}
+        },
+        "word": {
+          "requests": 753,
+          "success": 753,
+          "failed": 0,
+          "median": 0.035845400008838624,
+          "p95": 0.39284710003994405,
+          "maximum": 2.0149641999742016,
+          "total_seconds": 78.08793809922645,
+          "errors": {}
+        },
+        "report-1as": {
+          "requests": 2,
+          "success": 2,
+          "failed": 0,
+          "median": 55.513680050033145,
+          "p95": 56.15836570004467,
+          "maximum": 56.15836570004467,
+          "total_seconds": 111.02736010006629,
+          "errors": {}
+        },
+        "delete": {
+          "requests": 2,
+          "success": 2,
+          "failed": 0,
+          "median": 36.81364380000741,
+          "p95": 37.633919000043534,
+          "maximum": 37.633919000043534,
+          "total_seconds": 73.62728760001482,
+          "errors": {}
+        }
+      },
+      "operations": {
+        "case": {
+          "requests": 400,
+          "success": 400,
+          "failed": 0,
+          "median": 0.21135214998503216,
+          "p95": 0.4045126000419259,
+          "maximum": 2.254391200025566,
+          "total_seconds": 98.35264609998558,
+          "errors": {}
+        },
+        "case-list": {
+          "requests": 707,
+          "success": 707,
+          "failed": 0,
+          "median": 0.2117861000006087,
+          "p95": 0.538519499998074,
+          "maximum": 2.050299199996516,
+          "total_seconds": 184.87951480026823,
+          "errors": {}
+        },
+        "delete": {
+          "requests": 2,
+          "success": 2,
+          "failed": 0,
+          "median": 36.81364380000741,
+          "p95": 37.633919000043534,
+          "maximum": 37.633919000043534,
+          "total_seconds": 73.62728760001482,
+          "errors": {}
+        },
+        "document": {
+          "requests": 399,
+          "success": 399,
+          "failed": 0,
+          "median": 0.04932220000773668,
+          "p95": 0.31633920001331717,
+          "maximum": 2.0084965000278316,
+          "total_seconds": 34.63688399957027,
+          "errors": {}
+        },
+        "frame": {
+          "requests": 612,
+          "success": 612,
+          "failed": 0,
+          "median": 0.14420190002419986,
+          "p95": 0.4633291999925859,
+          "maximum": 1.6061050000134856,
+          "total_seconds": 98.57196440064581,
+          "errors": {}
+        },
+        "home": {
+          "requests": 730,
+          "success": 730,
+          "failed": 0,
+          "median": 0.047143350006081164,
+          "p95": 0.1614172999979928,
+          "maximum": 1.3205101999919862,
+          "total_seconds": 47.75357900024392,
+          "errors": {}
+        },
+        "report-1as": {
+          "requests": 2,
+          "success": 2,
+          "failed": 0,
+          "median": 55.513680050033145,
+          "p95": 56.15836570004467,
+          "maximum": 56.15836570004467,
+          "total_seconds": 111.02736010006629,
+          "errors": {}
+        },
+        "search-fulltext": {
+          "requests": 53,
+          "success": 53,
+          "failed": 0,
+          "median": 0.1389690000214614,
+          "p95": 4.138864499982446,
+          "maximum": 21.798775999981444,
+          "total_seconds": 48.98974120017374,
+          "errors": {}
+        },
+        "search-linked": {
+          "requests": 106,
+          "success": 106,
+          "failed": 0,
+          "median": 0.13792589999502525,
+          "p95": 8.649111999955494,
+          "maximum": 20.16106320003746,
+          "total_seconds": 171.64174429984996,
+          "errors": {}
+        },
+        "text": {
+          "requests": 705,
+          "success": 705,
+          "failed": 0,
+          "median": 0.04719549999572337,
+          "p95": 0.3146955000120215,
+          "maximum": 2.069338399975095,
+          "total_seconds": 60.32105130056152,
+          "errors": {}
+        },
+        "toolbar": {
+          "requests": 612,
+          "success": 612,
+          "failed": 0,
+          "median": 0.04573355001048185,
+          "p95": 0.10846080002374947,
+          "maximum": 2.003950599988457,
+          "total_seconds": 47.06759950023843,
+          "errors": {}
+        },
+        "word-attributes": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.1481770500249695,
+          "p95": 1.7615251000388525,
+          "maximum": 1.7615251000388525,
+          "total_seconds": 3.130526500113774,
+          "errors": {}
+        },
+        "word-bases": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.14409144999808632,
+          "p95": 1.7177153000375256,
+          "maximum": 1.7177153000375256,
+          "total_seconds": 2.7163988000247627,
+          "errors": {}
+        },
+        "word-blank": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.3669982499850448,
+          "p95": 1.5430669999914244,
+          "maximum": 1.5430669999914244,
+          "total_seconds": 3.123128800012637,
+          "errors": {}
+        },
+        "word-case": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.7314727999910247,
+          "p95": 1.9363598999916576,
+          "maximum": 1.9363598999916576,
+          "total_seconds": 5.3125451999367215,
+          "errors": {}
+        },
+        "word-create": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 1.8683020999887958,
+          "p95": 2.0149641999742016,
+          "maximum": 2.0149641999742016,
+          "total_seconds": 10.932103999948595,
+          "errors": {}
+        },
+        "word-edit": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.14673064998351038,
+          "p95": 1.7481457999674603,
+          "maximum": 1.7481457999674603,
+          "total_seconds": 3.977400200034026,
+          "errors": {}
+        },
+        "word-existing-open": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.02422515003127046,
+          "p95": 0.042524399992544204,
+          "maximum": 0.042524399992544204,
+          "total_seconds": 0.15626670001074672,
+          "errors": {}
+        },
+        "word-init": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.042005600029369816,
+          "p95": 0.0533597000176087,
+          "maximum": 0.0533597000176087,
+          "total_seconds": 0.2639005000819452,
+          "errors": {}
+        },
+        "word-mark": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.12338659999659285,
+          "p95": 1.9881602000095882,
+          "maximum": 1.9881602000095882,
+          "total_seconds": 4.420195700076874,
+          "errors": {}
+        },
+        "word-open": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.5062237500096671,
+          "p95": 1.8821932999999262,
+          "maximum": 1.8821932999999262,
+          "total_seconds": 3.904347300005611,
+          "errors": {}
+        },
+        "word-read": {
+          "requests": 675,
+          "success": 675,
+          "failed": 0,
+          "median": 0.03391130000818521,
+          "p95": 0.08870799996657297,
+          "maximum": 1.6146919999737293,
+          "total_seconds": 33.32894799893256,
+          "errors": {}
+        },
+        "word-save": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.4389242000179365,
+          "p95": 0.6176903000450693,
+          "maximum": 0.6176903000450693,
+          "total_seconds": 2.5605608000187203,
+          "errors": {}
+        },
+        "word-sign": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.34989625003072433,
+          "p95": 0.8195152000407688,
+          "maximum": 0.8195152000407688,
+          "total_seconds": 2.760252600070089,
+          "errors": {}
+        },
+        "word-signed-open": {
+          "requests": 6,
+          "success": 6,
+          "failed": 0,
+          "median": 0.12167165000573732,
+          "p95": 0.6800090000033379,
+          "maximum": 0.6800090000033379,
+          "total_seconds": 1.5013629999593832,
+          "errors": {}
+        }
+      },
+      "phases": {
+        "light": {
+          "pages": {
+            "requests": 645,
+            "success": 645,
+            "failed": 0,
+            "median": 0.05674570001428947,
+            "p95": 0.3826414000359364,
+            "maximum": 2.254391200025566,
+            "total_seconds": 89.54486410086975,
+            "errors": {}
+          },
+          "search": {
+            "requests": 26,
+            "success": 26,
+            "failed": 0,
+            "median": 0.18894429999636486,
+            "p95": 8.471071900043171,
+            "maximum": 9.913232499966398,
+            "total_seconds": 61.294506300007924,
+            "errors": {}
+          },
+          "word": {
+            "requests": 124,
+            "success": 124,
+            "failed": 0,
+            "median": 0.033329600002616644,
+            "p95": 0.05954440002096817,
+            "maximum": 0.09115849999943748,
+            "total_seconds": 4.469217500241939,
+            "errors": {}
+          }
+        },
+        "mixed": {
+          "pages": {
+            "requests": 3520,
+            "success": 3520,
+            "failed": 0,
+            "median": 0.05545939999865368,
+            "p95": 0.3545703000272624,
+            "maximum": 2.003950599988457,
+            "total_seconds": 482.038375000644,
+            "errors": {}
+          },
+          "search": {
+            "requests": 133,
+            "success": 133,
+            "failed": 0,
+            "median": 0.1365473999758251,
+            "p95": 5.766891599982046,
+            "maximum": 21.798775999981444,
+            "total_seconds": 159.33697920001578,
+            "errors": {}
+          },
+          "word": {
+            "requests": 629,
+            "success": 629,
+            "failed": 0,
+            "median": 0.03657920000841841,
+            "p95": 0.5304949999554083,
+            "maximum": 2.0149641999742016,
+            "total_seconds": 73.61872059898451,
+            "errors": {}
+          }
+        }
+      },
+      "resources": {
+        "conhost.exe": {
+          "processes": 1,
+          "cpu_seconds": 0.0,
+          "read_ops": 0,
+          "read_bytes": 0,
+          "write_ops": 0,
+          "write_bytes": 0,
+          "peak_private": 1957888
+        },
+        "codex-ais.exe": {
+          "processes": 1,
+          "cpu_seconds": 648.546875,
+          "read_ops": 9248364,
+          "read_bytes": 36263406021,
+          "write_ops": 22375,
+          "write_bytes": 18040160,
+          "peak_private": 2564726784
+        }
+      },
+      "documents": {
+        "created": 6,
+        "signed": 6,
+        "reopened_equal": 6
+      },
+      "connections": {
+        "unique_source_ports": 34,
+        "reused_requests": 5047
+      },
+      "full_open": {
+        "case": {
+          "requests": 306,
+          "success": 306,
+          "errors": 0,
+          "median": 0.6733258962631226,
+          "p95": 1.922473669052124,
+          "maximum": 4.3482890129089355
+        },
+        "document": {
+          "requests": 306,
+          "success": 306,
+          "errors": 0,
+          "median": 0.17994940280914307,
+          "p95": 1.4753262996673584,
+          "maximum": 4.767024993896484
+        }
+      },
+      "word_workflows": {
+        "requests": 6,
+        "success": 6,
+        "errors": 0,
+        "median": 12.650249600410461,
+        "p95": 14.64834451675415,
+        "maximum": 14.64834451675415
+      },
+      "heavy": [
+        {
+          "operation": "delete",
+          "start": 65.99957776069641,
+          "seconds": 37.633919000043534,
+          "headers_seconds": 37.633879900036845,
+          "valid": true,
+          "http": 200,
+          "transport_error": null,
+          "bytes": 151,
+          "scenario": "delete_one_object"
+        },
+        {
+          "operation": "delete",
+          "start": 68.99909496307373,
+          "seconds": 35.99336859997129,
+          "headers_seconds": 35.99331099999836,
+          "valid": true,
+          "http": 200,
+          "transport_error": null,
+          "bytes": 151,
+          "scenario": "delete_five_objects"
+        },
+        {
+          "operation": "report-1as",
+          "start": 60.07820463180542,
+          "seconds": 56.15836570004467,
+          "headers_seconds": 56.13457350002136,
+          "valid": true,
+          "http": 200,
+          "transport_error": null,
+          "bytes": 4512256,
+          "scenario": "report_day_15"
+        },
+        {
+          "operation": "report-1as",
+          "start": 62.999550104141235,
+          "seconds": 54.86899440002162,
+          "headers_seconds": 54.83809099998325,
+          "valid": true,
+          "http": 200,
+          "transport_error": null,
+          "bytes": 4512256,
+          "scenario": "report_day_16"
+        }
+      ],
+      "errors": [],
+      "status": {
+        "samples": 73,
+        "failed": 0,
+        "maximum_seconds": 0.07921360002364963
+      },
+      "interactive_success_by_360": 5073,
+      "peak_total_private": 2566684672,
+      "series": [
+        {
+          "second": 0,
+          "requests": 126,
+          "success": 126,
+          "errors": 0,
+          "median": 0.06363629997940734,
+          "p95": 2.069338399975095,
+          "maximum": 8.471071900043171,
+          "private_bytes_peak": 1564774400
+        },
+        {
+          "second": 10,
+          "requests": 137,
+          "success": 137,
+          "errors": 0,
+          "median": 0.050504099985118955,
+          "p95": 0.25435250002192333,
+          "maximum": 9.913232499966398,
+          "private_bytes_peak": 1148518400
+        },
+        {
+          "second": 20,
+          "requests": 128,
+          "success": 128,
+          "errors": 0,
+          "median": 0.053301199979614466,
+          "p95": 0.6620220000040717,
+          "maximum": 5.137557899986859,
+          "private_bytes_peak": 1437904896
+        },
+        {
+          "second": 30,
+          "requests": 130,
+          "success": 130,
+          "errors": 0,
+          "median": 0.051097100047627464,
+          "p95": 0.2730693999910727,
+          "maximum": 1.8866719999932684,
+          "private_bytes_peak": 1295142912
+        },
+        {
+          "second": 40,
+          "requests": 134,
+          "success": 134,
+          "errors": 0,
+          "median": 0.05338409999967553,
+          "p95": 0.25336089998017997,
+          "maximum": 0.3001393000013195,
+          "private_bytes_peak": 1288454144
+        },
+        {
+          "second": 50,
+          "requests": 140,
+          "success": 140,
+          "errors": 0,
+          "median": 0.051908800000092015,
+          "p95": 0.2401382999960333,
+          "maximum": 0.31722259998787194,
+          "private_bytes_peak": 1288519680
+        },
+        {
+          "second": 60,
+          "requests": 124,
+          "success": 124,
+          "errors": 0,
+          "median": 0.07445854999241419,
+          "p95": 0.4407820999622345,
+          "maximum": 2.0149641999742016,
+          "private_bytes_peak": 1527984128
+        },
+        {
+          "second": 70,
+          "requests": 112,
+          "success": 112,
+          "errors": 0,
+          "median": 0.5464170500054024,
+          "p95": 1.7319419999839738,
+          "maximum": 2.334984600020107,
+          "private_bytes_peak": 1471324160
+        },
+        {
+          "second": 80,
+          "requests": 116,
+          "success": 116,
+          "errors": 0,
+          "median": 0.5795664500037674,
+          "p95": 1.9849661000189371,
+          "maximum": 12.906521299970336,
+          "private_bytes_peak": 1508290560
+        },
+        {
+          "second": 90,
+          "requests": 109,
+          "success": 109,
+          "errors": 0,
+          "median": 0.2831683000549674,
+          "p95": 1.3205101999919862,
+          "maximum": 21.798775999981444,
+          "private_bytes_peak": 1846607872
+        },
+        {
+          "second": 100,
+          "requests": 136,
+          "success": 136,
+          "errors": 0,
+          "median": 0.10819704999448732,
+          "p95": 0.6101771999965422,
+          "maximum": 3.980911399994511,
+          "private_bytes_peak": 1864032256
+        },
+        {
+          "second": 110,
+          "requests": 143,
+          "success": 143,
+          "errors": 0,
+          "median": 0.057162699988111854,
+          "p95": 0.31099800002994016,
+          "maximum": 5.766891599982046,
+          "private_bytes_peak": 2024185856
+        },
+        {
+          "second": 120,
+          "requests": 143,
+          "success": 143,
+          "errors": 0,
+          "median": 0.05081510002491996,
+          "p95": 0.2639686999609694,
+          "maximum": 0.32135500002186745,
+          "private_bytes_peak": 2014564352
+        },
+        {
+          "second": 130,
+          "requests": 144,
+          "success": 144,
+          "errors": 0,
+          "median": 0.053366500011179596,
+          "p95": 0.2767209999728948,
+          "maximum": 0.35652259999187663,
+          "private_bytes_peak": 2014568448
+        },
+        {
+          "second": 140,
+          "requests": 149,
+          "success": 149,
+          "errors": 0,
+          "median": 0.05087869998533279,
+          "p95": 0.243701700004749,
+          "maximum": 0.3248571999720298,
+          "private_bytes_peak": 2028412928
+        },
+        {
+          "second": 150,
+          "requests": 155,
+          "success": 155,
+          "errors": 0,
+          "median": 0.050389999989420176,
+          "p95": 0.2800119000021368,
+          "maximum": 3.451444200007245,
+          "private_bytes_peak": 2089320448
+        },
+        {
+          "second": 160,
+          "requests": 147,
+          "success": 147,
+          "errors": 0,
+          "median": 0.050261299998965114,
+          "p95": 0.2683318000053987,
+          "maximum": 0.3708082999801263,
+          "private_bytes_peak": 2094096384
+        },
+        {
+          "second": 170,
+          "requests": 142,
+          "success": 142,
+          "errors": 0,
+          "median": 0.0506479500036221,
+          "p95": 0.223538699967321,
+          "maximum": 4.747007000027224,
+          "private_bytes_peak": 2187264000
+        },
+        {
+          "second": 180,
+          "requests": 146,
+          "success": 146,
+          "errors": 0,
+          "median": 0.05167935002828017,
+          "p95": 0.2900253999978304,
+          "maximum": 2.0730213999631815,
+          "private_bytes_peak": 2123952128
+        },
+        {
+          "second": 190,
+          "requests": 157,
+          "success": 157,
+          "errors": 0,
+          "median": 0.052851199987344444,
+          "p95": 0.26555799995549023,
+          "maximum": 3.6828961000428535,
+          "private_bytes_peak": 2188058624
+        },
+        {
+          "second": 200,
+          "requests": 143,
+          "success": 143,
+          "errors": 0,
+          "median": 0.05242989998077974,
+          "p95": 0.2748587999958545,
+          "maximum": 0.3887473000213504,
+          "private_bytes_peak": 2189107200
+        },
+        {
+          "second": 210,
+          "requests": 145,
+          "success": 145,
+          "errors": 0,
+          "median": 0.0515593999880366,
+          "p95": 0.23904170002788305,
+          "maximum": 0.3212813999853097,
+          "private_bytes_peak": 2189107200
+        },
+        {
+          "second": 220,
+          "requests": 151,
+          "success": 151,
+          "errors": 0,
+          "median": 0.05448180000530556,
+          "p95": 0.28260839998256415,
+          "maximum": 0.36232710001058877,
+          "private_bytes_peak": 2189107200
+        },
+        {
+          "second": 230,
+          "requests": 150,
+          "success": 150,
+          "errors": 0,
+          "median": 0.0517031500057783,
+          "p95": 0.27159719995688647,
+          "maximum": 0.3444389999494888,
+          "private_bytes_peak": 2189107200
+        },
+        {
+          "second": 240,
+          "requests": 144,
+          "success": 144,
+          "errors": 0,
+          "median": 0.05046584998490289,
+          "p95": 0.2389909999910742,
+          "maximum": 0.3311900999979116,
+          "private_bytes_peak": 2189107200
+        },
+        {
+          "second": 250,
+          "requests": 146,
+          "success": 146,
+          "errors": 0,
+          "median": 0.052825249993475154,
+          "p95": 0.254754800000228,
+          "maximum": 0.36904670001240447,
+          "private_bytes_peak": 2189107200
+        },
+        {
+          "second": 260,
+          "requests": 144,
+          "success": 144,
+          "errors": 0,
+          "median": 0.053371949994470924,
+          "p95": 0.2539509999915026,
+          "maximum": 0.3213102999725379,
+          "private_bytes_peak": 2189107200
+        },
+        {
+          "second": 270,
+          "requests": 146,
+          "success": 146,
+          "errors": 0,
+          "median": 0.05075655001564883,
+          "p95": 0.245381599990651,
+          "maximum": 0.31045270001050085,
+          "private_bytes_peak": 2191212544
+        },
+        {
+          "second": 280,
+          "requests": 159,
+          "success": 159,
+          "errors": 0,
+          "median": 0.053253899968694896,
+          "p95": 0.2601870999787934,
+          "maximum": 0.4075400999863632,
+          "private_bytes_peak": 2192265216
+        },
+        {
+          "second": 290,
+          "requests": 142,
+          "success": 142,
+          "errors": 0,
+          "median": 0.05128690000856295,
+          "p95": 0.27066959999501705,
+          "maximum": 5.102232700039167,
+          "private_bytes_peak": 2447613952
+        },
+        {
+          "second": 300,
+          "requests": 154,
+          "success": 154,
+          "errors": 0,
+          "median": 0.051113649999024346,
+          "p95": 0.25358600000618026,
+          "maximum": 0.3527634000056423,
+          "private_bytes_peak": 2447613952
+        },
+        {
+          "second": 310,
+          "requests": 143,
+          "success": 143,
+          "errors": 0,
+          "median": 0.05055400001583621,
+          "p95": 0.28345039999112487,
+          "maximum": 0.3951015999773517,
+          "private_bytes_peak": 2447613952
+        },
+        {
+          "second": 320,
+          "requests": 147,
+          "success": 147,
+          "errors": 0,
+          "median": 0.05054080003174022,
+          "p95": 0.2432719999924302,
+          "maximum": 0.3309937999583781,
+          "private_bytes_peak": 2447613952
+        },
+        {
+          "second": 330,
+          "requests": 151,
+          "success": 151,
+          "errors": 0,
+          "median": 0.051750100043136626,
+          "p95": 0.26665519998641685,
+          "maximum": 0.32990070001687855,
+          "private_bytes_peak": 2448666624
+        },
+        {
+          "second": 340,
+          "requests": 139,
+          "success": 139,
+          "errors": 0,
+          "median": 0.05351530003827065,
+          "p95": 0.2489643000299111,
+          "maximum": 0.343461699958425,
+          "private_bytes_peak": 2448670720
+        },
+        {
+          "second": 350,
+          "requests": 151,
+          "success": 151,
+          "errors": 0,
+          "median": 0.048190200002864,
+          "p95": 0.26102330000139773,
+          "maximum": 3.3951343000517227,
+          "private_bytes_peak": 2566684672
+        }
+      ],
+      "max_sampled_waiting": 16,
+      "longest_search": {
+        "seconds": 21.798775999981444,
+        "queue_lower_seconds": 18.32081075629685,
+        "queue_upper_seconds": 21.798775999981444,
+        "sampling_seconds": 5
+      },
+      "validation": {
+        "rtf_exact": 6,
+        "kod_cascade_equal": [
+          true,
+          true
+        ],
+        "deleted_sql_absent": true,
+        "deleted_sql_positive_control": true,
+        "search_totals": [
+          2909,
+          11174,
+          35341,
+          2909,
+          11174,
+          35341
+        ],
+        "xls": [
+          {
+            "id": 26,
+            "equal": true,
+            "sheets": 13,
+            "sheetsEqual": true,
+            "constants": 37947,
+            "formulas": 17250,
+            "cachedDifferences": 17,
+            "equivalentEncoding": 0,
+            "leftRecoveredTransport": false
+          },
+          {
+            "id": 27,
+            "equal": true,
+            "sheets": 13,
+            "sheetsEqual": true,
+            "constants": 37947,
+            "formulas": 17250,
+            "cachedDifferences": 29,
+            "equivalentEncoding": 0,
+            "leftRecoveredTransport": true
+          }
+        ],
+        "kod_payloads": {
+          "decoded_equal_files": 6,
+          "byte_identical_files": 3
+        }
+      },
+      "product": "Codex-AIs",
+      "build": "Implementation included in 0.28.2"
+    }
+  ],
+  "controls": {
+    "kodweb-sign-control": [
+      {
+        "index": 0,
+        "parallel": true,
+        "retry": false,
+        "valid": false,
+        "status": 500,
+        "seconds": 0.10971660003997386,
+        "error": null
+      },
+      {
+        "index": 1,
+        "parallel": true,
+        "retry": false,
+        "valid": true,
+        "status": 200,
+        "seconds": 0.3198959000292234,
+        "error": null
+      },
+      {
+        "index": 2,
+        "parallel": true,
+        "retry": false,
+        "valid": false,
+        "status": 500,
+        "seconds": 0.42461919999914244,
+        "error": null
+      },
+      {
+        "index": 3,
+        "parallel": false,
+        "retry": false,
+        "valid": true,
+        "status": 200,
+        "seconds": 0.3395948000252247,
+        "error": null
+      },
+      {
+        "index": 4,
+        "parallel": false,
+        "retry": false,
+        "valid": true,
+        "status": 200,
+        "seconds": 0.34047309996094555,
+        "error": null
+      },
+      {
+        "index": 5,
+        "parallel": false,
+        "retry": false,
+        "valid": true,
+        "status": 200,
+        "seconds": 0.2858367000008002,
+        "error": null
+      },
+      {
+        "index": 0,
+        "parallel": false,
+        "retry": true,
+        "valid": true,
+        "status": 200,
+        "seconds": 0.27771739999298006,
+        "error": null
+      },
+      {
+        "index": 2,
+        "parallel": false,
+        "retry": true,
+        "valid": true,
+        "status": 200,
+        "seconds": 0.3881447999738157,
+        "error": null
+      }
+    ],
+    "kodweb-capacity-loopback": {
+      "completed_by_snapshot": 30,
+      "successful_by_snapshot": 30,
+      "held_open_by_snapshot": 30,
+      "total": 30,
+      "failed": 0,
+      "stagger_seconds": 0,
+      "native_keepalive_threads": 30
+    },
+    "kodweb-capacity-lan": {
+      "completed_by_snapshot": 24,
+      "successful_by_snapshot": 21,
+      "held_open_by_snapshot": 21,
+      "total": 30,
+      "failed": 3,
+      "stagger_seconds": 0,
+      "native_keepalive_threads": 0
+    },
+    "kodweb-capacity-lan-stagger": {
+      "completed_by_snapshot": 30,
+      "successful_by_snapshot": 30,
+      "held_open_by_snapshot": 30,
+      "total": 30,
+      "failed": 0,
+      "stagger_seconds": 0.03,
+      "native_keepalive_threads": 10
+    }
+  },
+  "native_tiny_reads": {
+    "window_seconds": 21.169,
+    "mainkey_descriptors": [
+      {
+        "file": "workbase/work.db4",
+        "reads": 50453
+      },
+      {
+        "file": "workbase/workptkviv.db4",
+        "reads": 50391
+      },
+      {
+        "file": "workbase/work_participant.db4",
+        "reads": 50391
+      },
+      {
+        "file": "workbase/workmt.db4",
+        "reads": 50391
+      },
+      {
+        "file": "workbase/workpost.db4",
+        "reads": 50390
+      },
+      {
+        "file": "workbase/workhistory.db4",
+        "reads": 50390
+      },
+      {
+        "file": "workbase/jmail.db4",
+        "reads": 50390
+      }
+    ],
+    "function": "0x005cb020",
+    "context": "0x005cc700 -> virtual refresh -> 0x005cb270 / 0x005cb020",
+    "purpose": "Re-read 10-byte index descriptor; compare generation, invalidate index state on change",
+    "attribution": "ETW file offsets matched to K directory; matching CPU stacks and static code. Full-request speedup from eliminating these reads was not measured.",
+    "seconds": 21.169000148773193,
+    "read_operations": 453485,
+    "ten_byte_reads": 356261,
+    "fraction": 0.7856070211804139
+  },
+  "controls_note": "30 held getfile connections. The LAN-address probe still runs on the server itself. An immediate native burst had three ConnectionRefusedError; a later 30-ms-staggered control passed 30/30. The cause of that burst failure and remote reserve classification were not isolated.",
+  "measurement_build_note": "The implementation was load-tested before assigning release version 0.28.2. Run exe_sha256 values identify the measured binaries. Published package hashes are in the release SHA256SUMS.",
+  "search": {
+    "diagnostic_series": [
+      {
+        "query": 0,
+        "cycle": 0,
+        "http": 200,
+        "seconds": 8.875477899971884
+      },
+      {
+        "query": 1,
+        "cycle": 0,
+        "http": 200,
+        "seconds": 3.6937541000079364
+      },
+      {
+        "query": 2,
+        "cycle": 0,
+        "http": 200,
+        "seconds": 2.0740176999825053
+      },
+      {
+        "query": 0,
+        "cycle": 1,
+        "http": 200,
+        "seconds": 0.32427579996874556
+      },
+      {
+        "query": 1,
+        "cycle": 1,
+        "http": 200,
+        "seconds": 0.38003229995956644
+      },
+      {
+        "query": 2,
+        "cycle": 1,
+        "http": 200,
+        "seconds": 0.35879169998224825
+      }
+    ],
+    "query_names": [
+      "Linked cases: московский",
+      "Linked documents: московский",
+      "FREETEXT: ТЮМЕНЬ"
+    ],
+    "pages": [
+      1,
+      2,
+      100
+    ],
+    "rows_equal_native": 180,
+    "all_totals_equal": true,
+    "multiword": {
+      "text": "судебное поручение",
+      "mode": "FREETEXT, not a positional phrase",
+      "count": 176762,
+      "seconds": 16.670891899964772
+    },
+    "note": "Separate diagnostic series with KODEKS_PROFILE and SQL trace. Only the first request starts with cold process caches; OS caches are not flushed. Later queries reuse data."
+  }
+}

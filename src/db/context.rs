@@ -306,6 +306,59 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
         self.cache_record_mount(scope, oid, None);
         Ok(None)
     }
+    /// Traverse each mount once and read its winning attributes while that
+    /// reader is open. Do not cycle all mounts for every small batch: doing so
+    /// evicts readers and amplifies page reads under simultaneous searches.
+    fn visit_attributes(
+        &self, scope: u32, ids: &[u32],
+        mut visit: impl FnMut(u32, super::fields::ScalarRecord, &Mount) -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.refresh_writes();
+        let mut pending = ids.iter().copied().collect::<std::collections::BTreeSet<_>>();
+        for mount in self.mounts(scope)?.iter().rev() {
+            if pending.is_empty() { break; }
+            let ids = pending.iter().copied().collect::<Vec<_>>();
+            let mut accept = |oid, record| {
+                pending.remove(&oid);
+                if let Some(record) = record { visit(oid, record, mount)?; }
+                Ok(())
+            };
+            if self.engine.visit_attributes(&mount.key, &ids, &mut accept)?.is_none() {
+                self.extra.visit_attributes(&mount.key, &ids, &mut accept)?
+                    .ok_or("mounted volume missing from indexed readers")?;
+            }
+        }
+        Ok(())
+    }
+    fn attributes(&self, scope: u32, oid: u32) -> Result<Option<super::fields::ScalarRecord>, String> {
+        self.refresh_writes();
+        let selected = self.record_mounts.borrow_mut().get(&(scope, oid)).copied();
+        if selected == Some(None) { return Ok(None); }
+        if let Some(record) = self.records.borrow_mut().items.get(&(scope, oid)) {
+            return Ok(Some(super::fields::ScalarRecord(record.clone())));
+        }
+        for mount in self.mounts(scope)?.iter().rev() {
+            if selected.is_some_and(|id| id != Some(mount.volume.id)) { continue; }
+            let record = match self.engine.lookup_attributes(oid, &mount.key)? {
+                RecordLookup::Missing => self.extra.lookup_attributes(oid, &mount.key)?,
+                other => other,
+            };
+            match record {
+                RecordLookup::Present(record) => {
+                    self.cache_record_mount(scope, oid, Some(mount.volume.id));
+                    return Ok(Some(record));
+                }
+                RecordLookup::Deleted => {
+                    self.cache_record_mount(scope, oid, None);
+                    return Ok(None);
+                }
+                RecordLookup::Missing => {}
+            }
+        }
+        if selected.is_some() { return Err("selected record changed; restart using a stable snapshot".into()); }
+        self.cache_record_mount(scope, oid, None);
+        Ok(None)
+    }
     fn cache_record_mount(&self, scope: u32, oid: u32, mount: Option<u32>) {
         let mut cache = self.record_mounts.borrow_mut();
         if let Some(selected) = cache.get_mut(&(scope, oid)) {
@@ -1305,22 +1358,13 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
                     .find(|f| f.name == *name && f.kind == 5)
                     .ok_or("IN subquery column must be a link")?;
                 let mut links = std::collections::BTreeSet::new();
-                for oid in ids {
-                    if let Some(record) = self.read(scope, oid)? {
-                        for f in record
-                            .fields
-                            .iter()
-                            .filter(|f| f.id == field.id && f.wire_type == 5)
-                        {
-                            if let super::fields::Value::Integer(id) = f.value {
-                                links.insert(id);
-                            }
-                        }
+                self.visit_attributes(scope, &ids, |_, record, _| {
+                    for f in record.0.fields.iter().filter(|f| f.id == field.id && f.wire_type == 5) {
+                        if let super::fields::Value::Integer(id) = f.value { links.insert(id); }
                     }
-                    if links.len() > crate::ks::sql::MAX_SQL_ROWS {
-                        return Err("subquery link limit".into());
-                    }
-                }
+                    if links.len() > crate::ks::sql::MAX_SQL_ROWS { return Err("subquery link limit".into()); }
+                    Ok(())
+                })?;
                 Ok(links.into_iter().collect())
             } else {
                 Ok(ids)
@@ -1420,10 +1464,21 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
         }
         // Old index hits cannot override an updated record or a tombstone.
         let mut live = Vec::new();
-        for id in ids {
-            if let Some(r) = self.read(scope, id)? {
-                if r.area == area.id && predicate.matches_record(id, &r) {
-                    live.push((id, r));
+        let scalar_only = predicate.scalar_only();
+        if scalar_only && ids.len() > 64 {
+            self.visit_attributes(scope, &ids, |id, r, _| {
+                if r.0.area == area.id && predicate.matches_record(id, &r.0) { live.push((id, r.0)); }
+                Ok(())
+            })?;
+            // Preserve candidate order before the stable SQL sorter.
+            let positions = ids.iter().enumerate().map(|(i, &id)| (id, i)).collect::<BTreeMap<_,_>>();
+            live.sort_unstable_by_key(|(id, _)| positions[id]);
+        } else {
+            for id in ids {
+                let record = if scalar_only { self.attributes(scope, id)?.map(|r| r.0) }
+                    else { self.read(scope, id)? };
+                if let Some(r) = record {
+                    if r.area == area.id && predicate.matches_record(id, &r) { live.push((id, r)); }
                 }
             }
         }
@@ -1629,6 +1684,8 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
         statistics_filter: &crate::ks::sql::BoundPredicate,
     ) -> Result<super::free_text::ResultData, String> {
         use std::collections::{BTreeSet, HashSet};
+        let profile_started = std::time::Instant::now();
+        let profile = std::env::var_os("KODEKS_PROFILE").is_some_and(|v| v == "1");
         let terms = super::free_text::terms(text)?;
         let dictionary = super::morphology::load(&self.root)?;
         let forms: Vec<_> = terms.iter().map(|word| dictionary.forms(word)).collect();
@@ -1726,6 +1783,11 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
                         .lookup_many(&pending.iter().copied().collect::<Vec<_>>())?;
                     for e in hits {
                         pending.remove(&e.oid);
+                        // The statistics pass already resolves overlays in
+                        // reverse order, including tombstones. Reuse that
+                        // winning mount when validating/ranking the hits.
+                        self.cache_record_mount(scope, e.oid,
+                            (e.block != u32::MAX).then_some(mount.volume.id));
                         if e.block != u32::MAX
                             && stat_mounts
                                 .get(&mount.volume.id)
@@ -1746,18 +1808,19 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
             result.statistics.push((word.clone(), count));
         }
         let candidates = candidates.unwrap_or_default();
+        if profile { eprintln!("FREETEXT postings/statistics: {} ms, candidates={}", profile_started.elapsed().as_millis(), candidates.len()); }
         // Candidate/posting budgets are enforced while reading the indexes.
         // Apply the ordinary SQL result limit after winning-volume and area
         // filtering, without a separate 10,000-hit limit for full-text search.
-        for id in candidates {
-            if let Some((record, mount)) = self.record_mount(scope, id)? {
+        let candidates = candidates.into_iter().collect::<Vec<_>>();
+        self.visit_attributes(scope, &candidates, |id, record, mount| {
                 // Validate winning-volume index membership only after intersection.
                 // An old version's posting must not match a newer unindexed copy.
                 if !memberships.iter().all(|term| {
                     term.iter()
                         .any(|(v, ids)| *v == mount.volume.id && ids.contains(&id))
                 }) {
-                    continue;
+                    return Ok(());
                 }
                 let rank = term_weights
                     .iter()
@@ -1776,11 +1839,12 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
                         weight.saturating_mul(rarity)
                     })
                     .sum::<u32>();
-                if record.area == area && rank != 0 {
+                if record.0.area == area && rank != 0 {
                     result.ranks.insert(id, rank);
                 }
-            }
-        }
+            Ok(())
+        })?;
+        if profile { eprintln!("FREETEXT winning records: {} ms cumulative, ranks={}", profile_started.elapsed().as_millis(), result.ranks.len()); }
         // Native 00833500: the strongest 39 hits contribute one eighth of
         // their raw weight to matching documents referenced by their fields.
         let mut strongest = result
