@@ -406,6 +406,13 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
     }
 }
 impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
+    fn kod_target_path(&self, scope: u32, volume: u32) -> Result<PathBuf, String> {
+        let mount = self.mounts(scope)?.iter().find(|m| m.volume.id == volume).ok_or("KOD target volume is not mounted")?;
+        if !mount.writable { return Err("Выбранный том доступен только для чтения".into()); }
+        let path = super::script_volume_path(&self.root, &mount.key).canonicalize().map_err(|e| e.to_string())?;
+        if !path.starts_with(self.root.canonicalize().map_err(|e| e.to_string())?) { return Err("DB4 write outside data root".into()); }
+        Ok(path)
+    }
     fn volume_schema(&self, scope: u32, volume: u32) -> Result<Schema, String> {
         self.mounts(scope)?
             .iter()

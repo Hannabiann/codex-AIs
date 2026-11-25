@@ -3,6 +3,74 @@ use super::{document_write::Draft, Fault, Runtime, Value};
 use std::{cell::RefCell, rc::Rc};
 
 impl Runtime<'_> {
+    pub(crate) fn kod_link_exists(&self, oid: u32) -> Result<bool, String> {
+        self.dbhost
+            .as_ref()
+            .ok_or("Database missing")?
+            .borrow()
+            .metadata(0, oid)
+            .map(|r| r.is_some())
+    }
+    pub(crate) fn kod_volumes(&self) -> Result<Vec<super::super::database::Volume>, String> {
+        let host = self.dbhost.as_ref().ok_or("Database missing")?.borrow();
+        host.volumes(0)?
+            .into_iter()
+            .filter_map(|v| match host.volume_writable(0, v.id) {
+                Ok(true) => Some(Ok(v)),
+                Ok(false) => None,
+                Err(e) => Some(Err(e)),
+            })
+            .collect()
+    }
+
+    pub(crate) fn kod_target(
+        &self,
+        name: &str,
+        records: &[crate::db::fields::Record],
+    ) -> Result<std::path::PathBuf, String> {
+        let host = self.dbhost.as_ref().ok_or("Database missing")?.borrow();
+        let volume = host
+            .volumes(0)?
+            .into_iter()
+            .find(|v| v.name == name)
+            .ok_or("Выбранный том не подключён")?
+            .id;
+        let path = host.kod_target_path(0, volume)?;
+        let schema = host.volume_schema(0, volume)?;
+        for record in records {
+            // The ordinary P editor excludes these areas. Do not turn the
+            // batch uploader into an alternative script/user/URL editor.
+            if matches!(
+                record.area,
+                5 | 8 | 900 | 901 | 1002 | 1003 | 1010 | 7410 | 7411 | 7412
+            ) {
+                return Err(format!(
+                    "Область {} недоступна для пакетного восстановления",
+                    record.area
+                ));
+            }
+            let area = schema
+                .areas
+                .get(&record.area)
+                .ok_or("Область объекта отсутствует в выбранном томе")?;
+            for f in record.fields.iter() {
+                if matches!(f.id, 1024 | 1100) && f.wire_type == 5 {
+                    continue;
+                }
+                if !area
+                    .fields
+                    .get(&f.id)
+                    .is_some_and(|d| d.kind == f.wire_type)
+                {
+                    return Err(format!(
+                        "KOD: атрибут {} типа {} не соответствует структуре тома",
+                        f.id, f.wire_type
+                    ));
+                }
+            }
+        }
+        Ok(path)
+    }
     pub(super) fn read_kod_document(&mut self, args: &[Value]) -> Result<Value, Fault> {
         let [Value::ReadStream(stream)] = args else {
             return Err("Document.ReadFromStream expects a binary stream".into());
@@ -15,41 +83,7 @@ impl Runtime<'_> {
             .data
             .get(stream.position..)
             .ok_or("KOD stream position")?;
-        let id = bytes.get(..4).ok_or("Неполный файл KOD")?;
-        let oid = u32::from_le_bytes(id.try_into().unwrap());
-        let mut record = crate::db::fields::parse_record(&bytes[4..])
-            .map_err(|e| format!("Неверный файл KOD: {e}"))?;
-        if oid == 0
-            || record.integer(1024) != Some(oid)
-            || record.fields.iter().filter(|f| f.id == 1024).any(|f| {
-                f.wire_type != 5
-                    || !matches!(f.value, crate::db::fields::Value::Integer(id) if id == oid)
-            })
-        {
-            return Err("KOD: внутренний номер не совпадает с записью".into());
-        }
-        // Validate the native scalar header and all field encodings before preview.
-        crate::db::writer::encode_record(&record)?;
-        // Native ReadFromStream/Lock can append an identical identity field on
-        // each re-import. Accept such archives, keeping one canonical identity.
-        let mut identity = false;
-        record.fields = record
-            .fields
-            .iter()
-            .filter(|f| {
-                if f.id != 1024 {
-                    return true;
-                }
-                if identity {
-                    return false;
-                }
-                identity = true;
-                true
-            })
-            .cloned()
-            .collect::<Vec<_>>()
-            .into();
-        crate::db::writer::canonicalize(&mut record);
+        let record = crate::db::writer::kod::decode_snapshot(bytes)?;
         let mut draft = Draft::new(0, Some(record));
         draft.imported = true;
         stream.position = stream.data.len();

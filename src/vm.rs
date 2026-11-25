@@ -6,6 +6,10 @@ use crate::{
 pub(crate) mod distribution;
 #[path = "system_settings.rs"]
 mod system_settings;
+#[path = "kod_restore.rs"]
+pub(crate) mod kod_restore;
+#[path = "basis_picker.rs"]
+mod basis_picker;
 #[derive(Debug)]
 pub struct VmError(pub String);
 pub fn named_with_startup(
@@ -174,6 +178,11 @@ impl Sessions {
             }
         }
         let result = (|| {
+            // This native extension consumes uploads directly. Do not inject
+            // repeated binary fields into KS globals or clone their payloads.
+            if dir.path.trim_end_matches('/') == "/20a" && object == "ispravlenieForm" && kod_restore::is_route(&request.target) {
+                return kod_restore::page(&engine, self.runtimes.get_mut(&dir.path).unwrap(), request).map_err(VmError);
+            }
             if dir.path.trim_end_matches('/')=="/20a" && object=="adminsettings" {
                 self.runtimes.get_mut(&dir.path).unwrap().load_system_settings_view().map_err(VmError)?;
             }
@@ -243,6 +252,12 @@ impl Sessions {
                 }
             }
             let mut body = self.render_record(dir, record, object)?;
+            if dir.path.trim_end_matches('/') == "/20a" && object == "classifforispr" {
+                body = basis_picker::decorate(body, &self.runtimes[&dir.path], request).map_err(VmError)?;
+            }
+            if dir.path.trim_end_matches('/') == "/20a" && object == "ispravlenieForm" && request.target.split('&').any(|p| p == "bkod=1") && request.method == "GET" {
+                body = kod_restore::decorate(body);
+            }
             if dir.path.trim_end_matches('/')=="/20a" && object=="adminsettings" {
                 if let Err(error) = self.runtimes.get_mut(&dir.path).unwrap().commit_system_settings() {
                     return Ok(system_settings::save_error(&error));

@@ -24,6 +24,9 @@ impl From<String> for DeleteError {
     }
 }
 pub trait DatabaseHost {
+    fn kod_target_path(&self, _scope: u32, _volume: u32) -> Result<std::path::PathBuf, String> {
+        Err("KOD import requires a writable database".into())
+    }
     fn select_list(&self,_sql:&str,_list:&super::host::BoundList)->Result<super::host::QueryData,String>{
         Err("SQL document list is not configured".into())
     }

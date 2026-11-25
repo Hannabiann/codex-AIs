@@ -5,6 +5,7 @@ pub const MAX_UPLOAD_BODY: usize = 64 * 1024 * 1024;
 #[derive(Clone, Debug)]
 pub struct Upload {
     pub name: String,
+    pub filename: String,
     pub data: Vec<u8>,
 }
 
@@ -106,13 +107,14 @@ pub fn decode_request(
                     } else {
                         "datum"
                     }
-                    || uploads.iter().any(|f| f.name == name)
+                    || uploads.iter().any(|f| f.name == name) && !crate::vm::kod_restore::is_route(target)
                     || fields.iter().any(|(k, _)| k == name)
                 {
                     return Err("invalid or repeated upload field".into());
                 }
                 uploads.push(Upload {
                     name: name.into(),
+                    filename: filename.rsplit(['/', '\\']).next().unwrap_or(filename).chars().filter(|c| !c.is_control()).take(240).collect(),
                     data: value.to_vec(),
                 });
             } else if !value.is_empty() {
