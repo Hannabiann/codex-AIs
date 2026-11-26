@@ -909,7 +909,7 @@ fn start_dispatcher(
                 let engine = match Db4Engine::init_from_config_root(root) {
                     Ok(e) => Arc::new(e),
                     Err(e) => {
-                        eprintln!("KS worker {} initialization: {e}", index + 1);
+                        crate::runtime_logs::error("worker initialization", &format!("worker={}: {e}", index + 1));
                         return;
                     }
                 };
@@ -919,7 +919,7 @@ fn start_dispatcher(
                     if let Some(warming) = warming.as_mut() {
                         while let Ok(dir) = warming.try_recv() {
                             if let Err(e) = sessions.warm(engine.clone(), &dir) {
-                                eprintln!("KS owner startup: {}", e.0);
+                                crate::runtime_logs::error("KS owner startup", &e.0);
                             }
                         }
                     }
@@ -964,6 +964,7 @@ fn start_dispatcher(
                                 request,
                                 authorization.as_deref(),
                             );
+                            monitor.response_error(id, &r);
                             if control.cancelled() {
                                 monitor.finish(
                                     id,
@@ -1003,6 +1004,7 @@ fn start_dispatcher(
                                     monitor.executor(id, index + 1);
                                     monitor.state(id, crate::monitor::State::Running);
                                     let r = dispatch(&engine, &mut sessions, &path);
+                                    monitor.response_error(id, &r);
                                     monitor.finish(
                                         id,
                                         r.status,
@@ -1013,15 +1015,15 @@ fn start_dispatcher(
                                         },
                                     );
                                     if r.status != "200 OK" {
-                                        eprintln!(
+                                        crate::runtime_logs::error("At", &format!(
                                             "At {path}: {}: {}",
                                             r.status,
                                             String::from_utf8_lossy(&r.body)
-                                        );
+                                        ));
                                     }
                                 }
                             }
-                            Err(e) => eprintln!("At clock: {e}"),
+                            Err(e) => crate::runtime_logs::error("At clock", &e),
                         }
                         monitor.schedules(sessions.scheduled());
                         tick = std::time::Instant::now();
@@ -1060,6 +1062,7 @@ async fn reject_overloaded(stream: &mut TcpStream) {
 
 pub async fn run_server(engine: Arc<Db4Engine>, port: u16) -> std::io::Result<()> {
     let settings = Arc::new(crate::settings::Store::load()?);
+    crate::runtime_logs::start_rotation(settings.active.log_retention_days)?;
     let host=settings.host.value.as_str();
     let listener = TcpListener::bind((host, port)).await?;
     let port = listener.local_addr()?.port();
@@ -1107,7 +1110,7 @@ pub async fn run_server(engine: Arc<Db4Engine>, port: u16) -> std::io::Result<()
             )
             .await
             {
-                eprintln!("HTTP error: {err}");
+                crate::runtime_logs::error("HTTP connection", &format!("client={peer}: {err}"));
             }
         });
     }
@@ -1166,6 +1169,7 @@ async fn connection(
             Ok(true) => {}
             Ok(false) => return Ok(()),
             Err(e) => {
+                monitor.response_error(id, &message("500 Internal Server Error", format!("HTTP transport: {e}")));
                 monitor.finish(id, "ошибка передачи HTTP", crate::monitor::State::Error);
                 return Err(e);
             }
@@ -1237,6 +1241,8 @@ async fn connection_request(
                 .split('?')
                 .next()
                 .is_some_and(|p| p.trim_end_matches('/') == "/99");
+            monitor.target(id, parts[1]);
+            monitor.method(id, parts[0]);
             if !matches!(parts[0], "GET" | "POST") && !(parts[0] == "PUT" && word_path) {
                 break message(
                     "405 Method Not Allowed",
@@ -1250,7 +1256,6 @@ async fn connection_request(
                 protocol: parts[2].to_string(),
                 ..Default::default()
             };
-            monitor.target(id, parts[1]);
             let mut authorization = None;
             let method = parts[0].to_owned();
             let header_end = request.windows(4).position(|s| s == b"\r\n\r\n").unwrap() + 4;
@@ -1466,6 +1471,7 @@ async fn connection_request(
         }
     };
     monitor.state(id, crate::monitor::State::Writing);
+    monitor.response_error(id, &response);
     let content_type = response
         .headers
         .iter()

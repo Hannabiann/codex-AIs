@@ -47,6 +47,8 @@ struct Entry {
     disconnected: bool,
     executor: Option<usize>,
     group: &'static str,
+    method: String,
+    error_logged: bool,
 }
 #[derive(Default)]
 struct Inner {
@@ -160,6 +162,8 @@ impl Monitor {
                 disconnected: false,
                 executor: None,
                 group: if job { "Владелец" } else { "" },
+                method: if job { "At".into() } else { String::new() },
+                error_logged: false,
             },
         );
         id
@@ -186,6 +190,30 @@ impl Monitor {
             e.url = safe_url(url);
         }
     }
+    pub fn method(&self, id: u64, method: &str) {
+        if let Some(e) = self.inner.lock().unwrap().active.get_mut(&id) { e.method = method.chars().take(16).collect(); }
+    }
+    pub fn response_error(&self, id: u64, response: &crate::server::Response) {
+        if !matches!(response.status.as_bytes().first(), Some(b'4' | b'5')) || response.status.starts_with("401 ") { return; }
+        let context = {
+            let mut inner = self.inner.lock().unwrap();
+            let Some(e) = inner.active.get_mut(&id) else { return };
+            if e.error_logged { return; }
+            e.error_logged = true;
+            Self::log_context(e)
+        };
+        let detail = if response.mime.starts_with("text/plain") {
+            let bytes = &response.body[..response.body.len().min(16384)];
+            if response.mime.contains("windows-1251") { crate::db::decode(bytes) } else { String::from_utf8_lossy(bytes).into_owned() }
+        } else { "Сервер вернул страницу ошибки".into() };
+        crate::runtime_logs::error("request", &format!("{context} status={} error={detail}", response.status));
+    }
+    fn log_context(e: &Entry) -> String {
+        let clean = crate::runtime_logs::field;
+        format!("id={} kind={} client=\"{}\" user=\"{}\" executor={} method={} url=\"{}\" elapsed_ms={}",
+            e.id, if e.job {"At"} else {"HTTP"}, clean(&e.source), clean(&e.user), e.executor.unwrap_or(0),
+            clean(&e.method), clean(&e.url), e.tick.elapsed().as_millis())
+    }
     pub fn user(&self, id: u64, user: &str) {
         if let Some(e) = self.inner.lock().unwrap().active.get_mut(&id) {
             e.user = user.chars().take(128).collect();
@@ -202,8 +230,11 @@ impl Monitor {
             e.elapsed = Some(e.tick.elapsed().as_millis());
             e.result = result.into();
             e.state = state;
+            let line = format!("{} result=\"{}\" state={:?}", Self::log_context(&e), crate::runtime_logs::field(result), state);
             m.history.push_front(e);
             m.history.truncate(self.settings.history);
+            drop(m);
+            crate::runtime_logs::access(&line);
         }
     }
     pub fn closed(&self, id: u64) {

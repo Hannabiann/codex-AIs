@@ -18,6 +18,11 @@ mod pool_layout;
 use std::{path::PathBuf, sync::Arc};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let result = run().await;
+    if let Err(error) = &result { runtime_logs::error("server", &error.to_string()); }
+    result
+}
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let command = args.get(1).map(String::as_str).unwrap_or("serve");
     if matches!(command, "--version" | "-V") {
@@ -447,10 +452,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         product::version(),
         root.display()
     );
-    let engine = Db4Engine::init_from_config_root(&root).map_err(std::io::Error::other)?;
     if matches!(command, "serve" | "diagnose") {
         runtime_logs::initialize(&root).map_err(std::io::Error::other)?;
     }
+    let engine = Db4Engine::init_from_config_root(&root).map_err(std::io::Error::other)?;
     match Some(command) {
         Some("diagnose") => {
             let target = args.get(2).map(String::as_str).unwrap_or("/20a/");

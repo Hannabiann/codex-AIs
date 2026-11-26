@@ -6,11 +6,47 @@ use std::path::{Component, Path, PathBuf};
 pub(super) struct WriteFile {
     pub name: String,
     pub file: Rc<RefCell<Option<std::fs::File>>>,
+    log_path: Option<PathBuf>,
+    generation: std::cell::Cell<u64>,
+}
+
+#[cfg(test)]
+mod log_tests {
+    use super::*;
+    #[test]
+    fn ks_log_handle_reopens_after_daily_rotation() {
+        let root=std::env::temp_dir().join(format!("codex-ks-logs-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(root.join(crate::runtime_logs::DIRECTORY)).unwrap();
+        let root=root.canonicalize().unwrap();let logs=root.join(crate::runtime_logs::DIRECTORY);
+        let mut runtime=Runtime::new("/test").with_data_root(root.to_str().unwrap());
+        runtime.log_root=Some(logs.clone());
+        let ast=super::super::parser::parse("var f=new File('Log/test.log', true); f.PrintS('before');").unwrap();
+        runtime.render(&ast).unwrap();
+        crate::runtime_logs::rotate_for_test(&logs,"2026-11-20","2026-11-21");
+        runtime.render(&super::super::parser::parse("f.PrintS('after'); f.close();").unwrap()).unwrap();
+        assert_eq!(std::fs::read(logs.join("test.log")).unwrap(),b"after");
+        let segment=std::fs::read_dir(logs.join("OLD_Log")).unwrap().next().unwrap().unwrap().path();
+        assert_eq!(std::fs::read(segment.join("test.log")).unwrap(),b"before");
+        assert!(!root.join("Log").exists());
+    }
 }
 impl WriteFile {
     fn new(name: &str, file: std::fs::File) -> Rc<Self> {
-        Rc::new(Self { name: name.into(), file: Rc::new(RefCell::new(Some(file))) })
+        Rc::new(Self { name: name.into(), file: Rc::new(RefCell::new(Some(file))), log_path: None, generation: std::cell::Cell::new(0) })
     }
+    fn log(name: &str, path: PathBuf, file: std::fs::File) -> Rc<Self> {
+        Rc::new(Self { name: name.into(), file: Rc::new(RefCell::new(Some(file))), log_path: Some(path), generation: std::cell::Cell::new(crate::runtime_logs::generation()) })
+    }
+    pub fn lock_log(&self) -> Result<Option<std::sync::MutexGuard<'static, ()>>, String> {
+        let Some(path) = &self.log_path else { return Ok(None) };
+        let guard = crate::runtime_logs::write_guard();
+        if self.generation.get() != crate::runtime_logs::generation() && self.file.borrow().is_some() {
+            *self.file.borrow_mut() = Some(std::fs::OpenOptions::new().read(true).append(true).create(true).open(path).map_err(|e|e.to_string())?);
+            self.generation.set(crate::runtime_logs::generation());
+        }
+        Ok(Some(guard))
+    }
+    pub fn is_log(&self) -> bool { self.log_path.is_some() }
 }
 
 #[derive(Debug)]
@@ -78,7 +114,7 @@ fn log_relative(root: &Path, name: &str) -> Option<PathBuf> {
         // The KS namespace spells this logical directory both "log" and
         // "Log". Redirect either spelling on Unix too, without making the
         // actual data-root prefix or journal filenames case-insensitive.
-        if !matches!(components.next()?, Component::Normal(n) if n.eq_ignore_ascii_case("log")) {
+        if !matches!(components.next()?, Component::Normal(n) if n.eq_ignore_ascii_case("log") || n.eq_ignore_ascii_case(crate::runtime_logs::DIRECTORY)) {
             return None;
         }
         Some(components.collect())
@@ -94,7 +130,7 @@ fn log_relative(root: &Path, name: &str) -> Option<PathBuf> {
         let components: Vec<_> = normalized.components().collect();
         let mut parent = PathBuf::new();
         for (i, component) in components.iter().enumerate() {
-            if matches!(component, Component::Normal(n) if n.eq_ignore_ascii_case("log"))
+            if matches!(component, Component::Normal(n) if n.eq_ignore_ascii_case("log") || n.eq_ignore_ascii_case(crate::runtime_logs::DIRECTORY))
                 && parent.canonicalize().ok().as_deref() == Some(canonical_root)
             {
                 return Some(components[i + 1..].iter().collect());
@@ -169,13 +205,15 @@ impl Runtime<'_> {
         if !log_root.is_dir() {
             return Err("KODEKS_LOG_DIR must be a directory".into());
         }
-        // Neither subtree may contain the other: this also rules out mapping
-        // a log path back onto a source volume through the log root's parent.
-        if log_root.starts_with(root) || root.starts_with(&log_root) {
-            return Err(
-                "KODEKS_LOG_DIR must be separate from source data (no overlapping trees)".into(),
-            );
-        }
+        crate::runtime_logs::validate_root(root, &log_root)?;
+        // Server journals own these two names. A vendor KS file must never
+        // truncate them through new File("Log/error.log", true).
+        let reserved = relative.to_string_lossy();
+        let renamed;
+        let relative = if reserved.eq_ignore_ascii_case("error.log") || reserved.eq_ignore_ascii_case("access.log") {
+            renamed = PathBuf::from(format!("ks-{}", reserved.to_ascii_lowercase()));
+            renamed.as_path()
+        } else { relative };
         let mut destination = log_root.clone();
         for component in relative.components() {
             let Component::Normal(name) = component else {
@@ -276,6 +314,7 @@ impl Runtime<'_> {
         }
         if let Some(relative) = log_relative(&root, name) {
             if self.log_root.is_some() || create {
+                let _guard = crate::runtime_logs::write_guard();
                 let destination = self.log_destination(&root, &relative)?;
                 // Probes and listings refer to the same directory as log writes.
                 // No source log directory is required, and none is created.
@@ -299,7 +338,7 @@ impl Runtime<'_> {
                     .truncate(create)
                     .open(&destination)
                     .map_err(|e| script_io("log File", &destination, e))?;
-                return Ok(Value::LogFile(WriteFile::new(name, file)));
+                return Ok(Value::LogFile(WriteFile::log(name, destination, file)));
             }
         }
         if create {
@@ -365,6 +404,7 @@ impl Runtime<'_> {
             )
         })?;
         let destination = self.log_destination(&root, &relative)?;
+        let _guard = crate::runtime_logs::write_guard();
         let result = match operation {
             "MkDir" => std::fs::create_dir(&destination),
             "RmDir" => std::fs::remove_dir(&destination),
@@ -379,6 +419,7 @@ impl Runtime<'_> {
             }
             _ => unreachable!(),
         };
+        drop(_guard);
         // Native MkDir wraps mkdir and returns false on failure (00675fc6).
         // A missing Unlink target is likewise a normal unsuccessful operation.
         if let Err(ref e) = result {
@@ -386,7 +427,7 @@ impl Runtime<'_> {
                 e.kind(),
                 std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::NotFound
             ) {
-                eprintln!("{operation} {name} -> {}: {e}", destination.display());
+                crate::runtime_logs::error("KS log operation", &format!("{operation} {name} -> {}: {e}", destination.display()));
             }
         }
         Ok(Value::Bool(result.is_ok()))

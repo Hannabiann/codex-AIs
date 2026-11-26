@@ -319,7 +319,7 @@ impl Sessions {
                     .unwrap()
                     .fail_scheduled_job(message)
                 {
-                    eprintln!("At queue failure status: {error}");
+                    crate::runtime_logs::error("At queue failure status", &error);
                 }
             }
         }
@@ -347,7 +347,7 @@ impl Sessions {
                 match create_runtime_mode(engine.clone(), dir.clone(), self.owner.is_some()) {
                     Ok(r) => r,
                     Err(e) => {
-                        eprintln!("KS initialization failed for {}: {}", dir.path, e.0);
+                        crate::runtime_logs::error("KS initialization", &format!("{}: {}", dir.path, e.0));
                         if !crate::execution::cancelled() {
                             self.failures.insert(dir.path.clone(), e.0.clone());
                         }
@@ -386,6 +386,7 @@ impl Sessions {
                 .render(&ast)
                 .map_err(|e| VmError(format!("{object}: {e}")))?;
             let html = crate::classifier_html::adapt(html, object);
+            let html = if dir.mapped_to.eq_ignore_ascii_case("admin.dbs") { crate::runtime_logs::admin_html(html, object) } else { html };
             let (bytes, _, bad) = encoding_rs::WINDOWS_1251.encode(&html);
             if bad {
                 return Err(VmError(
@@ -449,6 +450,7 @@ impl Sessions {
             return Ok(bytes);
         }
         let html = crate::classifier_html::adapt(html, object);
+        let html = if dir.mapped_to.eq_ignore_ascii_case("admin.dbs") { crate::runtime_logs::admin_html(html, object) } else { html };
         let (bytes, _, bad) = encoding_rs::WINDOWS_1251.encode(&html);
         if bad {
             return Err(VmError("output cannot be encoded as Windows-1251".into()));

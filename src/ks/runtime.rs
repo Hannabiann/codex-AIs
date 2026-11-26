@@ -184,7 +184,7 @@ enum Value {
     SignalMethod(std::sync::Arc<super::signal::Signal>, String),
     HttpOutput,
     LogFile(Rc<file_access::WriteFile>),
-    LogMethod(Rc<RefCell<Option<std::fs::File>>>, String),
+    LogMethod(Rc<file_access::WriteFile>, String),
     Regex(regex::Regex),
     Mutex(Rc<RefCell<super::mutex::NamedMutex>>),
     MutexMethod(Rc<RefCell<super::mutex::NamedMutex>>, String),
@@ -1881,7 +1881,7 @@ impl<'a> Runtime<'a> {
                 .get(&key)
                 .cloned()
                 .unwrap_or(Value::Null)),
-            (Value::LogFile(file), _) => Ok(Value::LogMethod(file.file.clone(), key)),
+            (Value::LogFile(file), _) => Ok(Value::LogMethod(file, key)),
             (Value::Document(_, scope), "Base") => self.database_for(scope),
             (Value::Document(oid, scope), "Volume") => Ok(Value::Volume(
                 scope,
@@ -3140,7 +3140,9 @@ impl<'a> Runtime<'a> {
             }
             Value::LogMethod(file, method) => {
                 use std::io::{Seek, Write};
-                let mut handle = file.borrow_mut();
+                let _guard = file.lock_log()?;
+                let is_log = file.is_log();
+                let mut handle = file.file.borrow_mut();
                 if method == "close" && values.is_empty() {
                     if let Some(file) = handle.as_mut() {
                         file.flush().and_then(|_| file.sync_all()).map_err(|e| e.to_string())?;
@@ -3149,6 +3151,9 @@ impl<'a> Runtime<'a> {
                     return Ok(Value::Null);
                 }
                 let file = handle.as_mut().ok_or("file closed")?;
+                if is_log && matches!(method.as_str(), "writeByte" | "Print" | "PrintS") {
+                    file.seek(std::io::SeekFrom::End(0)).map_err(|e|e.to_string())?;
+                }
                 match method.as_str() {
                     "writeByte" => {
                         let [value] = values.as_slice() else {
@@ -3178,7 +3183,7 @@ impl<'a> Runtime<'a> {
                         if !n.is_finite()
                             || n < 0.0
                             || n.fract() != 0.0
-                            || n > 16.0 * 1024.0 * 1024.0
+                            || n > i64::MAX as f64
                         {
                             return Err("log seek limit".into());
                         }
@@ -3193,7 +3198,7 @@ impl<'a> Runtime<'a> {
                             if bad {
                                 return Err("log encoding error".into());
                             }
-                            if file.stream_position().map_err(|e| e.to_string())?
+                            if !is_log && file.stream_position().map_err(|e| e.to_string())?
                                 + bytes.len() as u64
                                 > 16 * 1024 * 1024
                             {
@@ -4097,6 +4102,7 @@ impl<'a> Runtime<'a> {
                     // when the source has escapeStr/Escape set by /99 SQL KS.
                     if let [Value::LogFile(file)] = values.as_slice() {
                         use std::io::Write;
+                        let _guard = file.lock_log()?;
                         let mut source = stream.borrow_mut();
                         if source.closed {
                             return Err("stream closed".into());
@@ -4401,6 +4407,7 @@ impl<'a> Runtime<'a> {
                     let record = self.read_document(oid, scope)?;
                     let mut bytes = oid.to_le_bytes().to_vec();
                     bytes.extend(crate::db::writer::encode_record(&record)?);
+                    let _guard = file.lock_log()?;
                     let mut handle = file.file.borrow_mut();
                     let file = handle.as_mut().ok_or("file closed")?;
                     file.write_all(&bytes)

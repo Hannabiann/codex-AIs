@@ -159,6 +159,7 @@ pub(crate) async fn wait(
             },
             response=&mut answer => {
                 let response=response.unwrap_or_else(|_|super::message("500 Internal Server Error","KS worker failed"));
+                monitor.response_error(id, &response);
                 if !started { return Ok(Answer::Buffered(response)); }
                 let success=response.status=="200 OK" && response.body.is_empty();
                 if !success {
