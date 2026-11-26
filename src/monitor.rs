@@ -66,7 +66,7 @@ pub struct Monitor {
 impl Default for Monitor {
     fn default() -> Self {
         let settings = crate::settings::Settings::default();
-        let workers = settings.workers.resolve();
+        let workers = settings.workers.resolve(settings.interface_workers);
         Self::new(settings, workers)
     }
 }

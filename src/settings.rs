@@ -107,7 +107,7 @@ impl Settings {
         if seen.len() != FIELDS.len() {
             return Err("Указаны не все параметры Rust".into());
         }
-        crate::pool_layout::Layout::new(workers.resolve().workers, values[9])?;
+        crate::pool_layout::Layout::new(workers.resolve(values[9]).workers, values[9])?;
         Ok(Self {
             interface_workers: values[9],
             log_retention_days: values[10],
@@ -179,6 +179,43 @@ mod tests {
         assert_eq!(Settings::parse(&s.encode()).unwrap(),s);
         assert!(Settings::parse(&(old.to_owned()+"interface_workers=6\n")).is_err());
         assert!(Settings::parse(&(old.to_owned()+"interface_workers=2\ninterface_workers=2\n")).is_err());
+    }
+
+    #[test]
+    fn auto_stays_symbolic_and_applies_only_after_restart() {
+        let directory=std::env::temp_dir().join(format!("codex-auto-settings-{}",nonce().unwrap()));
+        std::fs::create_dir(&directory).unwrap();
+        let path=directory.join("codex-AIs.settings");
+        let manual=Settings { workers:crate::worker_config::Mode::Manual(4), ..Settings::default() };
+        std::fs::write(&path,manual.encode()).unwrap();
+        let store=Store::at(path.clone()).unwrap();
+        assert_eq!(store.worker_selection.workers,4);
+        assert!(store.worker_selection.explanation.contains("Ручная настройка"));
+        let auto=Settings { interface_workers:2, ..Settings::default() };
+        store.save(auto.clone()).unwrap();
+        assert_eq!(store.worker_selection.workers,4);
+        assert_eq!(store.active,manual);
+        assert!(std::fs::read_to_string(&path).unwrap().contains("workers=auto\n"));
+        assert_eq!(Settings::parse(&std::fs::read_to_string(path.with_extension("settings.bak")).unwrap()).unwrap(),manual);
+        let restarted=Store::at(path.clone()).unwrap();
+        assert_eq!(restarted.active,auto);
+        let layout=crate::pool_layout::Layout::new(restarted.worker_selection.workers,2).unwrap();
+        assert_eq!(layout.interfaces,2);
+        assert!(restarted.worker_selection.explanation.contains("Автоматически"));
+        assert_eq!(restarted.worker_selection.workers,auto.workers.resolve(2).workers);
+        let page=String::from_utf8(restarted.response("GET",&[]).body).unwrap();
+        assert!(page.contains("число тяжёлых исполнителей равно доступным физическим ядрам"));
+        assert!(!page.contains("3, 4 или 6"));
+        let monitor=crate::monitor::Monitor::new(auto.clone(),restarted.worker_selection.clone());
+        let page=monitor.html();
+        assert!(page.contains(&format!("data-workers=\"{}\"",restarted.worker_selection.workers)));
+        assert!(page.contains("data-interface-workers=\"2\""));
+        assert!(page.contains(&format!("data-heavy-workers=\"{}\"",restarted.worker_selection.workers-layout.bulk)));
+        assert!(page.contains("SMT/HT"));
+        drop(restarted);drop(store);
+        std::fs::remove_file(path.with_extension("settings.bak")).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(directory).unwrap();
     }
 }
 pub(crate) fn nonce() -> std::io::Result<String> {
@@ -290,7 +327,7 @@ impl Store {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings::default(),
             Err(e) => return Err(e),
         };
-        let mut selection = active.workers.resolve();
+        let mut selection = active.workers.resolve(active.interface_workers);
         let layout = crate::pool_layout::Layout::new(selection.workers, active.interface_workers)
             .map_err(std::io::Error::other)?;
         selection.explanation.push(' ');
@@ -438,7 +475,7 @@ impl Store {
             }
             html.push_str(&format!("<tr><td><label for='{}'>{}</label> ({}–{})</td><td>{active}</td><td><input required type=number id='{}' name='{}' min='{}' max='{}' value='{value}'></td></tr>", field.0, field.1, field.2, field.3, field.0, field.0, field.2, field.3));
         }
-        html.push_str("</table><button type=submit>Сохранить настройки Rust</button></form><h2>Параметры оригинального сервера</h2><p>Порт HTTP сохраняется в config.db4 отдельной кнопкой ниже. Остальные параметры этой страницы сохраняются в codex-AIs.settings. Число исполнителей и очередь Rust задаются выше. По умолчанию действует auto: при запуске выбирается 3, 4 или 6 исполнителей по доступным CPU. Владелец каталогов/Word/At всегда один. Число выделенных исполнителей интерфейса задаётся отдельно и входит в общее число workers. При четырёх и более исполнителях ещё один выделен поиску, оставшиеся обслуживают общую очередь отчётов и удалений. По умолчанию interface_workers=1; для нескольких нужны workers не меньше interface_workers + 3. Увеличение interface_workers при неизменном workers уменьшает число тяжёлых мест. Ручное число 1–32 имеет приоритет над auto, включая сохранённые настройки прежних версий. При 1 исполнителе работа последовательная, при 2 интерфейс разделяет владельца. Увеличение числа исполнителей увеличивает потребление памяти кэшами. Публикация DB4 согласована и последовательна; расчёты идут параллельно. Ограничение памяти старого Win32-процесса не применяется к Rust: кэши имеют собственные пределы, это не жёсткий предел всей памяти процесса.</p><p>HTTP/1.1 keep-alive включён по умолчанию, HTTP/1.0 — по запросу клиента. Таймаут выше относится только к ожиданию следующего запроса, в том числе Word /99, и не ограничивает длительность расчёта. Сжатие ответов пока не реализовано. Периодическую очистку нативного хэша заменяют ограниченные кэши Rust. Заголовок X-Real-IP не подменяет адрес клиента. По умолчанию доступны все IPv4-интерфейсы; выше можно выбрать только localhost. Явный KODEKS_HOST имеет приоритет над сохранённым выбором. Порт читается при запуске из config.db4 (SOFTWARE\\Kodeks\\Web, Port); KODEKS_PORT имеет приоритет. Если параметра нет, используется 8070. Для смены порта нужен перезапуск. Таймаут отправки ответа отсчитывается после вычисления результата и не ограничивает длительность отчёта.</p><p><a href='/admin?status'>Состояние сервера и очереди</a></p></html>");
+        html.push_str("</table><button type=submit>Сохранить настройки Rust</button></form><h2>Параметры оригинального сервера</h2><p>Порт HTTP сохраняется в config.db4 отдельной кнопкой ниже. Остальные параметры этой страницы сохраняются в codex-AIs.settings. Число исполнителей и очередь Rust задаются выше. По умолчанию действует auto: число тяжёлых исполнителей равно доступным физическим ядрам CPU, SMT/HT отдельно не учитываются. Владелец, поиск и сохранённое число интерфейсных мест добавляются к тяжёлым; общий предел — 32. Если топология недоступна, монитор явно показывает оценку. Владелец каталогов/Word/At всегда один. Число выделенных исполнителей интерфейса задаётся отдельно и входит в общее число workers. При четырёх и более исполнителях ещё один выделен поиску, оставшиеся обслуживают общую очередь отчётов и удалений. По умолчанию interface_workers=1; для нескольких нужны workers не меньше interface_workers + 3. При ручном workers увеличение interface_workers уменьшает число тяжёлых мест. При auto интерфейсные места добавляются отдельно, пока не достигнут общий предел 32. Ручное число 1–32 имеет приоритет над auto, включая сохранённые настройки прежних версий. При 1 исполнителе работа последовательная, при 2 интерфейс разделяет владельца. Увеличение числа исполнителей увеличивает потребление памяти кэшами. Публикация DB4 согласована и последовательна; расчёты идут параллельно. Ограничение памяти старого Win32-процесса не применяется к Rust: кэши имеют собственные пределы, это не жёсткий предел всей памяти процесса.</p><p>HTTP/1.1 keep-alive включён по умолчанию, HTTP/1.0 — по запросу клиента. Таймаут выше относится только к ожиданию следующего запроса, в том числе Word /99, и не ограничивает длительность расчёта. Сжатие ответов пока не реализовано. Периодическую очистку нативного хэша заменяют ограниченные кэши Rust. Заголовок X-Real-IP не подменяет адрес клиента. По умолчанию доступны все IPv4-интерфейсы; выше можно выбрать только localhost. Явный KODEKS_HOST имеет приоритет над сохранённым выбором. Порт читается при запуске из config.db4 (SOFTWARE\\Kodeks\\Web, Port); KODEKS_PORT имеет приоритет. Если параметра нет, используется 8070. Для смены порта нужен перезапуск. Таймаут отправки ответа отсчитывается после вычисления результата и не ограничивает длительность отчёта.</p><p><a href='/admin?status'>Состояние сервера и очереди</a></p></html>");
         crate::server::Response {
             status,
             mime: "text/html; charset=utf-8",

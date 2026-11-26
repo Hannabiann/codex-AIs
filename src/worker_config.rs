@@ -17,13 +17,13 @@ impl Mode {
             _ => Err("Исполнители KS/DB: укажите auto или целое число 1–32".into()),
         }
     }
-    pub fn resolve(self) -> Selection {
+    pub fn resolve(self, interface_workers: usize) -> Selection {
         match self {
             Self::Manual(workers) => Selection {
                 workers,
                 explanation: format!("Ручная настройка workers={workers}. Она имеет приоритет; автоматический подбор не применяется."),
             },
-            Self::Auto => select_auto(CpuInfo::detect()),
+            Self::Auto => select_auto(CpuInfo::detect(), interface_workers),
         }
     }
 }
@@ -46,7 +46,10 @@ struct CpuInfo {
     cores: Option<usize>,
     source: String,
 }
-fn select_auto(info: CpuInfo) -> Selection {
+fn select_auto(info: CpuInfo, interface_workers: usize) -> Selection {
+    // Settings validates 1..=8 before resolving the pool. Preserve the saved
+    // interface count and reserve one owner and one search worker even on one CPU.
+    assert!((1..=8).contains(&interface_workers));
     let logical = info.logical.filter(|n| *n > 0);
     let cores = info.cores.filter(|n| *n > 0);
     let estimated = cores.is_none();
@@ -54,25 +57,27 @@ fn select_auto(info: CpuInfo) -> Selection {
         .or_else(|| logical.map(|n| n.div_ceil(2)))
         .unwrap_or(1)
         .min(logical.unwrap_or(usize::MAX));
-    let workers = match effective {
-        0..=2 => 3,
-        3..=5 => 4,
-        _ => 6,
-    };
+    let reserved = interface_workers + 2;
+    let heavy = effective.min(32 - reserved);
+    let workers = heavy + reserved;
     let topology = if estimated {
         if logical.is_some() {
             "Топология не определена; оценка: два логических CPU на ядро."
         } else {
-            "Сведения о CPU недоступны; принят минимальный пул."
+            "Сведения о CPU недоступны; принят один тяжёлый исполнитель."
         }
     } else {
-        "Учтены ядра и доступный параллелизм."
+        "Учтены физические ядра и доступный параллелизм; SMT/HT не считаются отдельными ядрами."
+    };
+    let cap = if heavy < effective {
+        format!(" Сработал предел 32 исполнителя: тяжёлых {heavy} вместо {effective}.")
+    } else {
+        String::new()
     };
     Selection {
         workers,
         explanation: format!(
-            "Автоматически: {workers} {} всего. Доступный параллелизм CPU: {}; ядер для расчёта: {effective}. {topology} {} Правило: 1–2 ядра → 3 исполнителя, 3–5 → 4, от 6 → 6. Выбор сделан при запуске; память и текущая загрузка не определяют размер пула.",
-            if workers == 6 { "исполнителей" } else { "исполнителя" },
+            "Автоматически: всего {workers}; тяжёлых — {heavy}; владелец/Word — 1; интерфейс — {interface_workers}; поиск — 1. Доступный параллелизм CPU: {}; ядер для расчёта: {effective}. {topology} {} Правило: число тяжёлых равно доступным физическим ядрам; остальные места добавляются отдельно.{cap} Выбор сделан при запуске; память и текущая загрузка не определяют размер пула.",
             logical.map(|n| n.to_string()).unwrap_or_else(|| "не определён".into()),
             info.source,
         ),
@@ -329,3 +334,82 @@ fn platform(info: &mut CpuInfo) {
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "freebsd")))]
 fn platform(_: &mut CpuInfo) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn info(logical: Option<usize>, cores: Option<usize>) -> CpuInfo {
+        CpuInfo { logical, cores, source: "test topology".into() }
+    }
+
+    #[test]
+    fn auto_counts_physical_cores_and_keeps_three_dedicated_roles() {
+        for (logical, cores, total) in [(1,1,4),(2,1,4),(2,2,5),(4,4,7),(12,6,9),(6,6,9),(16,8,11)] {
+            let selection=select_auto(info(Some(logical),Some(cores)),1);
+            assert_eq!(selection.workers,total);
+            let layout=crate::pool_layout::Layout::new(total,1).unwrap();
+            assert_eq!(layout.interfaces,1);
+            assert_eq!(layout.search,2);
+            assert_eq!(total-layout.bulk,cores);
+            assert!(selection.explanation.contains("SMT/HT"));
+        }
+    }
+
+    #[test]
+    fn auto_preserves_configured_interfaces_and_caps_total() {
+        for interfaces in 1..=8 {
+            let selection=select_auto(info(Some(16),Some(8)),interfaces);
+            let layout=crate::pool_layout::Layout::new(selection.workers,interfaces).unwrap();
+            assert_eq!(selection.workers,8+interfaces+2);
+            assert_eq!(selection.workers-layout.bulk,8);
+            let limited=select_auto(info(Some(128),Some(64)),interfaces);
+            let layout=crate::pool_layout::Layout::new(limited.workers,interfaces).unwrap();
+            assert_eq!(limited.workers,32);
+            assert_eq!(32-layout.bulk,30-interfaces);
+            assert!(limited.explanation.contains("предел 32"));
+        }
+    }
+
+    #[test]
+    fn auto_respects_cpu_limits_and_explains_fallback() {
+        assert_eq!(select_auto(info(Some(2),Some(8)),1).workers,5);
+        let estimated=select_auto(info(Some(5),None),1);
+        assert_eq!(estimated.workers,6);
+        assert!(estimated.explanation.contains("Топология не определена"));
+        let unknown=select_auto(info(None,None),1);
+        assert_eq!(unknown.workers,4);
+        assert!(unknown.explanation.contains("Сведения о CPU недоступны"));
+        assert_eq!(select_auto(info(Some(0),Some(0)),1).workers,4);
+    }
+
+    #[test]
+    fn manual_total_is_not_increased_or_replaced_by_auto() {
+        for workers in 1..=32 {
+            for interfaces in 1..=8 {
+                let selection=Mode::Manual(workers).resolve(interfaces);
+                assert_eq!(selection.workers,workers);
+                assert!(selection.explanation.contains("Ручная настройка"));
+            }
+        }
+        assert_eq!(Mode::parse("auto").unwrap(),Mode::Auto);
+        assert_eq!(Mode::Auto.to_string(),"auto");
+    }
+
+    #[test]
+    fn windows_topology_counts_unique_cores_in_allowed_mask() {
+        fn record(mask:u64) -> Vec<u8> {
+            let mut r=vec![0u8;48];
+            r[4..8].copy_from_slice(&48u32.to_le_bytes());
+            r[30..32].copy_from_slice(&1u16.to_le_bytes());
+            r[32..40].copy_from_slice(&mask.to_le_bytes());
+            r
+        }
+        let bytes=[record(0b0011),record(0b1100)].concat();
+        assert_eq!(windows_cores(&bytes,8,0,0b1111),Some(2));
+        assert_eq!(windows_cores(&bytes,8,0,0b0011),Some(1));
+        assert_eq!(windows_cores(&bytes,8,0,0b0101),Some(2));
+        assert_eq!(windows_cores(&bytes,8,0,0b10000),None);
+        assert_eq!(windows_cores(&bytes[..47],8,0,0b1111),None);
+    }
+}
