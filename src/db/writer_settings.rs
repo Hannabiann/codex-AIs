@@ -4,22 +4,25 @@ use crate::db::{mainkey::MainKey, registry::Entry};
 use std::sync::Arc;
 use std::collections::BTreeSet;
 
-fn find(index: &mut MainKey, parent: u32, name: &str) -> Result<Option<Record>, String> {
+fn find_all(index: &mut MainKey, parent: u32, name: &str) -> Result<Vec<Record>, String> {
     let key = text_key(name.as_bytes());
     let ids = index.text_candidates(621, 1, |s| s == key)?;
-    let mut found = None;
+    let mut found = Vec::new();
     for oid in ids {
         let entry = index
             .lookup(oid)?
             .ok_or("registry name index points to absent object")?;
         let record = index.record(entry)?;
         if record.area == 621 && record.integer(3) == Some(parent) {
-            if found.replace(record).is_some() {
-                return Err("duplicate registry setting".into());
-            }
+            found.push(record);
         }
     }
     Ok(found)
+}
+fn find(index: &mut MainKey, parent: u32, name: &str) -> Result<Option<Record>, String> {
+    // Native QueryValue selects the lowest active OID. text_candidates returns
+    // sorted, unique OIDs; retained duplicate names are not database damage.
+    Ok(find_all(index, parent, name)?.into_iter().next())
 }
 pub(crate) fn read(path: &Path, parent: u32, names: &[&str]) -> Result<Vec<Entry>, String> {
     let mut index = MainKey::open(path)?;
@@ -77,25 +80,27 @@ pub(crate) fn save(path: &Path, parent: u32, updates: &[Update]) -> Result<(), S
         {
             return Err("invalid numeric directory setting".into());
         }
-        let current = find(&mut index, parent, &u.name)?;
-        let current_value = current.as_ref().and_then(crate::db::registry::string_value);
+        let current = find_all(&mut index, parent, &u.name)?;
+        let current_value = current.first().and_then(crate::db::registry::string_value);
         if current_value != u.expected {
             return Err("Настройки изменились. Откройте форму заново.".into());
         }
-        if current_value == u.value {
+        if current_value == u.value && current.iter().all(|r|
+            crate::db::registry::string_value(r) == u.value
+                && r.string(5) == Some(u.kind.as_bytes())) {
             continue;
         }
         let Some(next) = &u.value else {
-            if let Some(record) = current {
+            for record in current {
                 deletions.push((record.integer(1024).ok_or("registry OID missing")?, false));
             }
             continue;
         };
-        let mut record = if let Some(record) = current {
+        let mut records = if let Some(record) = current.first() {
             if record.string(5) != Some(u.kind.as_bytes()) {
                 return Err("registry type changed".into());
             }
-            record
+            current
         } else {
             loop {
                 next_oid = next_oid.checked_add(1).ok_or("registry OID overflow")?;
@@ -103,7 +108,7 @@ pub(crate) fn save(path: &Path, parent: u32, updates: &[Update]) -> Result<(), S
                     break;
                 }
             }
-            Record {
+            vec![Record {
                 area: 621,
                 flags: 5,
                 fields: vec![
@@ -134,15 +139,27 @@ pub(crate) fn save(path: &Path, parent: u32, updates: &[Update]) -> Result<(), S
                     },
                 ]
                 .into(),
-            }
+            }]
         };
-        let fields = Arc::make_mut(&mut record.fields);
-        if fields.iter().filter(|f| f.id == 4).count() != 1 {
-            return Err("unsupported multivalue numeric setting".into());
+        // Directory SaveState must update every retained copy. Otherwise the
+        // native property enumeration may restore a different value on restart.
+        // Keep OIDs, names and parent links; do not deduplicate the database.
+        for mut record in records.drain(..) {
+            if crate::db::registry::string_value(&record).as_ref() == Some(next)
+                && record.string(5) == Some(u.kind.as_bytes()) {
+                continue;
+            }
+            let fields = Arc::make_mut(&mut record.fields);
+            if fields.iter().filter(|f| f.id == 4).count() != 1 {
+                return Err("unsupported multivalue numeric setting".into());
+            }
+            fields.iter_mut().find(|f| f.id == 4).unwrap().value =
+                Value::String(next.as_bytes().to_vec());
+            fields.retain(|f| f.id != 5);
+            fields.push(Field { id: 5, wire_type: 2, value: Value::String(u.kind.as_bytes().to_vec()) });
+            canonicalize(&mut record);
+            changes.push(record);
         }
-        fields.iter_mut().find(|f| f.id == 4).unwrap().value =
-            Value::String(next.as_bytes().to_vec());
-        changes.push(record);
     }
     if changes.is_empty() && deletions.is_empty() {
         return Ok(());
@@ -155,16 +172,19 @@ pub(crate) fn save(path: &Path, parent: u32, updates: &[Update]) -> Result<(), S
     let candidate = Arc::new(candidate);
     let mut verify = MainKey::from_image(candidate.clone())?;
     for u in updates {
-        let r = find(&mut verify, parent, &u.name)?;
-        if r.as_ref().and_then(crate::db::registry::string_value) != u.value
-            || r.as_ref()
-                .is_some_and(|r| r.string(5) != Some(u.kind.as_bytes()))
-        {
+        let records = find_all(&mut verify, parent, &u.name)?;
+        if records.is_empty() != u.value.is_none()
+            || records.iter().any(|r| crate::db::registry::string_value(r) != u.value
+                || r.string(5) != Some(u.kind.as_bytes())) {
             return Err("registry setting verification failed".into());
         }
     }
     publish_checked(path, old, candidate, started)
 }
+
+#[cfg(test)]
+#[path = "writer_settings_tests.rs"]
+mod tests;
 pub(super) fn legacy(
     index: &mut MainKey,
     old: &[u8],

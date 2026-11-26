@@ -276,6 +276,10 @@ impl Sessions {
             let (code, mut headers) = self.runtimes[&dir.path]
                 .response_headers()
                 .map_err(VmError)?;
+            if code < 400 {
+                self.runtimes.get_mut(&dir.path).unwrap()
+                    .commit_statistics_cache().map_err(VmError)?;
+            }
             if matches!(object, "raspred_settings" | "adminsettings") {
                 headers.push(("Cache-Control".into(), "no-store".into()));
             }

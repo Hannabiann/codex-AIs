@@ -17,6 +17,7 @@ pub struct Settings {
     pub write_seconds: u64,
     pub history: usize,
     pub workers: crate::worker_config::Mode,
+    pub interface_workers: usize,
     pub keep_alive_seconds: u64,
     pub listen_scope: crate::listen_config::Scope,
 }
@@ -30,12 +31,13 @@ impl Default for Settings {
             write_seconds: 15,
             history: 128,
             workers: crate::worker_config::Mode::Auto,
+            interface_workers: 1,
             keep_alive_seconds: 60,
             listen_scope: crate::listen_config::Scope::All,
         }
     }
 }
-const FIELDS: [(&str, &str, usize, usize); 9] = [
+const FIELDS: [(&str, &str, usize, usize); 10] = [
     ("connections", "Одновременные HTTP-соединения", 8, 4096),
     ("queue", "Ожидающие запросы KS", 1, 256),
     ("header_seconds", "Чтение HTTP-заголовков, секунд", 1, 300),
@@ -50,9 +52,10 @@ const FIELDS: [(&str, &str, usize, usize); 9] = [
         600,
     ),
     ("listen_scope", "Сетевые интерфейсы", 0, 0),
+    ("interface_workers", "Исполнители интерфейса (входят в общее число)", 1, 8),
 ];
 impl Settings {
-    fn values(&self) -> [String; 9] {
+    fn values(&self) -> [String; 10] {
         [
             self.connections.to_string(),
             self.queue.to_string(),
@@ -63,10 +66,11 @@ impl Settings {
             self.workers.to_string(),
             self.keep_alive_seconds.to_string(),
             self.listen_scope.text().into(),
+            self.interface_workers.to_string(),
         ]
     }
     fn from_pairs(pairs: &[(String, String)]) -> Result<Self, String> {
-        let mut values = [0; 8];
+        let mut values = [0; 10];
         let mut workers = crate::worker_config::Mode::Auto;
         let mut listen_scope = crate::listen_config::Scope::All;
         let mut seen = HashSet::new();
@@ -99,7 +103,9 @@ impl Settings {
         if seen.len() != FIELDS.len() {
             return Err("Указаны не все параметры Rust".into());
         }
+        crate::pool_layout::Layout::new(workers.resolve().workers, values[9])?;
         Ok(Self {
+            interface_workers: values[9],
             connections: values[0],
             queue: values[1],
             header_seconds: values[2] as u64,
@@ -125,6 +131,7 @@ impl Settings {
         // Old six-key files retain every saved setting and gain new defaults.
         for (key, value) in [
             ("workers", Self::default().workers.to_string()),
+            ("interface_workers", Self::default().interface_workers.to_string()),
             ("listen_scope", Self::default().listen_scope.text().into()),
             (
                 "keep_alive_seconds",
@@ -152,6 +159,20 @@ pub struct Store {
     saved: Mutex<Settings>,
     path: PathBuf,
     token: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn old_settings_keep_one_interface_and_roundtrip_new_count() {
+        let old="connections=64\nqueue=16\nheader_seconds=10\nbody_seconds=10\nwrite_seconds=15\nhistory=128\nworkers=8\n";
+        let mut s=Settings::parse(old).unwrap();assert_eq!(s.interface_workers,1);
+        s.interface_workers=2;
+        assert_eq!(Settings::parse(&s.encode()).unwrap(),s);
+        assert!(Settings::parse(&(old.to_owned()+"interface_workers=6\n")).is_err());
+        assert!(Settings::parse(&(old.to_owned()+"interface_workers=2\ninterface_workers=2\n")).is_err());
+    }
 }
 pub(crate) fn nonce() -> std::io::Result<String> {
     let mut bytes = [0u8; 32];
@@ -234,6 +255,13 @@ pub(crate) fn atomic_write(path: &Path, text: &[u8]) -> std::io::Result<()> {
 }
 impl Store {
     pub fn load() -> std::io::Result<Self> {
+        if let Some(path) = std::env::var_os("KODEKS_SETTINGS_FILE") {
+            let path = PathBuf::from(path);
+            if !path.is_absolute() || !path.is_file() {
+                return Err(std::io::Error::other("KODEKS_SETTINGS_FILE must name an existing absolute settings file"));
+            }
+            return Self::at(path);
+        }
         let exe = std::env::current_exe()?;
         Self::at(
             exe.parent()
@@ -255,9 +283,14 @@ impl Store {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings::default(),
             Err(e) => return Err(e),
         };
+        let mut selection = active.workers.resolve();
+        let layout = crate::pool_layout::Layout::new(selection.workers, active.interface_workers)
+            .map_err(std::io::Error::other)?;
+        selection.explanation.push(' ');
+        selection.explanation.push_str(&layout.description());
         Ok(Self {
             host: crate::listen_config::host(active.listen_scope).map_err(std::io::Error::other)?,
-            worker_selection: active.workers.resolve(),
+            worker_selection: selection,
             saved: Mutex::new(active.clone()),
             active,
             path,
@@ -397,7 +430,7 @@ impl Store {
             }
             html.push_str(&format!("<tr><td><label for='{}'>{}</label> ({}–{})</td><td>{active}</td><td><input required type=number id='{}' name='{}' min='{}' max='{}' value='{value}'></td></tr>", field.0, field.1, field.2, field.3, field.0, field.0, field.2, field.3));
         }
-        html.push_str("</table><button type=submit>Сохранить настройки Rust</button></form><h2>Параметры оригинального сервера</h2><p>Порт HTTP сохраняется в config.db4 отдельной кнопкой ниже. Остальные параметры этой страницы сохраняются в codex-AIs.settings. Число исполнителей и очередь Rust задаются выше. По умолчанию действует auto: при запуске выбирается 3, 4 или 6 исполнителей по доступным CPU. Два из них выделены для владельца каталогов/Word/At и интерфейса /20a. Ручное число 1–32 имеет приоритет над auto, включая сохранённые настройки прежних версий. При 1 исполнителе работа последовательная, при 2 интерфейс разделяет владельца. Увеличение числа исполнителей увеличивает потребление памяти кэшами. Публикация DB4 согласована и последовательна; расчёты идут параллельно. Ограничение памяти старого Win32-процесса не применяется к Rust: кэши имеют собственные пределы, это не жёсткий предел всей памяти процесса.</p><p>HTTP/1.1 keep-alive включён по умолчанию, HTTP/1.0 — по запросу клиента. Таймаут выше относится только к ожиданию следующего запроса, в том числе Word /99, и не ограничивает длительность расчёта. Сжатие ответов пока не реализовано. Периодическую очистку нативного хэша заменяют ограниченные кэши Rust. Заголовок X-Real-IP не подменяет адрес клиента. Журналы KS задаются KODEKS_LOG_DIR. По умолчанию доступны все IPv4-интерфейсы; выше можно выбрать только localhost. Явный KODEKS_HOST имеет приоритет над сохранённым выбором. Порт читается при запуске из config.db4 (SOFTWARE\\Kodeks\\Web, Port); KODEKS_PORT имеет приоритет. Если параметра нет, используется 8070. Для смены порта нужен перезапуск. Таймаут отправки ответа отсчитывается после вычисления результата и не ограничивает длительность отчёта.</p><p><a href='/admin?status'>Состояние сервера и очереди</a></p></html>");
+        html.push_str("</table><button type=submit>Сохранить настройки Rust</button></form><h2>Параметры оригинального сервера</h2><p>Порт HTTP сохраняется в config.db4 отдельной кнопкой ниже. Остальные параметры этой страницы сохраняются в codex-AIs.settings. Число исполнителей и очередь Rust задаются выше. По умолчанию действует auto: при запуске выбирается 3, 4 или 6 исполнителей по доступным CPU. Владелец каталогов/Word/At всегда один. Число выделенных исполнителей интерфейса задаётся отдельно и входит в общее число workers. При четырёх и более исполнителях ещё один выделен поиску, оставшиеся обслуживают общую очередь отчётов и удалений. По умолчанию interface_workers=1; для нескольких нужны workers не меньше interface_workers + 3. Увеличение interface_workers при неизменном workers уменьшает число тяжёлых мест. Ручное число 1–32 имеет приоритет над auto, включая сохранённые настройки прежних версий. При 1 исполнителе работа последовательная, при 2 интерфейс разделяет владельца. Увеличение числа исполнителей увеличивает потребление памяти кэшами. Публикация DB4 согласована и последовательна; расчёты идут параллельно. Ограничение памяти старого Win32-процесса не применяется к Rust: кэши имеют собственные пределы, это не жёсткий предел всей памяти процесса.</p><p>HTTP/1.1 keep-alive включён по умолчанию, HTTP/1.0 — по запросу клиента. Таймаут выше относится только к ожиданию следующего запроса, в том числе Word /99, и не ограничивает длительность расчёта. Сжатие ответов пока не реализовано. Периодическую очистку нативного хэша заменяют ограниченные кэши Rust. Заголовок X-Real-IP не подменяет адрес клиента. Журналы KS задаются KODEKS_LOG_DIR. По умолчанию доступны все IPv4-интерфейсы; выше можно выбрать только localhost. Явный KODEKS_HOST имеет приоритет над сохранённым выбором. Порт читается при запуске из config.db4 (SOFTWARE\\Kodeks\\Web, Port); KODEKS_PORT имеет приоритет. Если параметра нет, используется 8070. Для смены порта нужен перезапуск. Таймаут отправки ответа отсчитывается после вычисления результата и не ограничивает длительность отчёта.</p><p><a href='/admin?status'>Состояние сервера и очереди</a></p></html>");
         crate::server::Response {
             status,
             mime: "text/html; charset=utf-8",

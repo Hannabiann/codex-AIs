@@ -245,16 +245,18 @@ impl Monitor {
             .count();
         let connection_limit = self.settings.connections;
         let workers = self.workers.workers;
+        let layout = crate::pool_layout::Layout::new(workers, self.settings.interface_workers).expect("validated pool layout");
         let queue_limit = self.settings.queue + workers.saturating_sub(1).min(2);
-        let mut out=format!("<!doctype html><html lang=ru><meta charset=utf-8><meta http-equiv=refresh content=3><title>Состояние сервера</title><style>body{{background:#e3ddda;font:14px Arial;margin:20px}}table{{background:white;border-collapse:collapse;width:100%;min-width:1120px;table-layout:auto}}.table-scroll{{max-width:100%;overflow-x:auto}}th,td{{border:1px solid #aaa;padding:7px 10px;text-align:left;vertical-align:top}}th{{color:#00009a;white-space:nowrap}}td{{white-space:nowrap}}td:nth-child(4){{min-width:280px;max-width:640px;white-space:normal;overflow-wrap:anywhere}}td:nth-child(3),td:nth-child(6),td:nth-child(9){{max-width:260px;white-space:normal;overflow-wrap:break-word}}td:nth-child(1),td:nth-child(5),td:nth-child(7),td:nth-child(8){{font-variant-numeric:tabular-nums}}.lost{{color:#a00}}</style><h2>Состояние сервера · Tokio</h2><p>Соединения: {connections}/{connection_limit}. Очередь KS: {queued}/{queue_limit}. Исполнители KS/DB: {running}/{workers}, свободно: {}. Свободные слоты приёма HTTP: {}.</p><p>Сеть обслуживается Tokio. Состояние фоновых очередей и Word принадлежит исполнителю 1. При 3 и более исполнителях номер 2 обслуживает проверенные формы интерфейса /20a, остальные — удаления, поиск и отчёты. Неизвестные KS обслуживает владелец каталога. Монитор и проверка его доступа выполняются вне очереди KS.</p>",workers.saturating_sub(running),connection_limit.saturating_sub(connections));
+        let mut out=format!("<!doctype html><html lang=ru><meta charset=utf-8><meta http-equiv=refresh content=3><title>Состояние сервера</title><style>body{{background:#e3ddda;font:14px Arial;margin:20px}}table{{background:white;border-collapse:collapse;width:100%;min-width:1120px;table-layout:auto}}.table-scroll{{max-width:100%;overflow-x:auto}}th,td{{border:1px solid #aaa;padding:7px 10px;text-align:left;vertical-align:top}}th{{color:#00009a;white-space:nowrap}}td{{white-space:nowrap}}td:nth-child(4){{min-width:280px;max-width:640px;white-space:normal;overflow-wrap:anywhere}}td:nth-child(3),td:nth-child(6),td:nth-child(9){{max-width:260px;white-space:normal;overflow-wrap:break-word}}td:nth-child(1),td:nth-child(5),td:nth-child(7),td:nth-child(8){{font-variant-numeric:tabular-nums}}.lost{{color:#a00}}</style><h2>Состояние сервера · Tokio</h2><p>Соединения: {connections}/{connection_limit}. Очередь KS: {queued}/{queue_limit}. Исполнители KS/DB: {running}/{workers}, свободно: {}. Свободные слоты приёма HTTP: {}.</p><p>Сеть обслуживается Tokio. Состояние фоновых очередей и Word принадлежит исполнителю 1. Выделенный интерфейс обслуживает только проверенные формы; поиск и общая очередь отчётов/удалений используют остальные места согласно распределению ниже. Неизвестные KS обслуживает владелец каталога. Монитор и проверка его доступа выполняются вне очереди KS.</p>",workers.saturating_sub(running),connection_limit.saturating_sub(connections));
         out.push_str(&format!("<p>{}</p>", escape(&self.workers.explanation)));
+        out.push_str(&format!("<div id=ks-pool data-process-id=\"{}\" data-workers=\"{workers}\" data-interface-workers=\"{}\" data-heavy-workers=\"{}\" data-queue=\"{}\"><p>{}</p></div>",std::process::id(),layout.interfaces,workers-layout.bulk,self.settings.queue,escape(&layout.description())));
         if let Some(address)=crate::listen_config::address() {out.push_str(&format!("<p>HTTP слушатель: {address}. <a href='/admin?advanced'>Настройки интерфейсов и порта</a>.</p>"));}
         if workers >= 3 {
             let heavy_running = active
                 .iter()
                 .filter(|e| {
                     matches!(e.state, State::Running | State::Cancelling)
-                        && e.executor.is_some_and(|index| index >= 3)
+                        && e.executor.is_some_and(|index| index > 1 + layout.interfaces)
                         && e.group != "Интерфейс"
                 })
                 .count();
@@ -262,15 +264,16 @@ impl Monitor {
                 .iter()
                 .filter(|e| {
                     matches!(e.state, State::Running | State::Cancelling)
-                        && e.executor.is_some_and(|index| index >= 3)
+                        && e.executor.is_some_and(|index| index > 1 + layout.interfaces)
                         && e.group == "Интерфейс"
                 })
                 .count();
-            out.push_str(&format!("<p>Пул тяжёлых задач и поиска: {} исполнителей; заняты {heavy_running}, интерфейсу помогают {assisting}, свободны {}. Начатый запрос завершается без переноса на другой поток. Исполнители 1 (владелец/Word) и 2 (интерфейс) не берут тяжёлые задачи.</p>", workers - 2, (workers - 2).saturating_sub(heavy_running + assisting)));
+            let shared = workers - 1 - layout.interfaces;
+            out.push_str(&format!("<p>Пул тяжёлых задач и поиска: {shared} исполнителей; заняты {heavy_running}, интерфейсу помогают {assisting}, свободны {}. Владелец и выделенные исполнители интерфейса не берут тяжёлые задачи.</p>", shared.saturating_sub(heavy_running + assisting)));
             out.push_str(if workers >= 4 {
-                "<p>Исполнитель 3 обслуживает отдельную очередь поиска и не берёт отчёты или удаления. Остальные сначала берут отчёты и удаления из общей очереди, затем помогают поиску. При отсутствии своей работы они также помогают интерфейсу, если исполнитель 2 занят. Поиск может ждать другие поиски или уже начатый запрос интерфейса; лимит ожидающих запросов общий.</p>"
+                "<p>Выделенный поиск не берёт отчёты или удаления. Тяжёлые исполнители берут запросы из общей FIFO-очереди, затем помогают поиску. Свободные поиск и тяжёлые исполнители помогают интерфейсу, когда все его выделенные места заняты. Уже начатый запрос не переносится и не прерывается ради следующего.</p>"
             } else {
-                "<p>При трёх исполнителях поиск, отчёты и удаления используют одну очередь исполнителя 3. Когда она пуста, он помогает интерфейсу, если исполнитель 2 занят.</p>"
+                "<p>При трёх исполнителях поиск и тяжёлые задачи разделяют одно место и помогают занятому интерфейсу.</p>"
             });
         }
         out.push_str("<p>Готовые CSS, JavaScript и изображения: общий кэш до 32 МиБ, до 1024 записей; один ресурс до 4 МиБ. Выдача и проверка доступа выполняются вне KS, не более четырёх одновременно. Браузер проверяет ETag при повторном запросе. Ответы KS, HTML-формы и документы не кэшируются.</p>");

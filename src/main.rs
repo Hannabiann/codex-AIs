@@ -14,6 +14,7 @@ mod server;
 mod settings;
 mod vm;
 mod worker_config;
+mod pool_layout;
 use std::{path::PathBuf, sync::Arc};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

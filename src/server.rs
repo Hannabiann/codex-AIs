@@ -474,33 +474,34 @@ struct RequestJob {
     control: Arc<crate::execution::Control>,
     queued: tokio::sync::OwnedSemaphorePermit,
 }
+#[cfg(test)]
+#[path = "server_scheduling_tests.rs"]
+mod scheduling_tests;
 struct Worker {
     sender: tokio::sync::mpsc::Sender<RequestJob>,
 }
 type WorkerInbox = Arc<std::sync::Mutex<tokio::sync::mpsc::Receiver<RequestJob>>>;
-struct InterfaceBusy<'a>(&'a std::sync::atomic::AtomicBool);
+struct InterfaceBusy<'a>(&'a std::sync::atomic::AtomicUsize);
 impl<'a> InterfaceBusy<'a> {
-    fn enter(busy: &'a std::sync::atomic::AtomicBool) -> Self {
-        busy.store(true, std::sync::atomic::Ordering::Release);
+    fn enter(busy: &'a std::sync::atomic::AtomicUsize) -> Self {
+        busy.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         Self(busy)
     }
 }
 impl Drop for InterfaceBusy<'_> {
     fn drop(&mut self) {
-        self.0.store(false, std::sync::atomic::Ordering::Release);
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
     }
 }
 
-fn worker_channels(count: usize, capacity: usize) -> (Vec<Worker>, Vec<WorkerInbox>) {
-    let mut workers: Vec<Worker> = Vec::with_capacity(count);
-    let mut inboxes: Vec<WorkerInbox> = Vec::with_capacity(count);
-    for index in 0..count {
-        if index >= 4 {
-            // Executor 3 has a search queue; all bulk executors share FIFO.
-            workers.push(Worker {
-                sender: workers[3].sender.clone(),
-            });
-            inboxes.push(inboxes[3].clone());
+fn worker_channels(layout: crate::pool_layout::Layout, capacity: usize) -> (Vec<Worker>, Vec<WorkerInbox>) {
+    let mut workers: Vec<Worker> = Vec::with_capacity(layout.total);
+    let mut inboxes: Vec<WorkerInbox> = Vec::with_capacity(layout.total);
+    for index in 0..layout.total {
+        let receiver = layout.receiver(index);
+        if receiver < index {
+            workers.push(Worker { sender: workers[receiver].sender.clone() });
+            inboxes.push(inboxes[receiver].clone());
         } else {
             let (sender, receiver) = tokio::sync::mpsc::channel(capacity);
             workers.push(Worker { sender });
@@ -510,6 +511,7 @@ fn worker_channels(count: usize, capacity: usize) -> (Vec<Worker>, Vec<WorkerInb
     (workers, inboxes)
 }
 struct Dispatcher {
+    layout: crate::pool_layout::Layout,
     workers: Vec<Worker>,
     queue: Arc<tokio::sync::Semaphore>,
     ais_paths: Vec<String>,
@@ -742,24 +744,11 @@ impl Dispatcher {
                 reserve.clone().try_acquire_owned()
             })
             .map_err(|_| ())?;
-        let index = match (count, lane) {
-            (1, _) | (_, Lane::Owner) => 0,
-            (n, Lane::Interface) => {
-                if n >= 3 {
-                    1
-                } else {
-                    0
-                }
-            }
-            (n, Lane::Heavy | Lane::Search) => {
-                if n >= 4 && lane == Lane::Heavy {
-                    3
-                } else if n >= 3 {
-                    2
-                } else {
-                    1
-                }
-            }
+        let index = match lane {
+            Lane::Owner => 0,
+            Lane::Interface => self.layout.interface(),
+            Lane::Search => self.layout.search,
+            Lane::Heavy => self.layout.bulk,
         };
         let worker = &self.workers[index];
         worker
@@ -892,16 +881,16 @@ fn start_dispatcher(
         .to_owned();
     let (warm_tx, warm_rx) = tokio::sync::mpsc::channel(32);
     let mut warm_rx = Some(warm_rx);
-    let (workers, inboxes) = worker_channels(worker_count, settings.queue + 1);
-    let interface = (worker_count >= 3).then(|| inboxes[1].clone());
-    let search = (worker_count >= 4).then(|| inboxes[2].clone());
-    let interface_busy = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let search_busy = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let layout = crate::pool_layout::Layout::new(worker_count, settings.interface_workers)
+        .map_err(std::io::Error::other)?;
+    let (workers, inboxes) = worker_channels(layout, settings.queue + 1);
+    let interface = (worker_count >= 3).then(|| inboxes[layout.interface()].clone());
+    let search = (worker_count >= 4).then(|| inboxes[layout.search].clone());
+    let interface_busy = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let search_busy = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for (index, rx) in inboxes.into_iter().enumerate() {
-        let interface = if index >= 2 { interface.clone() } else { None };
-        // Bulk workers help searches only when their own FIFO is empty. The
-        // dedicated search executor never starts an unbounded report/delete.
-        let search = if index >= 3 { search.clone() } else { None };
+        let interface = if layout.helps_interface(index) { interface.clone() } else { None };
+        let search = if index >= layout.bulk && worker_count >= 4 { search.clone() } else { None };
         let interface_busy = interface_busy.clone();
         let search_busy = search_busy.clone();
         let root = root.clone();
@@ -940,9 +929,9 @@ fn start_dispatcher(
                     // Otherwise a cold helper can turn a fast page into startup.
                     let help = interface
                         .as_ref()
-                        .filter(|_| interface_busy.load(std::sync::atomic::Ordering::Acquire));
+                        .filter(|_| interface_busy.load(std::sync::atomic::Ordering::Acquire) >= layout.interfaces);
                     let search_help = search.as_ref()
-                        .filter(|_| search_busy.load(std::sync::atomic::Ordering::Acquire));
+                        .filter(|_| search_busy.load(std::sync::atomic::Ordering::Acquire) > 0);
                     let next = next_job(&rx, search_help, help);
                     match next {
                         Ok(RequestJob {
@@ -953,9 +942,9 @@ fn start_dispatcher(
                             control,
                             queued,
                         }) => {
-                            let _busy = (index == 1 && worker_count >= 3)
+                            let _busy = layout.is_interface(index)
                                 .then(|| InterfaceBusy::enter(&interface_busy));
-                            let _search_busy = (index == 2 && worker_count >= 4)
+                            let _search_busy = (index == layout.search && worker_count >= 4)
                                 .then(|| InterfaceBusy::enter(&search_busy));
                             drop(queued);
                             let _scope = crate::execution::Scope::enter(control.clone());
@@ -1041,6 +1030,7 @@ fn start_dispatcher(
             })?;
     }
     Ok(Arc::new(Dispatcher {
+        layout,
         workers,
         queue: Arc::new(tokio::sync::Semaphore::new(settings.queue)),
         ais_paths: engine

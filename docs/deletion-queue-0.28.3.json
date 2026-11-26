@@ -1,0 +1,830 @@
+{
+  "date": "2026-11-26",
+  "version": "0.28.3",
+  "units": {
+    "seconds": "wall-clock seconds including queue",
+    "cpu_s": "sum of sampled process CPU time",
+    "peak_private_mib": "peak sampled sum of process private memory, MiB"
+  },
+  "method": {
+    "workers": 6,
+    "volumes": 49,
+    "report": "Отчёт о работе суда ф.1АС",
+    "report_route": "/20a?StatOtchet221",
+    "report_launch_s": [
+      0,
+      0.3,
+      0.6
+    ],
+    "deletion_launch_s": [
+      4,
+      4.1
+    ],
+    "objects_per_deletion": [
+      1,
+      5
+    ],
+    "interactive_clients": 2,
+    "interactive_interval_s": 2,
+    "monitor_interval_s": 0.5,
+    "process_sampling_interval_s": 1,
+    "os_file_cache_cleared": false
+  },
+  "runs": [
+    {
+      "label": "baseline",
+      "exe_sha256": "256bddd6119c0e7aa79c969f0793c3e8961e204c9c8314dc528d6a643ae64935",
+      "heavy": [
+        {
+          "name": "report-1",
+          "seconds": 39.699163,
+          "launch_s": 0.267492,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.461107
+          ],
+          "executors": [
+            "4"
+          ],
+          "period": "2025-01-15"
+        },
+        {
+          "name": "report-2",
+          "seconds": 39.264116,
+          "launch_s": 0.361157,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.367441
+          ],
+          "executors": [
+            "5"
+          ],
+          "period": "2025-01-16"
+        },
+        {
+          "name": "delete-1",
+          "seconds": 27.862377,
+          "launch_s": 4.005626,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.383405
+          ],
+          "executors": [
+            "6"
+          ]
+        },
+        {
+          "name": "delete-2",
+          "seconds": 29.242619,
+          "launch_s": 4.104939,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            27.580163,
+            28.135958
+          ],
+          "executors": [
+            "6"
+          ]
+        }
+      ],
+      "interactive": {
+        "home": {
+          "requests": 19,
+          "errors": 0,
+          "median_s": 0.054991,
+          "p95_s": 0.148856,
+          "max_s": 0.148856
+        },
+        "word": {
+          "requests": 19,
+          "errors": 0,
+          "median_s": 0.03926,
+          "p95_s": 0.053307,
+          "max_s": 0.053307
+        }
+      },
+      "cpu_s": 90.84375,
+      "peak_private_mib": 1076.730469,
+      "data_verified": true,
+      "server": "Codex-AIs 0.28.2",
+      "scenario_report_count": 2,
+      "all_reports_finished_s": 39.966654
+    },
+    {
+      "label": "baseline-repeat",
+      "exe_sha256": "256bddd6119c0e7aa79c969f0793c3e8961e204c9c8314dc528d6a643ae64935",
+      "heavy": [
+        {
+          "name": "report-1",
+          "seconds": 35.938511,
+          "launch_s": 0.103192,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.551478
+          ],
+          "executors": [
+            "5"
+          ],
+          "period": "2025-01-15"
+        },
+        {
+          "name": "report-2",
+          "seconds": 34.909548,
+          "launch_s": 0.376957,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.277713
+          ],
+          "executors": [
+            "4"
+          ],
+          "period": "2025-01-16"
+        },
+        {
+          "name": "delete-1",
+          "seconds": 14.641814,
+          "launch_s": 4.002717,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.309129
+          ],
+          "executors": [
+            "6"
+          ]
+        },
+        {
+          "name": "delete-2",
+          "seconds": 15.891177,
+          "launch_s": 4.102045,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            14.355699,
+            14.889808
+          ],
+          "executors": [
+            "6"
+          ]
+        }
+      ],
+      "interactive": {
+        "home": {
+          "requests": 17,
+          "errors": 0,
+          "median_s": 0.067857,
+          "p95_s": 0.082531,
+          "max_s": 0.082531
+        },
+        "word": {
+          "requests": 17,
+          "errors": 0,
+          "median_s": 0.035948,
+          "p95_s": 0.09797,
+          "max_s": 0.09797
+        }
+      },
+      "cpu_s": 84.15625,
+      "peak_private_mib": 1052.171875,
+      "data_verified": true,
+      "server": "Codex-AIs 0.28.2",
+      "scenario_report_count": 2,
+      "all_reports_finished_s": 36.041703
+    },
+    {
+      "label": "baseline-saturated",
+      "exe_sha256": "256bddd6119c0e7aa79c969f0793c3e8961e204c9c8314dc528d6a643ae64935",
+      "heavy": [
+        {
+          "name": "report-1",
+          "seconds": 35.558446,
+          "launch_s": 0.146179,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.587459
+          ],
+          "executors": [
+            "6"
+          ],
+          "period": "2025-01-15"
+        },
+        {
+          "name": "report-2",
+          "seconds": 36.209522,
+          "launch_s": 0.36488,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.368759
+          ],
+          "executors": [
+            "5"
+          ],
+          "period": "2025-01-16"
+        },
+        {
+          "name": "report-3",
+          "seconds": 33.995014,
+          "launch_s": 0.627369,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.10627
+          ],
+          "executors": [
+            "4"
+          ],
+          "period": "2025-01-15"
+        },
+        {
+          "name": "delete-1",
+          "seconds": 43.950072,
+          "launch_s": 4.002531,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            30.369728,
+            30.901403
+          ],
+          "executors": [
+            "4"
+          ]
+        },
+        {
+          "name": "delete-2",
+          "seconds": 44.780254,
+          "launch_s": 4.102346,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            31.312635,
+            31.850355
+          ],
+          "executors": [
+            "6"
+          ]
+        }
+      ],
+      "interactive": {
+        "home": {
+          "requests": 23,
+          "errors": 0,
+          "median_s": 0.065797,
+          "p95_s": 0.104785,
+          "max_s": 0.201668
+        },
+        "word": {
+          "requests": 24,
+          "errors": 0,
+          "median_s": 0.040618,
+          "p95_s": 0.064227,
+          "max_s": 0.17351
+        }
+      },
+      "cpu_s": 119.265625,
+      "peak_private_mib": 1309.695312,
+      "data_verified": true,
+      "server": "Codex-AIs 0.28.2",
+      "scenario_report_count": 3,
+      "all_reports_finished_s": 36.574402
+    },
+    {
+      "label": "candidate",
+      "exe_sha256": "f5521d7dec3b42865d85348461de28bc32726feeb93cca9426d5aa7328510d6f",
+      "heavy": [
+        {
+          "name": "report-1",
+          "seconds": 32.1796,
+          "launch_s": 0.18428,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.594752
+          ],
+          "executors": [
+            "6"
+          ],
+          "period": "2025-01-15"
+        },
+        {
+          "name": "report-2",
+          "seconds": 58.795265,
+          "launch_s": 0.355405,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            31.4555,
+            32.01239
+          ],
+          "executors": [
+            "6"
+          ],
+          "period": "2025-01-16"
+        },
+        {
+          "name": "delete-1",
+          "seconds": 14.332049,
+          "launch_s": 4.005597,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.467946
+          ],
+          "executors": [
+            "4"
+          ]
+        },
+        {
+          "name": "delete-2",
+          "seconds": 15.099808,
+          "launch_s": 4.107196,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.366346
+          ],
+          "executors": [
+            "5"
+          ]
+        }
+      ],
+      "interactive": {
+        "home": {
+          "requests": 29,
+          "errors": 0,
+          "median_s": 0.054477,
+          "p95_s": 0.073961,
+          "max_s": 0.07913
+        },
+        "word": {
+          "requests": 29,
+          "errors": 0,
+          "median_s": 0.037896,
+          "p95_s": 0.051129,
+          "max_s": 0.068614
+        }
+      },
+      "cpu_s": 76.21875,
+      "peak_private_mib": 815.410156,
+      "data_verified": true,
+      "server": "Codex-AIs 0.28.3",
+      "scenario_report_count": 2,
+      "all_reports_finished_s": 59.150669
+    },
+    {
+      "label": "candidate-repeat",
+      "exe_sha256": "f5521d7dec3b42865d85348461de28bc32726feeb93cca9426d5aa7328510d6f",
+      "heavy": [
+        {
+          "name": "report-1",
+          "seconds": 31.085954,
+          "launch_s": 0.131439,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.578234
+          ],
+          "executors": [
+            "6"
+          ],
+          "period": "2025-01-15"
+        },
+        {
+          "name": "report-2",
+          "seconds": 60.041111,
+          "launch_s": 0.381466,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            30.371984,
+            30.910565
+          ],
+          "executors": [
+            "6"
+          ],
+          "period": "2025-01-16"
+        },
+        {
+          "name": "delete-1",
+          "seconds": 13.606305,
+          "launch_s": 4.001117,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.378997
+          ],
+          "executors": [
+            "4"
+          ]
+        },
+        {
+          "name": "delete-2",
+          "seconds": 14.363244,
+          "launch_s": 4.102065,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.278048
+          ],
+          "executors": [
+            "5"
+          ]
+        }
+      ],
+      "interactive": {
+        "home": {
+          "requests": 29,
+          "errors": 0,
+          "median_s": 0.053972,
+          "p95_s": 0.074605,
+          "max_s": 0.076813
+        },
+        "word": {
+          "requests": 29,
+          "errors": 0,
+          "median_s": 0.035733,
+          "p95_s": 0.05761,
+          "max_s": 0.058451
+        }
+      },
+      "cpu_s": 76.90625,
+      "peak_private_mib": 823.675781,
+      "data_verified": true,
+      "server": "Codex-AIs 0.28.3",
+      "scenario_report_count": 2,
+      "all_reports_finished_s": 60.422576
+    },
+    {
+      "label": "candidate-saturated",
+      "exe_sha256": "f5521d7dec3b42865d85348461de28bc32726feeb93cca9426d5aa7328510d6f",
+      "heavy": [
+        {
+          "name": "report-1",
+          "seconds": 32.383482,
+          "launch_s": 0.150107,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.761836
+          ],
+          "executors": [
+            "6"
+          ],
+          "period": "2025-01-15"
+        },
+        {
+          "name": "report-2",
+          "seconds": 59.459478,
+          "launch_s": 0.38833,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            31.811782,
+            32.374168
+          ],
+          "executors": [
+            "6"
+          ],
+          "period": "2025-01-16"
+        },
+        {
+          "name": "report-3",
+          "seconds": 79.652799,
+          "launch_s": 0.698021,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            59.082822,
+            59.636092
+          ],
+          "executors": [
+            "6"
+          ],
+          "period": "2025-01-15"
+        },
+        {
+          "name": "delete-1",
+          "seconds": 14.094102,
+          "launch_s": 4.005247,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.078327
+          ],
+          "executors": [
+            "4"
+          ]
+        },
+        {
+          "name": "delete-2",
+          "seconds": 15.012776,
+          "launch_s": 4.105153,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "queue_wait_interval_s": [
+            0,
+            0.486758
+          ],
+          "executors": [
+            "5"
+          ]
+        }
+      ],
+      "interactive": {
+        "home": {
+          "requests": 39,
+          "errors": 0,
+          "median_s": 0.057803,
+          "p95_s": 0.087079,
+          "max_s": 0.094622
+        },
+        "word": {
+          "requests": 39,
+          "errors": 0,
+          "median_s": 0.036984,
+          "p95_s": 0.061661,
+          "max_s": 0.100244
+        }
+      },
+      "cpu_s": 98.328125,
+      "peak_private_mib": 809.96875,
+      "data_verified": true,
+      "server": "Codex-AIs 0.28.3",
+      "scenario_report_count": 3,
+      "all_reports_finished_s": 80.35082
+    },
+    {
+      "label": "native",
+      "exe_sha256": "9949c3e918b763912820987b3db565b0a1865be8bee22fb38da387fedef5b799",
+      "heavy": [
+        {
+          "name": "report-1",
+          "seconds": 464.39292,
+          "launch_s": 0.168348,
+          "status": 200,
+          "error": "ConnectionResetError",
+          "valid": false,
+          "period": "2025-01-15"
+        },
+        {
+          "name": "report-2",
+          "seconds": 464.598872,
+          "launch_s": 0.38449,
+          "status": 200,
+          "error": null,
+          "valid": true,
+          "period": "2025-01-16"
+        },
+        {
+          "name": "delete-1",
+          "seconds": 856.929642,
+          "launch_s": 4.003433,
+          "status": 200,
+          "error": null,
+          "valid": true
+        },
+        {
+          "name": "delete-2",
+          "seconds": 1024.366063,
+          "launch_s": 4.103547,
+          "status": 200,
+          "error": null,
+          "valid": true
+        }
+      ],
+      "interactive": {
+        "home": {
+          "requests": 465,
+          "errors": 0,
+          "median_s": 0.062321,
+          "p95_s": 1.053848,
+          "max_s": 3.334367
+        },
+        "word": {
+          "requests": 504,
+          "errors": 0,
+          "median_s": 0.020896,
+          "p95_s": 0.137818,
+          "max_s": 0.397832
+        }
+      },
+      "cpu_s": 2047.953125,
+      "peak_private_mib": 1093.582031,
+      "data_verified": true,
+      "server": "kodweb x86",
+      "scenario_report_count": 2,
+      "all_reports_finished_s": 464.983362
+    }
+  ],
+  "validation": {
+    "kod_semantically_equal_comparisons": 36,
+    "complete_working_volume_comparisons": 12,
+    "records_per_working_volume": {
+      "work": 485,
+      "workpost": 606
+    },
+    "xls_comparisons": [
+      {
+        "right": "baseline-repeat",
+        "id": 26,
+        "leftRecoveredTransport": true,
+        "equal": true,
+        "sheets": 13,
+        "constants": 37947,
+        "formulas": 17250,
+        "cachedDifferences": 17
+      },
+      {
+        "right": "baseline-repeat",
+        "id": 27,
+        "leftRecoveredTransport": false,
+        "equal": true,
+        "sheets": 13,
+        "constants": 37947,
+        "formulas": 17250,
+        "cachedDifferences": 29
+      },
+      {
+        "right": "baseline-saturated",
+        "id": 26,
+        "leftRecoveredTransport": true,
+        "equal": true,
+        "sheets": 13,
+        "constants": 37947,
+        "formulas": 17250,
+        "cachedDifferences": 17
+      },
+      {
+        "right": "baseline-saturated",
+        "id": 27,
+        "leftRecoveredTransport": false,
+        "equal": true,
+        "sheets": 13,
+        "constants": 37947,
+        "formulas": 17250,
+        "cachedDifferences": 29
+      },
+      {
+        "right": "baseline-saturated",
+        "id": 28,
+        "leftRecoveredTransport": true,
+        "equal": true,
+        "sheets": 13,
+        "constants": 37947,
+        "formulas": 17250,
+        "cachedDifferences": 17
+      },
+      {
+        "right": "baseline",
+        "id": 26,
+        "leftRecoveredTransport": true,
+        "equal": true,
+        "sheets": 13,
+        "constants": 37947,
+        "formulas": 17250,
+        "cachedDifferences": 17
+      },
+      {
+        "right": "baseline",
+        "id": 27,
+        "leftRecoveredTransport": false,
+        "equal": true,
+        "sheets": 13,
+        "constants": 37947,
+        "formulas": 17250,
+        "cachedDifferences": 29
+      },
+      {
+        "right": "candidate-repeat",
+        "id": 26,
+        "leftRecoveredTransport": true,
+        "equal": true,
+        "sheets": 13,
+        "constants": 37947,
+        "formulas": 17250,
+        "cachedDifferences": 17
+      },
+      {
+        "right": "candidate-repeat",
+        "id": 27,
+        "leftRecoveredTransport": false,
+        "equal": true,
+        "sheets": 13,
+        "constants": 37947,
+        "formulas": 17250,
+        "cachedDifferences": 29
+      },
+      {
+        "right": "candidate-saturated",
+        "id": 26,
+        "leftRecoveredTransport": true,
+        "equal": true,
+        "sheets": 13,
+        "constants": 37947,
+        "formulas": 17250,
+        "cachedDifferences": 17
+      },
+      {
+        "right": "candidate-saturated",
+        "id": 27,
+        "leftRecoveredTransport": false,
+        "equal": true,
+        "sheets": 13,
+        "constants": 37947,
+        "formulas": 17250,
+        "cachedDifferences": 29
+      },
+      {
+        "right": "candidate-saturated",
+        "id": 28,
+        "leftRecoveredTransport": true,
+        "equal": true,
+        "sheets": 13,
+        "constants": 37947,
+        "formulas": 17250,
+        "cachedDifferences": 17
+      },
+      {
+        "right": "candidate",
+        "id": 26,
+        "leftRecoveredTransport": true,
+        "equal": true,
+        "sheets": 13,
+        "constants": 37947,
+        "formulas": 17250,
+        "cachedDifferences": 17
+      },
+      {
+        "right": "candidate",
+        "id": 27,
+        "leftRecoveredTransport": false,
+        "equal": true,
+        "sheets": 13,
+        "constants": 37947,
+        "formulas": 17250,
+        "cachedDifferences": 29
+      }
+    ],
+    "synthetic_tests_passed": 5,
+    "new_crash_fault_injection": false
+  },
+  "notes": [
+    "Only the saturation scenario has three reports; other scenarios have two.",
+    "Intervals bound queue wait observed by status polling; zero lower bound does not prove zero wait.",
+    "Native first report had ConnectionResetError after HTTP 200; recovered XLS content was compared but delivery failed.",
+    "Formula cached values differ; constants and semantic formulas match. Client Excel recalculation was not measured in this series.",
+    "CPU and memory describe each full run; the number of repeated interactive requests varies with run duration."
+  ],
+  "status": "experiment_not_adopted",
+  "current_scheduling": "Shared report/deletion FIFO as in 0.28.2; candidate measurements below describe the earlier reserved-worker experiment."
+}

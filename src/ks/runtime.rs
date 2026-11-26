@@ -11,6 +11,8 @@ mod compiled_runtime;
 mod path_settings;
 #[path = "system_settings.rs"]
 mod system_settings;
+#[path = "statistics_cache.rs"]
+mod statistics_cache;
 
 #[path = "attachment_files.rs"]
 mod attachment_files;
@@ -384,6 +386,8 @@ pub struct Runtime<'a> {
     dbobjects: RefCell<HashMap<u32, Object>>,
     registry: Option<crate::db::registry::Registry>,
     settings_edit: Option<system_settings::Settings>,
+    statistics_cache_allowed: bool,
+    statistics_cache: Option<statistics_cache::Cache>,
     settings_generation: u64,
     startup_registry_defaults: bool,
     pub(crate) settings_revision: String,
@@ -460,6 +464,8 @@ impl<'a> Runtime<'a> {
             dbobjects: RefCell::new(HashMap::new()),
             registry: None,
             settings_edit: None,
+            statistics_cache_allowed: false,
+            statistics_cache: None,
             settings_generation: 0,
             startup_registry_defaults: false,
             settings_revision: String::new(),
@@ -3230,6 +3236,9 @@ impl<'a> Runtime<'a> {
                 Ok(Value::Null)
             }
             Value::RegistryMethod(id, method) => {
+                if self.statistics_cache_call(id, &method, &values)? {
+                    return Ok(Value::Null);
+                }
                 if method == "SetValue" && self.initialize_startup_export_date(id, &values)? {
                     return Ok(Value::Null);
                 }

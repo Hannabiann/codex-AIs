@@ -328,6 +328,8 @@ impl Runtime<'_> {
             .unwrap_or((&request.target, ""));
         let command = query.split('&').next().unwrap_or("");
         let command = command.strip_suffix('=').unwrap_or(command);
+        self.statistics_cache_allowed = statistics_cache::request_allowed(
+            path, command, &request.method, request.user.is_some(), scheduled);
         let mut participant_mode = String::new();
         for (key, value) in query.split('&').filter_map(|p| p.split_once('=')) {
             if crate::server::percent_decode(key)?.eq_ignore_ascii_case("mode") {
@@ -697,6 +699,7 @@ impl Runtime<'_> {
         Ok(())
     }
     pub fn end_request(&mut self) {
+        self.abort_statistics_cache();
         self.abort_system_settings();
         // Fatal cancellation bypasses KS finally; do not strand a named lock.
         self.mutex_handles.retain(|handle| {
