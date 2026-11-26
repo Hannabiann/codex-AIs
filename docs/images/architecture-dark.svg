@@ -2,13 +2,13 @@
 <rect x="0" y="0" width="1440" height="1080" fill="#0d1117"/>
 <text x="48" y="54" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="32" font-weight="700">Обработка запросов</text>
 <rect x="48" y="88" width="1344" height="90" rx="0" fill="#161b22" stroke="#3d4b5c"/>
-<text x="70" y="123" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="26" font-weight="700">Браузер: /20a, /admin     Word: /99</text>
+<text x="70" y="123" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="26" font-weight="700">Браузер: /20a, /admin · Word: /99</text>
 <text x="70" y="157" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">HTTP/1.0 и HTTP/1.1 · отдельная авторизация каждого запроса</text>
 <line x1="720" y1="179" x2="720" y2="201" stroke="#39d0bd" stroke-width="3"/>
 <polygon points="713,199 727,199 720,211" fill="#39d0bd"/>
 <rect x="48" y="212" width="1344" height="100" rx="0" fill="#161b22" stroke="#3d4b5c"/>
 <text x="70" y="249" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="25" font-weight="700">Tokio: соединения, маршрутизация, очередь, отмена при отключении</text>
-<text x="70" y="285" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">/admin?status обслуживается вне очереди KS. Keep-alive не занимает исполнитель.</text>
+<text x="70" y="285" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="22" font-weight="400">/admin?status обслуживается вне очереди KS. Keep-alive не занимает исполнителя.</text>
 <line x1="204" y1="334" x2="1236" y2="334" stroke="#b1bac4" stroke-width="2"/>
 <line x1="720" y1="312" x2="720" y2="334" stroke="#b1bac4" stroke-width="2"/>
 <line x1="204" y1="334" x2="204" y2="353" stroke="#39d0bd" stroke-width="3"/>
@@ -52,7 +52,7 @@
 <line x1="1236" y1="591" x2="1236" y2="615" stroke="#39d0bd" stroke-width="3"/>
 <polygon points="1229,613 1243,613 1236,625" fill="#39d0bd"/>
 <rect x="48" y="626" width="1344" height="85" rx="0" fill="#161b22" stroke="#3d4b5c"/>
-<text x="70" y="661" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Чтение: общий кэш обратных ссылок и диапазонов; локальные читатели томов</text>
+<text x="70" y="661" fill="#f0f6fc" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Чтение: общий кэш ссылок и диапазонов; отдельные контексты томов</text>
 <text x="70" y="694" fill="#b1bac4" font-family="Arial,DejaVu Sans,sans-serif" font-size="21" font-weight="400">Один построитель на поколение тома. Ожидание отменяется при отключении клиента.</text>
 <line x1="720" y1="712" x2="720" y2="736" stroke="#39d0bd" stroke-width="3"/>
 <polygon points="713,734 727,734 720,746" fill="#39d0bd"/>

@@ -14,7 +14,7 @@
 <polygon points="713,378 727,378 720,390" fill="#00786b"/>
 <rect x="48" y="391" width="1344" height="100" rx="0" fill="#ffffff" stroke="#d3dfe9"/>
 <text x="70" y="428" fill="#132c45" font-family="Arial,DejaVu Sans,sans-serif" font-size="25" font-weight="700">3. Записать страницы тома</text>
-<text x="70" y="467" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Открытым читателям — прежний образ в памяти. Том → sync.</text>
+<text x="70" y="467" fill="#52677c" font-family="Arial,DejaVu Sans,sans-serif" font-size="23" font-weight="400">Начатое чтение — с прежнего образа в памяти. Том → sync.</text>
 <line x1="720" y1="492" x2="720" y2="513" stroke="#00786b" stroke-width="3"/>
 <polygon points="713,511 727,511 720,523" fill="#00786b"/>
 <rect x="48" y="524" width="1344" height="100" rx="0" fill="#ffffff" stroke="#d3dfe9"/>

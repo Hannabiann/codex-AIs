@@ -2092,5 +2092,61 @@
       "seconds": 16.670891899964772
     },
     "note": "Separate diagnostic series with KODEKS_PROFILE and SQL trace. Only the first request starts with cold process caches; OS caches are not flushed. Later queries reuse data."
+  },
+  "interpretation_evidence": {
+    "throughput": {
+      "kodweb_windows": [
+        {
+          "start_seconds": 10,
+          "end_seconds": 20,
+          "successful_interactive_responses": 6,
+          "responses_per_second": 0.6,
+          "mean_pending_browser_and_word_sessions": 25.38
+        },
+        {
+          "start_seconds": 30,
+          "end_seconds": 40,
+          "successful_interactive_responses": 119,
+          "responses_per_second": 11.9,
+          "mean_pending_browser_and_word_sessions": 1.82
+        }
+      ],
+      "pending_sessions_population": 26,
+      "burst_start_seconds": 26.47,
+      "burst_end_seconds": 26.51,
+      "burst_responses": 30,
+      "burst_toolbar": 13,
+      "burst_word_read": 6,
+      "burst_following_frame": 11,
+      "mixed_etw_start_seconds": 155.45,
+      "mixed_etw_end_seconds": 176.619,
+      "attribution": "Grouped completion is observed. Exact blocking cause of each trough is not established; the early burst is outside the captured mixed ETW window."
+    },
+    "codex_ais_deletions": {
+      "events": [
+        {
+          "objects": 1,
+          "request_start_seconds": 66.0,
+          "response_end_seconds": 103.629,
+          "total_seconds": 37.634,
+          "sample_seconds": 101.471,
+          "sample_state": "running",
+          "completed_worker": 5
+        },
+        {
+          "objects": 5,
+          "request_start_seconds": 68.999,
+          "response_end_seconds": 104.99,
+          "total_seconds": 35.993,
+          "sample_seconds": 101.471,
+          "sample_state": "queued",
+          "completed_worker": 5
+        }
+      ],
+      "status_sampling_seconds": 5,
+      "bulk_workers": 3,
+      "reports_occupying_workers": 2,
+      "note": "The second cascade waited in the queue. Both ran sequentially on worker 5. Total HTTP time includes queueing; the gap between replies is not an isolated execution-time measurement. Cache contribution was not separately measured."
+    }
   }
 }
