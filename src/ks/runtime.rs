@@ -13,6 +13,8 @@ mod path_settings;
 mod system_settings;
 #[path = "statistics_cache.rs"]
 mod statistics_cache;
+#[path = "error_diagnostics.rs"]
+mod error_diagnostics;
 
 #[path = "attachment_files.rs"]
 mod attachment_files;
@@ -360,7 +362,9 @@ pub enum OpenError {
 }
 type Opener<'a> = Box<dyn Fn(&str, &[bool]) -> Result<crate::db::schema::Schema, OpenError> + 'a>;
 pub struct Runtime<'a> {
-    parsed_programs: HashMap<String, Rc<Vec<Stmt>>>,
+    diagnostics: error_diagnostics::State,
+    parsed_programs: HashMap<String, HashMap<String, Rc<Vec<Stmt>>>>,
+    parsed_program_count: usize,
     parsed_source_bytes: usize,
     profile_functions: bool,
     function_times: HashMap<String, (u64, u128, u128)>,
@@ -438,7 +442,9 @@ impl<'a> Runtime<'a> {
             )])))),
         );
         Self {
+            diagnostics: Default::default(),
             parsed_programs: HashMap::new(),
+            parsed_program_count: 0,
             parsed_source_bytes: 0,
             profile_functions: std::env::var_os("KODEKS_PROFILE").is_some_and(|v| v == "1"),
             function_times: HashMap::new(),
@@ -754,26 +760,38 @@ impl<'a> Runtime<'a> {
         self.load_inner(source).map_err(|e| e.to_string())
     }
     pub fn parse_cached(&mut self, source: &str) -> Result<Rc<Vec<Stmt>>, String> {
+        self.parse_cached_named(source, "dynamic KS")
+    }
+    pub fn parse_cached_named(&mut self, source: &str, name: &str) -> Result<Rc<Vec<Stmt>>, String> {
         // Cache syntax only. Functions and their captured request/document
         // environments are still created on every execution.
-        if let Some(ast) = self.parsed_programs.get(source) {
+        if let Some(ast) = self.parsed_programs.get(name).and_then(|by_source| by_source.get(source)) {
             return Ok(ast.clone());
         }
-        let ast = Rc::new(parser::parse(source).map_err(|e| format!("KS syntax: {e}"))?);
+        let ast = match parser::parse_named(source, name) {
+            Ok(ast) => Rc::new(ast),
+            Err(e) => {
+                self.diagnostic_syntax(source, name, e.offset);
+                return Err(format!("KS syntax: {e}"));
+            }
+        };
         if source.len() <= 1024 * 1024 {
-            if self.parsed_programs.len() >= 256
+            if self.parsed_program_count >= 256
                 || self.parsed_source_bytes + source.len() > 4 * 1024 * 1024
             {
                 self.parsed_programs.clear();
                 self.parsed_source_bytes = 0;
+                self.parsed_program_count = 0;
             }
             self.parsed_source_bytes += source.len();
-            self.parsed_programs.insert(source.into(), ast.clone());
+            self.parsed_program_count += 1;
+            self.parsed_programs.entry(name.into()).or_default().insert(source.into(), ast.clone());
         }
         Ok(ast)
     }
     fn load_inner(&mut self, source: &str) -> Result<(), Fault> {
-        let ast = self.parse_cached(source)?;
+        let name = if self.startup_registry_defaults { format!("{}/startup", self.path) } else { "dynamic KS".into() };
+        let ast = self.parse_cached_named(source, &name)?;
         match self.list(&ast)? {
             Flow::Next | Flow::Return(_) => Ok(()),
             _ => Err("break/continue outside loop".into()),
@@ -971,8 +989,10 @@ impl<'a> Runtime<'a> {
             return Err("Document.Execute recursion limit".into());
         }
         let mut writable_job = false;
+        let mut source_name = format!("Document({oid}, context={scope}).Execute({attr})");
         let source = if self.dbhost.is_some() {
             let rec = self.read_document(oid, scope)?;
+            if let Some(name) = rec.string(1) { source_name.push_str(&format!(" {}", crate::db::decode(name))); }
             writable_job = self.scheduled_request
                 && attr == 3
                 && self.writable_job_principal(&rec.string(1).map(crate::db::decode).unwrap_or_default());
@@ -1009,7 +1029,7 @@ impl<'a> Runtime<'a> {
         let source = super::source_compat::document_source(oid, attr, &source);
         let previous_write = self.document_write_allowed;
         self.document_write_allowed |= writable_job;
-        let result = self.execute_code(&source, context);
+        let result = self.execute_code_named(&source, context, &source_name);
         self.document_write_allowed = previous_write;
         result.map_err(|e| match e {
             Fault::Host(s) => Fault::Host(format!("Document({oid}).Execute({attr}): {s}")),
@@ -1017,6 +1037,9 @@ impl<'a> Runtime<'a> {
         })
     }
     fn execute_code(&mut self, source: &str, context: Option<Value>) -> Result<Value, Fault> {
+        self.execute_code_named(source, context, "Execute(dynamic KS)")
+    }
+    fn execute_code_named(&mut self, source: &str, context: Option<Value>, name: &str) -> Result<Value, Fault> {
         if self.include_depth >= 32 {
             return Err("Document.Execute recursion limit".into());
         }
@@ -1062,7 +1085,7 @@ impl<'a> Runtime<'a> {
         };
         let old = std::mem::replace(&mut self.scopes, context_scopes);
         let result = self
-            .parse_cached(source)
+            .parse_cached_named(source, name)
             .map_err(Fault::Host)
             .and_then(|ast| self.list(&ast));
         self.scopes = old;
@@ -1289,9 +1312,10 @@ impl<'a> Runtime<'a> {
     }
     fn hoist(&mut self, stmts: &[Stmt]) {
         for s in stmts {
+            let s = s.unlocated();
             let synchronized = matches!(s, Stmt::Synchronized(_));
             let s = if let Stmt::Synchronized(inner) = s {
-                inner.as_ref()
+                inner.unlocated()
             } else {
                 s
             };
@@ -1332,8 +1356,21 @@ impl<'a> Runtime<'a> {
         Ok(Flow::Next)
     }
     fn stmt(&mut self, s: &Stmt) -> Result<Flow, Fault> {
+        if let Stmt::Located(span, inner) = s {
+            let previous = self.diagnostics.location.replace(span.clone());
+            let result = self.stmt_inner(inner);
+            if let Err(error) = &result { self.diagnostic_fault(error); }
+            self.diagnostics.location = previous;
+            return result;
+        }
+        let result = self.stmt_inner(s);
+        if let Err(error) = &result { self.diagnostic_fault(error); }
+        result
+    }
+    fn stmt_inner(&mut self, s: &Stmt) -> Result<Flow, Fault> {
         self.tick()?;
         match s {
+            Stmt::Located(_, _) => return self.stmt(s),
             Stmt::Compiled(program, entry) => return self.compiled(program, *entry),
             Stmt::With(e, body) => {
                 let value = self.eval(e)?;
@@ -1346,7 +1383,7 @@ impl<'a> Runtime<'a> {
                 return r;
             }
             Stmt::Synchronized(inner) => {
-                if matches!(inner.as_ref(), Stmt::Function(..)) {
+                if matches!(inner.unlocated(), Stmt::Function(..)) {
                     return Ok(Flow::Next);
                 }
                 // Several KS executors share the registry. In particular, the
@@ -1386,6 +1423,16 @@ impl<'a> Runtime<'a> {
                         Part::Value(e) => {
                             let v = self.eval(e)?;
                             self.write_filtered(&v.text())?;
+                        }
+                        Part::LocatedValue(span, e) => {
+                            let previous = self.diagnostics.location.replace(span.clone());
+                            let result = (|| {
+                                let v = self.eval(e)?;
+                                self.write_filtered(&v.text())
+                            })();
+                            if let Err(error) = &result { self.diagnostic_fault(error); }
+                            self.diagnostics.location = previous;
+                            result?;
                         }
                     }
                 }
@@ -1438,6 +1485,9 @@ impl<'a> Runtime<'a> {
             }
             Stmt::Throw(e) => return Err(Fault::Script(self.eval(e)?)),
             Stmt::Rethrow => {
+                if let Some(snapshot) = self.diagnostics.caught.last() {
+                    self.diagnostics.fault = snapshot.clone();
+                }
                 return Err(self
                     .caught
                     .last()
@@ -1466,7 +1516,9 @@ impl<'a> Runtime<'a> {
                             .borrow_mut()
                             .insert(name.clone(), value.clone());
                         self.caught.push(value);
+                        self.diagnostics.caught.push(self.diagnostics.fault.take());
                         result = self.stmt(handler);
+                        self.diagnostics.caught.pop();
                         self.caught.pop();
                         if !declare {
                             let mut scope = self.scopes.last().unwrap().borrow_mut();
@@ -1483,8 +1535,9 @@ impl<'a> Runtime<'a> {
                     return result;
                 }
                 if let Some(cleanup) = finally {
+                    let original = self.diagnostics.fault.take();
                     match self.stmt(cleanup) {
-                        Ok(Flow::Next) => {}
+                        Ok(Flow::Next) => { self.diagnostics.fault = original; }
                         other => return other,
                     }
                 }
@@ -1576,7 +1629,7 @@ impl<'a> Runtime<'a> {
                     (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
                     _ => a.cmp(b),
                 });
-                let target = match binding.as_ref() {
+                let target = match binding.unlocated() {
                     Stmt::Var(v) if v.len() == 1 && v[0].1.is_none() => {
                         self.scopes
                             .last()
@@ -3042,6 +3095,7 @@ impl<'a> Runtime<'a> {
         receiver: Option<Value>,
         label: String,
     ) -> Result<Value, Fault> {
+        let result = (|| {
         // A plain List has no cached alternative annotation. CRC zero selects
         // the same document name as the property form used by unsorted lists.
         if label == "Name" && matches!(receiver, Some(Value::Document(_, _)))
@@ -3192,7 +3246,7 @@ impl<'a> Runtime<'a> {
                         Ok(Value::Null)
                     }
                     "Print" | "PrintS" => {
-                        for value in values {
+                        for value in &values {
                             let text = value.text();
                             let (bytes, _, bad) = encoding_rs::WINDOWS_1251.encode(&text);
                             if bad {
@@ -3415,7 +3469,7 @@ impl<'a> Runtime<'a> {
                         stream.borrow_mut().charset = file.charset.borrow().clone();
                         let input = Value::ReadStream(stream);
                         let f = self.member(input.clone(), method.clone())?;
-                        self.call_host(f, values, Some(input), format!("File.{method}"))
+                        self.call_host(f, values.clone(), Some(input), format!("File.{method}"))
                     }
                     "close" if values.is_empty() => {
                         if let Some(stream) = file.stream.borrow().as_ref() {
@@ -3653,10 +3707,10 @@ impl<'a> Runtime<'a> {
                     Value::Null
                 })
             }
-            Value::ArrayMethod(o, name) if name == "search" => self.array_search(o, values),
+            Value::ArrayMethod(o, name) if name == "search" => self.array_search(o, values.clone()),
             Value::ArrayMethod(o, name) if name == "concat" => {
                 let mut items = Vec::new();
-                for value in std::iter::once(Value::Array(o)).chain(values) {
+                for value in std::iter::once(Value::Array(o)).chain(values.iter().cloned()) {
                     if let Value::Array(array) = value {
                         let a = array.borrow();
                         let len = a["length"].number()? as usize;
@@ -3763,7 +3817,7 @@ impl<'a> Runtime<'a> {
                         map.try_reserve(values.len())
                             .map_err(|e| format!("Array.push allocation: {e}"))?;
                         self.numeric_arrays.append(&o, len, &values);
-                        for (i, v) in values.into_iter().enumerate() {
+                        for (i, v) in values.iter().cloned().enumerate() {
                             map.insert((len + i).to_string(), v);
                         }
                         map.insert("length".into(), Value::Number(next as f64));
@@ -4087,7 +4141,7 @@ impl<'a> Runtime<'a> {
                     if s.closed {
                         return Err("stream closed".into());
                     }
-                    for value in values {
+                    for value in &values {
                         let text = value.text();
                         let (bytes, _, bad) = encoding_rs::WINDOWS_1251.encode(&text);
                         if bad {
@@ -4286,7 +4340,7 @@ impl<'a> Runtime<'a> {
                     t.insert_str(0, &text);
                     return Ok(Value::Null);
                 }
-                for v in values {
+                for v in &values {
                     let s = v.text();
                     if t.len() + s.len() + 1 > 2 * 1024 * 1024 {
                         return Err("temporary script size limit".into());
@@ -4998,7 +5052,7 @@ impl<'a> Runtime<'a> {
                     Ok(Value::Null)
                 }
                 name if name.starts_with("xml.report.") => {
-                    self.report_xml_call(&name[11..], receiver, values)
+                    self.report_xml_call(&name[11..], receiver, values.clone())
                 }
                 "Math.random" => {
                     if !values.is_empty() {
@@ -5041,7 +5095,7 @@ impl<'a> Runtime<'a> {
                     Ok(Value::Number(result))
                 }
                 "GetFindObjects" => self.get_find_objects(&values),
-                "FindObjects.AddObject" => self.add_find_object(values),
+                "FindObjects.AddObject" => self.add_find_object(values.clone()),
                 "toLog" => {
                     if values.len() != 2 {
                         return Err("toLog expects document and text length".into());
@@ -5056,7 +5110,7 @@ impl<'a> Runtime<'a> {
                     eprintln!("document access: scope={scope} oid={oid} text_bytes={length}");
                     Ok(Value::Null)
                 }
-                name if name.starts_with("format.") => self.format_call(name, receiver, values),
+                name if name.starts_with("format.") => self.format_call(name, receiver, values.clone()),
                 "RegInfo.GetAttribute" => {
                     if values.len() != 1 {
                         return Err("RegInfo.GetAttribute expects one id".into());
@@ -5216,7 +5270,7 @@ impl<'a> Runtime<'a> {
                     if source.len() > 2 * 1024 * 1024 || self.eval_depth >= 64 {
                         return Err("eval size/depth limit".into());
                     }
-                    let ast = parser::parse(&format!("return {source};"))
+                    let ast = parser::parse_named(&format!("return {source};"), "eval")
                         .map_err(|e| format!("eval expression syntax: {e}"))?;
                     self.eval_depth += 1;
                     let result = self.list(&ast).map_err(|e| match e {
@@ -5454,7 +5508,7 @@ impl<'a> Runtime<'a> {
                     .map(|s| Value::ReadStream(s.clone()))
                     .unwrap_or(Value::HttpOutput)),
                 "stream.Print" | "stream.PrintS" | "stream.write" => {
-                    for v in values {
+                    for v in &values {
                         if n == "stream.Print" {
                             self.write_filtered(&v.text())?;
                         } else {
@@ -5472,14 +5526,14 @@ impl<'a> Runtime<'a> {
             {
                 Ok(Value::ReadOnlyObject(o))
             }
-            Value::Function(f) => self.invoke(f, values, receiver, label),
+            Value::Function(f) => self.invoke(f, values.clone(), receiver, label.clone()),
             Value::FunctionMethod(f, method) => {
                 let receiver = values
                     .first()
                     .cloned()
                     .filter(|v| !matches!(v, Value::Null));
                 let args = if method == "call" {
-                    values.into_iter().skip(1).collect()
+                    values.iter().cloned().skip(1).collect()
                 } else {
                     if values.len() > 2 {
                         return Err("apply expects receiver and array".into());
@@ -5496,7 +5550,7 @@ impl<'a> Runtime<'a> {
                         _ => return Err("apply expects an array".into()),
                     }
                 };
-                self.invoke(f, args, receiver, label)
+                self.invoke(f, args, receiver, label.clone())
             }
             Value::Number(n)
                 if label == "length"
@@ -5513,6 +5567,9 @@ impl<'a> Runtime<'a> {
             )
             .into()),
         }
+        })();
+        if result.is_err() { self.diagnostic_native(&label, &values); }
+        result
     }
     fn invoke(
         &mut self,
@@ -5546,10 +5603,14 @@ impl<'a> Runtime<'a> {
         if _label == "jc_expandXPathExcelCells"
             || f.name.as_deref() == Some("jc_expandXPathExcelCells")
         {
-            return self.report_excel(&values);
+            let result = self.report_excel(&values);
+            if result.is_err() { self.diagnostic_native(&_label, &values); }
+            return result;
         }
         if _label == "mp_xml_createDocument" || f.name.as_deref() == Some("mp_xml_createDocument") {
-            return self.report_xml_document(&values);
+            let result = self.report_xml_document(&values);
+            if result.is_err() { self.diagnostic_native(&_label, &values); }
+            return result;
         }
         let mut scope = HashMap::new();
         scope.insert("this".into(), receiver.unwrap_or(self.get("this")?));
@@ -5579,6 +5640,7 @@ impl<'a> Runtime<'a> {
         }
         let outer_scopes = std::mem::replace(&mut self.scopes, f.env.clone());
         self.scopes.push(Rc::new(RefCell::new(scope)));
+        self.diagnostic_enter(&_label, &f);
         let profile_start = if self.profile_functions {
             self.function_children.push(0);
             Some(std::time::Instant::now())
@@ -5590,6 +5652,8 @@ impl<'a> Runtime<'a> {
         // overflowing the worker thread's stack. Execution stays on the same
         // thread, including its Rc/RefCell state and database locks.
         let r = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || self.list(&f.body));
+        if r.is_err() { self.diagnostic_capture(); }
+        self.diagnostics.frames.pop();
         if let Some(start) = profile_start {
             let elapsed = start.elapsed().as_micros();
             let child = self.function_children.pop().unwrap_or(0);
@@ -5663,6 +5727,7 @@ impl<'a> Runtime<'a> {
         self.binary_output.take()
     }
     pub fn render(&mut self, stmts: &[Stmt]) -> Result<String, String> {
+        self.clear_error_diagnostic();
         self.steps = 0;
         self.output.clear();
         self.binary_output = None;

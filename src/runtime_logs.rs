@@ -220,6 +220,39 @@ pub fn error(category: &str, message: &str) {
     eprint!("{text}");
 }
 
+/// Append a whole diagnostic under the same lock so concurrent KS errors and
+/// daily rotation cannot split its source/variables/stack across records.
+pub fn error_detail(category: &str, message: &str, detail: &str) {
+    let (header, text) = diagnostic_record(category, message, detail);
+    if let Some(file) = ERROR.get() {
+        if let Err(e) = append(file, &text) { eprintln!("error.log write failed: {e}"); }
+    }
+    // The server console keeps the concise error, not thousands of variable rows.
+    eprint!("{header}");
+}
+pub fn diagnostic_url(target: &str) -> String {
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    let mut url = path.chars().filter(|c| !c.is_control()).take(2048).collect::<String>();
+    for (i, pair) in query.split('&').filter(|s| !s.is_empty()).enumerate() {
+        if url.len() > 16384 { url.push_str("...[truncated]"); break; }
+        url.push(if i == 0 { '?' } else { '&' });
+        let part = if let Some((key, value)) = pair.split_once('=') {
+            let decoded = crate::server::percent_decode(key).unwrap_or_else(|_| "secret".into()).to_lowercase();
+            let hidden = ["password", "passwd", "парол", "authorization", "cookie", "secret", "token", "api_key", "apikey"]
+                .iter().any(|s| decoded.contains(s)) || matches!(decoded.as_str(), "pwd" | "auth" | "sid" | "sessionid");
+            format!("{key}={}", if hidden { "[hidden]" } else { value })
+        } else { pair.into() };
+        url.extend(part.chars().filter(|c| !c.is_control()).take(16384));
+    }
+    url
+}
+fn diagnostic_record(category: &str, message: &str, detail: &str) -> (String, String) {
+    let header = format!("{} ERROR pid={} thread={:?} {}: {}\n",
+        timestamp(), std::process::id(), std::thread::current().id(), field(category), field(message));
+    let text = format!("{header}----- BEGIN KS DIAGNOSTIC -----\n{detail}\n----- END KS DIAGNOSTIC -----\n");
+    (header, text)
+}
+
 pub fn access(message: &str) {
     if let Some(file) = ACCESS.get() {
         let text = format!("{} pid={} {}\n", timestamp(), std::process::id(), message);

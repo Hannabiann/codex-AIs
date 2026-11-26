@@ -74,3 +74,45 @@ fn logs_admin_replaces_only_native_log_controls() {
     assert!(changed.contains("name=smtp value='mail'"));
     assert_eq!(admin_html(html.into(), "another"), html);
 }
+
+#[test]
+fn multiline_ks_dumps_are_atomic_between_workers() {
+    let root = directory("ks-diagnostic");
+    let path = root.join("error.log");
+    let journal = std::sync::Arc::new(Mutex::new(Journal {
+        path: path.clone(), file: open_journal(&root,"error.log").unwrap(), generation: generation(),
+    }));
+    let threads = (0..6).map(|worker| {
+        let journal = journal.clone();
+        std::thread::spawn(move || {
+            for n in 0..8 {
+                let mut runtime = crate::ks::runtime::Runtime::new("/20a");
+                let source = format!("const CODE=695;\nfunction mp_xCreate(code, description) {{\n    return {{Code:code, Description:description}};\n}}\nfunction fail(attrId) {{\n    var local=attrId+1;\n    throw mp_xCreate(CODE, 'Test attribute: '+attrId);\n}}\nfail({});", worker*100+n);
+                let ast = runtime.parse_cached_named(&source,"diagnostic-fixture.ks").unwrap();
+                assert!(runtime.render(&ast).is_err());
+                let detail = runtime.take_error_diagnostic();
+                let (_, record) = diagnostic_record("request KS", &format!("url=/20a?fixture&nd={} error=test",worker*100+n), &detail);
+                append(&journal,&record).unwrap();
+            }
+        })
+    }).collect::<Vec<_>>();
+    for thread in threads { thread.join().unwrap(); }
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(text.matches("----- BEGIN KS DIAGNOSTIC -----").count(),48);
+    assert_eq!(text.matches("----- END KS DIAGNOSTIC -----").count(),48);
+    for block in text.split("----- END KS DIAGNOSTIC -----").take(48) {
+        assert_eq!(block.matches("----- BEGIN KS DIAGNOSTIC -----").count(),1);
+        assert!(block.contains("<< throw >> mp_xCreate"));
+        assert!(block.contains("Code=695"));
+        assert!(block.contains("Global variables and constants"));
+        assert!(block.contains("Arguments (scalar values at call"));
+    }
+}
+
+#[test]
+fn diagnostic_url_keeps_reproduction_parameters_and_hides_secrets() {
+    let url=diagnostic_url("/20a?ispravlenieForm&nd=123&prevdoc=456&attr=9&text=%D2%E5%F1%F2&%70assword=SECRET&access_token=TOKEN&sid=SESSION");
+    assert!(url.contains("prevdoc=456&attr=9&text=%D2%E5%F1%F2"));
+    for secret in ["SECRET","TOKEN","SESSION"] { assert!(!url.contains(secret)); }
+    assert_eq!(url.matches("[hidden]").count(),3);
+}

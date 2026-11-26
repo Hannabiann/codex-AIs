@@ -699,6 +699,7 @@ impl Runtime<'_> {
         Ok(())
     }
     pub fn end_request(&mut self) {
+        self.clear_error_diagnostic();
         self.abort_statistics_cache();
         self.abort_system_settings();
         // Fatal cancellation bypasses KS finally; do not strand a named lock.

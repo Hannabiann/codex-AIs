@@ -85,6 +85,8 @@ fn create_runtime_mode<'a>(
             .source()
             .ok_or_else(|| VmError("startup has no KS source".into()))?;
         if let Err(e) = runtime.load_startup(&decode(source)) {
+            let diagnostic = runtime.take_error_diagnostic();
+            crate::runtime_logs::error_detail("KS startup", &format!("url={}/startup error={e}", dir.path), &diagnostic);
             runtime.end_request();
             return Err(VmError(format!("{}/startup: {e}", dir.mapped_to)));
         }
@@ -286,6 +288,14 @@ impl Sessions {
             Ok((body, code, headers))
         })();
         // Also restore on script/host errors, before any scheduled task can run.
+        if let Err(e) = &result {
+            let diagnostic = self.runtimes.get_mut(&dir.path).unwrap().take_error_diagnostic();
+            if let Some((monitor, id)) = &request.monitor {
+                monitor.ks_error(*id, &request.target, &e.0, &diagnostic);
+            } else {
+                crate::runtime_logs::error_detail("KS", &format!("url={} error={}", crate::runtime_logs::diagnostic_url(&request.target), e.0), &diagnostic);
+            }
+        }
         self.runtimes.get_mut(&dir.path).unwrap().end_request();
         if self.owner.is_some() && crate::execution::cancelled() {
             self.runtimes.remove(&dir.path);
@@ -310,6 +320,10 @@ impl Sessions {
             self.render_record(dir, record, object)
         })();
         // Drop the job's URI, User and locals on both success and failure.
+        if let Err(e) = &result {
+            let diagnostic = self.runtimes.get_mut(&dir.path).unwrap().take_error_diagnostic();
+            crate::runtime_logs::error_detail("At KS", &format!("url={} error={}", crate::runtime_logs::diagnostic_url(target), e.0), &diagnostic);
+        }
         // Queue objects and their state remain in the same catalog runtime.
         if object == "~mp_at" {
             if let Err(VmError(message)) = &result {
@@ -434,7 +448,7 @@ impl Sessions {
                 .replace("pPath() cookies", "pPath() status");
         }
         let ast = runtime
-            .parse_cached(&source)
+            .parse_cached_named(&source, &format!("{}/{}", dir.mapped_to, object))
             .map_err(|e| VmError(e.to_string()))?;
         let rendered = runtime.render(&ast);
         // Failed reports must not leak their timings into the next request.

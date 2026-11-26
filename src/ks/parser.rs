@@ -44,9 +44,23 @@ pub enum Expr {
 pub enum Part {
     Text(String),
     Value(Expr),
+    LocatedValue(SourceSpan, Expr),
+}
+#[derive(Debug, Clone)]
+pub struct Source {
+    pub name: String,
+    pub text: String,
+}
+#[derive(Debug, Clone)]
+pub struct SourceSpan {
+    pub source: Rc<Source>,
+    pub start: usize,
+    pub focus_end: usize,
+    pub end: usize,
 }
 #[derive(Debug, Clone)]
 pub enum Stmt {
+    Located(SourceSpan, Box<Stmt>),
     Compiled(Rc<super::compiled::Program>, usize),
     With(Expr, Box<Stmt>),
     Empty,
@@ -68,6 +82,11 @@ pub enum Stmt {
     Switch(Expr, Vec<(Option<Expr>, Vec<Stmt>)>),
     Template(Vec<Part>),
     Synchronized(Box<Stmt>),
+}
+impl Stmt {
+    pub fn unlocated(&self) -> &Self {
+        if let Self::Located(_, inner) = self { inner.unlocated() } else { self }
+    }
 }
 #[derive(Debug, Clone)]
 pub struct Catch {
@@ -351,6 +370,7 @@ fn lex(s: &str) -> Result<Vec<Token>, Error> {
 }
 pub struct Parser {
     source: String,
+    diagnostic_source: Option<Rc<Source>>,
     tokens: Vec<Token>,
     at: usize,
     depth: usize,
@@ -360,6 +380,7 @@ impl Parser {
     fn new(s: &str) -> Result<Self, Error> {
         Ok(Self {
             source: s.into(),
+            diagnostic_source: None,
             tokens: lex(s)?,
             at: 0,
             depth: 0,
@@ -553,9 +574,16 @@ impl Parser {
         if self.depth > 128 {
             return Err(self.err("syntax nesting limit"));
         }
+        let start = self.tokens[self.at].start;
+        let focus_end = self.tokens[self.at].end;
         let r = self.statement();
         self.depth -= 1;
-        r
+        r.map(|stmt| {
+            if let Some(source) = &self.diagnostic_source {
+                Stmt::Located(SourceSpan { source: source.clone(), start, focus_end,
+                    end: self.tokens[self.at.saturating_sub(1)].end }, Box::new(stmt))
+            } else { stmt }
+        })
     }
     fn statement(&mut self) -> Result<Stmt, Error> {
         if self.eat(";") {
@@ -564,7 +592,7 @@ impl Parser {
         if let Kind::Template(text) = self.tokens[self.at].kind.clone() {
             let off = self.tokens[self.at].start + 2;
             self.at += 1;
-            return Ok(Stmt::Template(template(&text).map_err(|mut e| {
+            return Ok(Stmt::Template(template(&text, self.diagnostic_source.as_ref().map(|s| (s, off))).map_err(|mut e| {
                 e.offset += off;
                 e
             })?));
@@ -942,7 +970,7 @@ impl Parser {
 // whitespace also terminates it (users.dbs groups/users end %help with CRLF).
 // ` %expr ` or ` %(expression) `. The delimiter spaces are consumed.
 // Confirmed against original /20a/: un-delimited %(this.border_color); is literal.
-fn template(s: &str) -> Result<Vec<Part>, Error> {
+fn template(s: &str, origin: Option<(&Rc<Source>, usize)>) -> Result<Vec<Part>, Error> {
     let mut out = Vec::new();
     let mut start = 0;
     let mut p = 0;
@@ -1019,7 +1047,10 @@ fn template(s: &str) -> Result<Vec<Part>, Error> {
                 message: "template expression suffix".into(),
             });
         }
-        out.push(Part::Value(e));
+        if let Some((source, offset)) = origin {
+            out.push(Part::LocatedValue(SourceSpan { source: source.clone(), start: offset+p+1,
+                focus_end: offset+p+1+parser.tokens[0].end, end: offset+end }, e));
+        } else { out.push(Part::Value(e)); }
         p = end + 1;
         start = p;
     }
@@ -1034,4 +1065,12 @@ pub fn parse(s: &str) -> Result<Vec<Stmt>, Error> {
         });
     }
     Parser::new(s)?.list("")
+}
+pub fn parse_named(s: &str, name: &str) -> Result<Vec<Stmt>, Error> {
+    if s.len() > 2 * 1024 * 1024 {
+        return Err(Error { offset: 0, message: "source limit 2 MiB".into() });
+    }
+    let mut parser = Parser::new(s)?;
+    parser.diagnostic_source = Some(Rc::new(Source { name: name.into(), text: s.into() }));
+    parser.list("")
 }

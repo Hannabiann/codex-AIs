@@ -208,11 +208,23 @@ impl Monitor {
         } else { "Сервер вернул страницу ошибки".into() };
         crate::runtime_logs::error("request", &format!("{context} status={} error={detail}", response.status));
     }
+    pub fn ks_error(&self, id: u64, target: &str, error: &str, detail: &str) {
+        let context = {
+            let mut inner = self.inner.lock().unwrap();
+            let Some(e) = inner.active.get_mut(&id) else { return };
+            e.error_logged = true;
+            Self::log_context_url(e, &crate::runtime_logs::diagnostic_url(target))
+        };
+        crate::runtime_logs::error_detail("request KS", &format!("{context} error={error}"), detail);
+    }
     fn log_context(e: &Entry) -> String {
+        Self::log_context_url(e, &e.url)
+    }
+    fn log_context_url(e: &Entry, url: &str) -> String {
         let clean = crate::runtime_logs::field;
         format!("id={} kind={} client=\"{}\" user=\"{}\" executor={} method={} url=\"{}\" elapsed_ms={}",
             e.id, if e.job {"At"} else {"HTTP"}, clean(&e.source), clean(&e.user), e.executor.unwrap_or(0),
-            clean(&e.method), clean(&e.url), e.tick.elapsed().as_millis())
+            clean(&e.method), clean(url), e.tick.elapsed().as_millis())
     }
     pub fn user(&self, id: u64, user: &str) {
         if let Some(e) = self.inner.lock().unwrap().active.get_mut(&id) {

@@ -309,6 +309,7 @@ impl Runtime<'_> {
                 Ok(Some(flow)) => return Ok(flow),
                 Ok(None) => {}
                 Err(Fault::Host(e)) => {
+                    self.diagnostic_bytecode(program, pc - 1, entry);
                     return Err(Fault::Host(format!(
                         "bytecode {:#x} (opcode {:#x}): {e}",
                         i.at, i.op
@@ -316,10 +317,12 @@ impl Runtime<'_> {
                 }
                 Err(Fault::Script(value)) => {
                     if let Some((catch, _, len)) = handlers.pop() {
+                        self.diagnostics.fault = None;
                         stack.truncate(len);
                         stack.push(Cell::Value(value));
                         pc = catch;
                     } else {
+                        self.diagnostic_bytecode(program, pc - 1, entry);
                         return Err(Fault::Script(value));
                     }
                 }
