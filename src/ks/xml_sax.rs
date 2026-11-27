@@ -7,6 +7,31 @@ pub(crate) enum Event {
     End(String),
     Text(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sax_constructor_accepts_native_encoding_and_decodes_cyrillic() {
+        let mut runtime = Runtime::new("/test");
+        for encoding in ["windows-1251"] {
+            let source = format!("var s=new VirtualText(); s.CharSet='{encoding}'; s.Print('<root name=\"Суд\"/>'); s.reset(); var p=new XMLSAXparser(s, '{encoding}'); p.StartElement=function(n,a) {{ if(n!='root' || a.name!='Суд') throw 'bad XML text'; this.seen=true; }}; p.Parse(); if(!p.seen) throw 'missing callback';");
+            let ast = runtime.parse_cached_named(&source, "sax-constructor-test").unwrap();
+            runtime.render(&ast).unwrap();
+        }
+        let stream = InputStream::value("<root name=\"Суд\"/>".as_bytes());
+        let parser = runtime.xml_sax_parser(&[stream.clone(), Value::String("utf-8".into())]).unwrap();
+        runtime.xml_parse(Some(parser), &[]).unwrap();
+        let Value::ReadStream(stream) = stream else { unreachable!() };
+        assert_eq!(stream.borrow().charset, "utf-8");
+        assert_eq!(stream.borrow().position, stream.borrow().data.len());
+        let stream = InputStream::value(b"<root/>");
+        assert!(runtime.xml_sax_parser(&[stream.clone(),Value::Null]).is_ok());
+        assert!(runtime.xml_sax_parser(&[stream.clone()]).is_ok());
+        assert!(runtime.xml_sax_parser(&[stream, Value::String("unknown".into())]).is_err());
+    }
+}
 fn decode(s: &str) -> Result<String, String> {
     let mut out = String::new();
     let mut rest = s;
@@ -49,7 +74,10 @@ fn name(rest: &mut &str) -> Result<String, String> {
     Ok(n)
 }
 pub(crate) fn events(source: &str) -> Result<Vec<Event>, String> {
-    if source.len() > 4 * 1024 * 1024 {
+    events_bounded(source, 4 * 1024 * 1024)
+}
+pub(crate) fn events_bounded(source: &str, bytes: usize) -> Result<Vec<Event>, String> {
+    if source.len() > bytes {
         return Err("XML size limit".into());
     }
     let mut rest = source.trim_start_matches('\u{feff}');
@@ -161,6 +189,58 @@ pub(crate) fn events(source: &str) -> Result<Vec<Event>, String> {
     Ok(result)
 }
 impl Runtime<'_> {
+    pub(super) fn xml_sax_parser(&self, values: &[Value]) -> Result<Value, Fault> {
+        if !(1..=2).contains(&values.len()) {
+            return Err("XMLSAXparser expects stream[, encoding]".into());
+        }
+        let input = self.xml_input_stream(&values[0])?;
+        let Value::ReadStream(stream) = &input else {unreachable!()};
+        if stream.borrow().closed {
+            return Err("XML stream closed".into());
+        }
+        if let Some(value) = values.get(1).filter(|v|!v.text().is_empty()) {
+            let charset = value.text().to_ascii_lowercase();
+            if !matches!(charset.as_str(), "windows-1251" | "utf-8") {
+                return Err("unsupported XML charset".into());
+            }
+            stream.borrow_mut().charset = charset;
+        } else {
+            let mut input=stream.borrow_mut();
+            if input.data.starts_with(b"\xef\xbb\xbf") || input.data.windows(5).take(128).any(|b|b.eq_ignore_ascii_case(b"utf-8")) {input.charset="utf-8".into();}
+        }
+        Ok(Value::Object(Rc::new(RefCell::new(HashMap::from([
+            ("\0stream".into(), input),
+            ("Parse".into(), Value::Native("xml.Parse".into())),
+            ("SetEncoding".into(), Value::Native("xml.SetEncoding".into())),
+        ])))))
+    }
+
+    pub(super) fn xml_input_stream(&self,value:&Value)->Result<Value,Fault>{
+        use std::io::Read;
+        match value {
+            Value::ReadStream(_)=>Ok(value.clone()),
+            Value::File(file)=>{
+                if file.stream.borrow().is_none(){
+                    let meta=std::fs::metadata(&file.path).map_err(|e|e.to_string())?;
+                    if !meta.is_file()||meta.len()>64*1024*1024{return Err("XML input file size/type limit".into());}
+                    let Value::ReadStream(stream)=InputStream::value(&std::fs::read(&file.path).map_err(|e|e.to_string())?) else{unreachable!()};
+                    stream.borrow_mut().charset=file.charset.borrow().clone();
+                    *file.stream.borrow_mut()=Some(stream);
+                }
+                Ok(Value::ReadStream(file.stream.borrow().as_ref().unwrap().clone()))
+            },
+            Value::LogFile(file)=>{
+                let mut handle=file.file.borrow_mut();let handle=handle.as_mut().ok_or("XML input file closed")?;
+                let mut bytes=Vec::new();handle.take(64*1024*1024+1).read_to_end(&mut bytes).map_err(|e|e.to_string())?;
+                if bytes.len()>64*1024*1024{return Err("XML input file size limit".into());}
+                let result=InputStream::value(&bytes);
+                if let Value::ReadStream(s)=&result{s.borrow_mut().charset=file.charset.borrow().clone();}
+                Ok(result)
+            },
+            _=>Err("XMLSAXparser requires a stream or an open file".into()),
+        }
+    }
+
     pub(super) fn xml_parse(
         &mut self,
         receiver: Option<Value>,
@@ -187,7 +267,7 @@ impl Runtime<'_> {
                 crate::db::decode(&s.data[s.position..])
             }
         };
-        let events = events(&source).map_err(|e| Fault::Script(Value::String(e)))?;
+        let events = events_bounded(&source, self.exchange_xml_limit()).map_err(|e| Fault::Script(Value::String(e)))?;
         for event in events {
             self.tick()?;
             let (method, args) = match event {

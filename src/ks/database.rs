@@ -80,6 +80,10 @@ pub trait DatabaseHost {
     ) -> Result<(), String> {
         Err("KOD import requires a writable database".into())
     }
+    /// Maintenance packages preserve distinct OIDs with the same displayed name.
+    fn import_case_document(&mut self, _scope: u32, _volume: u32, _record: &Record) -> Result<(), String> {
+        Err("Case KOD import requires a writable database".into())
+    }
     fn select_indexed(
         &self,
         _scope: u32,

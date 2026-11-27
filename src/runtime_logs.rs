@@ -275,14 +275,6 @@ pub fn description() -> String {
 
 /// Keep the native settings form except its inapplicable kodweb log controls.
 pub fn admin_html(html: String, object: &str) -> String {
-    if object == "title" {
-        return regex::Regex::new(r"(?i)</body>")
-            .unwrap()
-            .replace(&html, |_: &regex::Captures<'_>| {
-                format!("{} </body>", description())
-            })
-            .into_owned();
-    }
     let pattern = match object {
         "pref" => {
             r"(?is)<tr\b[^>]*>\s*<td\b[^>]*>\s*<font\b[^>]*>\s*<b>\s*Протокол:\s*</b>.*?(<tr\b[^>]*>\s*<td\b[^>]*>\s*<font\b[^>]*>\s*<b>\s*Почта:\s*</b>)"

@@ -4,9 +4,18 @@ pub fn encode(text: &str) -> Result<String, String> {
     if bad || bytes.len() > 4 * 1024 * 1024 {
         return Err("ToBase64 input encoding/size".into());
     }
+    encode_bytes(&bytes)
+}
+pub fn encode_bytes(bytes: &[u8]) -> Result<String, String> {
+    if bytes.len() > 128 * 1024 * 1024 {
+        return Err("ToBase64 stream size".into());
+    }
     let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::new();
-    for b in bytes.chunks(3) {
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for (index, b) in bytes.chunks(3).enumerate() {
+        if index % 16384 == 0 {
+            crate::execution::check()?;
+        }
         let n = (b[0] as u32) << 16
             | (b.get(1).copied().unwrap_or(0) as u32) << 8
             | b.get(2).copied().unwrap_or(0) as u32;
@@ -24,12 +33,21 @@ pub fn decode(text: &str) -> Result<String, String> {
     if text.len() > 6 * 1024 * 1024 {
         return Err("FromBase64 input size".into());
     }
+    Ok(crate::db::decode(&decode_bytes(text)?))
+}
+pub fn decode_bytes(text: &str) -> Result<Vec<u8>, String> {
+    if text.len() > 172 * 1024 * 1024 {
+        return Err("FromBase64 stream size".into());
+    }
     let input: Vec<_> = text.bytes().filter(|c| !c.is_ascii_whitespace()).collect();
     if input.len() % 4 != 0 {
         return Err("FromBase64 invalid length".into());
     }
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(input.len() / 4 * 3);
     for (index, b) in input.chunks_exact(4).enumerate() {
+        if index % 16384 == 0 {
+            crate::execution::check()?;
+        }
         let padding = b.iter().rev().take_while(|c| **c == b'=').count();
         if padding > 2 || padding != 0 && (index + 1) * 4 != input.len() {
             return Err("FromBase64 invalid padding".into());
@@ -54,5 +72,5 @@ pub fn decode(text: &str) -> Result<String, String> {
             out.push((n >> (16 - 8 * i)) as u8);
         }
     }
-    Ok(crate::db::decode(&out))
+    Ok(out)
 }

@@ -207,7 +207,9 @@ impl Runtime<'_> {
             fields.insert("AuthParam".into(), object(config(&dir.auth)));
             // The original routing entries expose the configured BaseN mounts
             // as a one-based vol array. Export opens a separate database from
-            // these descriptors; do not share foreign runtime volume handles.
+            // these descriptors; preserve RedactN, without sharing foreign
+            // runtime handles. Document writes still require a write-capable
+            // request/job and a writable mount in the receiving database.
             let mut volumes = HashMap::new();
             let mut index = 1usize;
             while let Some(crate::db::ConfigValue::Text(path)) =
@@ -227,8 +229,14 @@ impl Runtime<'_> {
                         "vol".into(),
                         object(HashMap::from([
                             ("FileName".into(), Value::String(path)),
-                            // All host mounts are read-only in this runtime.
-                            ("readOnly".into(), Value::Bool(true)),
+                            (
+                                "readOnly".into(),
+                                Value::Bool(!match dir.properties.get(&format!("Redact{index}")) {
+                                    Some(crate::db::ConfigValue::Integer(n)) => *n != 0,
+                                    Some(crate::db::ConfigValue::Text(s)) => s == "1",
+                                    _ => false,
+                                }),
+                            ),
                         ])),
                     )])),
                 );
@@ -361,6 +369,17 @@ impl Runtime<'_> {
                 && matches!(path, "/99" | "/99/")
                 && matches!(request.method.as_str(), "PUT" | "POST")
                 && matches!(command, "savebinpdf" | "savesigforpdf");
+        self.maintenance_allowed = !scheduled && request.user.is_some()
+            && request.method == "POST" && matches!(path, "/20a" | "/20a/")
+            && command == "mgmt";
+        self.archive_access = archive::Access::request(
+            path, command, query, &request.method, request.user.is_some(),
+            !request.body.is_empty() || !request.form.is_empty(), scheduled,
+        );
+        self.exchange_access.request = !scheduled && request.user.is_some()
+            && request.method == "POST" && matches!(path, "/20a" | "/20a/")
+            && command.eq_ignore_ascii_case("senddocs");
+        self.exchange_access.scheduled = exchange::scheduled_target(scheduled, &self.path, &request.target);
         self.document_write_allowed = !scheduled
             && request.user.is_some()
             && (self.registration_write_allowed || matches!(path, "/99" | "/99/")
@@ -376,9 +395,17 @@ impl Runtime<'_> {
                         // The bankruptcy schedule initializes its column settings
                         // on first opening; both native forms persist them in DB4.
                         || command == "bankrotanshlag"
+                        // The stock information system initializes/migrates
+                        // named column settings on opening. Its admin group
+                        // check controls explicit edits and default creation.
+                        || command.eq_ignore_ascii_case("infSystem")
                         || request.method == "POST" && command == "regletters"
                             && matches!(participant_mode.as_str(), "2" | "4" | "6")
                         || request.method == "POST" && command == "anshlag"
+                        // Printing a case label stores its barcode and subject.
+                        // Selecting a case/template and barcode-only export do not.
+                        || request.method == "POST" && command.eq_ignore_ascii_case("sticker")
+                            && matches!(participant_mode.as_str(), "3" | "sticker_print")
                         || request.method == "POST" && matches!(command, "makeVacation" | "regassessors")
                         // The original assessor form removes a period by AJAX GET.
                         || command == "regassessors" && request.method == "GET" && participant_mode == "5")
@@ -386,7 +413,9 @@ impl Runtime<'_> {
                     && matches!(participant_mode.as_str(), "11"|"12"|"14"|"27"|"34")
                 || matches!(path, "/20a" | "/20a/")
                     && request.method == "POST"
-                    && matches!(command, "ispravlenieForm" | "DeleteObject" | "statcard171" | "statcard111"));
+                    // mgmt verifies the stock mode ACL before executing its
+                    // maintenance callback. Merely opening a form cannot write.
+                    && matches!(command, "ispravlenieForm" | "DeleteObject" | "statcard171" | "statcard111" | "mgmt"));
         self.schedule_export_allowed = self.document_write_allowed
             && matches!(path, "/20a" | "/20a/") && command == "anshlag"
             && request.method == "POST";
@@ -405,6 +434,12 @@ impl Runtime<'_> {
         // Startup libraries keep references to the virtual directory. A request
         // is a distinct Connection, never a mutation of that persistent object.
         let path_object = directory.clone();
+        if path.trim_end_matches('/') == "/20a" && command.eq_ignore_ascii_case("infSystem") {
+            path_object.borrow_mut().insert("SaveState".into(), Value::Native("path.SaveInformation".into()));
+        }
+        if self.exchange_access.request {
+            path_object.borrow_mut().insert("SaveState".into(), Value::Native("path.SaveExchange".into()));
+        }
         if path.trim_end_matches('/') == "/20a" && command == "raspred_settings" {
             path_object
                 .borrow_mut()
@@ -716,12 +751,17 @@ impl Runtime<'_> {
         self.numeric_arrays.clear();
         self.schema_links.clear();
         self.document_write_allowed = false;
+        self.bras_export_allowed = false;
         self.cursor_projections = false;
         self.schedule_export_allowed = false;
         self.kod_snapshot_loaded = false;
         self.scheduled_request = false;
         self.registration_write_allowed = false;
         self.attachment_write_allowed = false;
+        self.maintenance_allowed = false;
+        self.archive_access = archive::Access::default();
+        self.exchange_access.abort();
+        self.exchange_access = exchange::Access::default();
         for doc in self.document_edits.borrow().values() {
             doc.borrow_mut().locked = false;
         }

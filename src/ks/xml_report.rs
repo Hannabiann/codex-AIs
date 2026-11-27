@@ -36,21 +36,19 @@ impl Runtime<'_> {
             Some(Value::String(s)) if s.trim_start().starts_with('<') => s.clone(),
             _ => return Err("XML report source must be XML text or an in-memory stream".into()),
         };
-        if !source.is_empty() {
-            xml_sax::events(&source)?;
-        }
-        Ok(Value::ReadOnlyObject(Rc::new(RefCell::new(HashMap::from(
-            [
-                ("xml".into(), Value::String(source)),
-                ("\0typename".into(), Value::String("XMLDocument".into())),
-            ],
-        )))))
+        let validate_on_parse = match values.get(1) {
+            Some(Value::Object(o) | Value::ReadOnlyObject(o)) => {
+                !matches!(o.borrow().get("validate"), Some(Value::Bool(false)))
+            }
+            _ => true,
+        };
+        xml_ole::from_source(source, validate_on_parse)
     }
     pub(super) fn report_xml_writer(&self, name: &str, values: Vec<Value>) -> Result<Value, Fault> {
         let mut o = HashMap::new();
         if name == "XMLBaseTagWriter" {
             if !(1..=2).contains(&values.len())
-                || !matches!(values[0], Value::ReadStream(_) | Value::HttpOutput)
+                || !matches!(values[0], Value::ReadStream(_) | Value::HttpOutput | Value::LogFile(_))
             {
                 return Err("XML writer requires output stream".into());
             }
@@ -63,6 +61,7 @@ impl Runtime<'_> {
             "StartElement",
             "EndElement",
             "Characters",
+            "Element",
             "setHandler",
             "StartDocument",
             "EndDocument",
@@ -80,6 +79,13 @@ impl Runtime<'_> {
         let Some(Value::Object(o)) = receiver else {
             return Err("XML writer receiver missing".into());
         };
+        if method == "Element" {
+            if !(1..=3).contains(&values.len()) { return Err("XML Element expects name, optional attributes and text".into()); }
+            let receiver=Some(Value::Object(o.clone()));
+            self.report_xml_call("StartElement",receiver.clone(),values.iter().take(2).cloned().collect())?;
+            if let Some(text)=values.get(2) {self.report_xml_call("Characters",receiver.clone(),vec![text.clone()])?;}
+            return self.report_xml_call("EndElement",receiver,vec![]);
+        }
         if method == "setHandler" {
             if values.len() != 1 {
                 return Err("SAX setHandler expects writer".into());
@@ -171,6 +177,10 @@ impl Runtime<'_> {
                 s.data.extend_from_slice(&bytes);
             }
             Value::HttpOutput => self.write(&text)?,
+            Value::LogFile(_) => {
+                let function=self.member(target.clone(),"PrintS".into())?;
+                self.call_host(function,vec![Value::String(text)],Some(target),"XML.Write".into())?;
+            },
             _ => return Err("XML writer target is not a stream".into()),
         }
         Ok(Value::Null)

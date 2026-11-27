@@ -203,6 +203,21 @@ fn add(
             && previous
                 .split(';')
                 .all(|v| v.parse::<u32>().is_ok_and(|n| n != 0));
+        // Archive selection emits one hidden/checkbox field per object.
+        // Its KS handlers consume the selected OIDs as a semicolon list.
+        let archive_objects = command == "arx"
+            && key == "nm_cases"
+            && value.parse::<u32>().is_ok_and(|n| n != 0)
+            && previous
+                .split(';')
+                .all(|v| v.parse::<u32>().is_ok_and(|n| n != 0));
+        // Label controls identify the party type in the name and submit
+        // zero-based participant indices. The stock KS consumes a ';' list.
+        let sticker_parties = command.eq_ignore_ascii_case("sticker")
+            && key.strip_prefix('a').and_then(|s| s.strip_suffix('s'))
+                .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && s.parse::<u32>().is_ok_and(|n| n != 0))
+            && value.parse::<u32>().is_ok()
+            && previous.split(';').all(|s| s.parse::<u32>().is_ok());
         let stat_attribute = matches!(command,"statcard171"|"statcard111") && key.strip_prefix('a').is_some_and(|s|{
             let digits=s.bytes().take_while(u8::is_ascii_digit).count();
             digits>0 && matches!(&s[digits..], ""|"date"|"double"|"event")
@@ -219,9 +234,10 @@ fn add(
             && key.strip_prefix('a').is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
             && value.parse::<u32>().is_ok_and(|n| n != 0)
             && previous.split(';').all(|s| s.is_empty() || s.parse::<u32>().is_ok_and(|n| n != 0));
-        let multi = find_attribute || settings_multi || postal_previous || stat_attribute || category
+        let multi = sticker_parties || find_attribute || settings_multi || postal_previous || stat_attribute || category
             || vacation
             || user_groups
+            || archive_objects
             || key == "tipdoc"
             || key == "prevdoc"
                 && value.parse::<u32>().is_ok_and(|n| n != 0)
@@ -261,6 +277,21 @@ fn add(
 }
 pub fn decode(content_type: &str, bytes: &[u8]) -> Result<Vec<(String, String)>, String> {
     decode_for("", content_type, bytes)
+}
+
+#[cfg(test)]
+mod sticker_tests {
+    use super::decode_for;
+    #[test]
+    fn label_participant_indices_keep_zero_and_multiple_selections() {
+        let kind="application/x-www-form-urlencoded";
+        let data=decode_for("/20a?sticker",kind,b"mode=sticker_print&a707002305s=0&a707002305s=1").unwrap();
+        assert_eq!(data[1],("a707002305s".into(),"0;1".into()));
+        for body in [b"mode=3&mode=3".as_slice(),b"a707002305s=0&a707002305s=bad",b"a0s=0&a0s=1"] {
+            assert!(decode_for("/20a?sticker",kind,body).is_err());
+        }
+        assert!(decode_for("/20a?other",kind,b"a707002305s=0&a707002305s=1").is_err());
+    }
 }
 pub fn decode_for(
     target: &str,

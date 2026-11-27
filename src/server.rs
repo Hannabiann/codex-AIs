@@ -472,8 +472,11 @@ struct RequestJob {
     authorization: Option<String>,
     reply: tokio::sync::oneshot::Sender<Response>,
     control: Arc<crate::execution::Control>,
-    queued: tokio::sync::OwnedSemaphorePermit,
+    queued: Option<tokio::sync::OwnedSemaphorePermit>,
+    background: Option<scheduled_exchange::Execution>,
 }
+#[path = "server_exchange_queue.rs"]
+mod scheduled_exchange;
 #[cfg(test)]
 #[path = "server_scheduling_tests.rs"]
 mod scheduling_tests;
@@ -614,6 +617,38 @@ fn lane(target: &str, request: &RequestContext) -> Lane {
     let Ok(name) = object_name(&path, query, &dir) else {
         return Lane::Owner;
     };
+    if name.eq_ignore_ascii_case("senddocs") {
+        let mut mode=String::new();
+        for part in query.split('&') { if let Some((key,value))=part.split_once('=') {
+            if key.eq_ignore_ascii_case("mode") {let Ok(value)=percent_decode(value) else{return Lane::Owner;};mode=value;}
+        }}
+        for (key,value) in &request.form {if key.eq_ignore_ascii_case("mode"){mode=value.clone();}}
+        return if method=="POST" && matches!(mode.as_str(),"1"|"4"|"5"|"14"|"15") {Lane::Heavy}
+            else if method=="GET" && !has_body && matches!(mode.as_str(),""|"0"|"3"|"8"|"9") {Lane::Interface}
+            else {Lane::Owner};
+    }
+    if name == "mgmt" {
+        let mut mode = String::new();
+        let mut operation = String::new();
+        for part in query.split('&') {
+            if let Some((key, value)) = part.split_once('=') {
+                let (Ok(key), Ok(value)) = (percent_decode(key), percent_decode(&value.replace('+', " "))) else {
+                    return Lane::Owner;
+                };
+                match key.as_str() { "mode" => mode = value, "opid" => operation = value, _ => {} }
+            }
+        }
+        for (key, value) in &request.form {
+            match key.as_str() { "mode" => mode = value.clone(), "opid" => operation = value.clone(), _ => {} }
+        }
+        // The native user synchronizer shares UserBase with /99 and /users.
+        // Keep it on their owner; database scans/conversions use heavy workers.
+        return if operation.eq_ignore_ascii_case("{0de4c922-06f5-4504-beb8-24e4703e8a89}") {
+            Lane::Owner
+        } else if method == "GET" && !has_body && matches!(mode.as_str(), "" | "0") {
+            Lane::Interface
+        } else { Lane::Heavy };
+    }
     if name.eq_ignore_ascii_case("regletters") {
         // Only the read-only complete range list can leave the owner. The
         // form and mutation modes share its native background-job queue.
@@ -679,6 +714,9 @@ fn lane(target: &str, request: &RequestContext) -> Lane {
             | "statReportCard"
             | "stat3"
             | "dateandjudgeanshlag"
+            // Judge/assistant workload and hearing timetable: request-local
+            // SQL calculations, including the automatic combined view.
+            | "busy_judges"
             | "reportForPostServices"
             | "convertToExcel"
             | "converttoexcel"
@@ -759,7 +797,8 @@ impl Dispatcher {
                 authorization,
                 reply,
                 control,
-                queued,
+                queued: Some(queued),
+                background: None,
             })
             .map_err(|_| ())
     }
@@ -867,6 +906,23 @@ fn dispatch(engine: &Arc<Db4Engine>, sessions: &mut vm::Sessions, target: &str) 
     )
     .unwrap_or_else(|e| message("422 Unprocessable Content", e))
 }
+fn exchange_startup_needed(dir: &crate::db::VirtualDir) -> bool {
+    dir.path.trim_end_matches('/') == "/20a"
+        && ["SendDocsAutoStart", "SendDocsAutoGetStart"].iter().any(|name| {
+            matches!(dir.properties.get(*name), Some(crate::db::ConfigValue::Text(time))
+                if matches!(crate::ks::scheduler::parse_time(time), Some(crate::ks::scheduler::When::Daily(_))))
+        })
+}
+fn finish_scheduled(monitor: &crate::monitor::Monitor, id: u64, r: &Response) {
+    monitor.finish(id, r.status, if r.status.starts_with('2') {
+        crate::monitor::State::Done
+    } else {
+        crate::monitor::State::Error
+    });
+    if !r.status.starts_with('2') {
+        crate::runtime_logs::error("At exchange", &format!("{}: {}", r.status, String::from_utf8_lossy(&r.body)));
+    }
+}
 fn start_dispatcher(
     engine: Arc<Db4Engine>,
     monitor: Arc<crate::monitor::Monitor>,
@@ -884,11 +940,14 @@ fn start_dispatcher(
     let layout = crate::pool_layout::Layout::new(worker_count, settings.interface_workers)
         .map_err(std::io::Error::other)?;
     let (workers, inboxes) = worker_channels(layout, settings.queue + 1);
+    let queue = Arc::new(tokio::sync::Semaphore::new(settings.queue));
     let interface = (worker_count >= 3).then(|| inboxes[layout.interface()].clone());
     let search = (worker_count >= 4).then(|| inboxes[layout.search].clone());
     let interface_busy = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let search_busy = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for (index, rx) in inboxes.into_iter().enumerate() {
+        let heavy_sender = workers[layout.bulk].sender.clone();
+        let queue = queue.clone();
         let interface = if layout.helps_interface(index) { interface.clone() } else { None };
         let search = if index >= layout.bulk && worker_count >= 4 { search.clone() } else { None };
         let interface_busy = interface_busy.clone();
@@ -914,7 +973,17 @@ fn start_dispatcher(
                     }
                 };
                 let mut sessions = owner.map(vm::Sessions::replica).unwrap_or_default();
+                // A saved daily exchange must run after restart even when no
+                // browser has opened /20a yet. Only the owner starts At jobs.
+                if index == 0 {
+                    for dir in engine.virtual_dirs.iter().filter(|d| exchange_startup_needed(d)) {
+                        if let Err(e) = sessions.warm(engine.clone(), dir) {
+                            crate::runtime_logs::error("KS scheduled exchange startup", &e.0);
+                        }
+                    }
+                }
                 let mut tick = std::time::Instant::now();
+                let mut exchanges = scheduled_exchange::Pending::default();
                 loop {
                     if let Some(warming) = warming.as_mut() {
                         while let Ok(dir) = warming.try_recv() {
@@ -941,6 +1010,7 @@ fn start_dispatcher(
                             reply,
                             control,
                             queued,
+                            background,
                         }) => {
                             let _busy = layout.is_interface(index)
                                 .then(|| InterfaceBusy::enter(&interface_busy));
@@ -948,7 +1018,13 @@ fn start_dispatcher(
                                 .then(|| InterfaceBusy::enter(&search_busy));
                             drop(queued);
                             let _scope = crate::execution::Scope::enter(control.clone());
-                            if reply.is_closed() || control.cancelled() {
+                            if let Some(job) = &background {
+                                if !job.start() {
+                                    monitor.finish(id, "расписание изменено до исполнения", crate::monitor::State::Cancelled);
+                                    continue;
+                                }
+                            }
+                            if (background.is_none() && reply.is_closed()) || control.cancelled() {
                                 monitor.finish(
                                     id,
                                     "клиент отключён до исполнения",
@@ -958,13 +1034,19 @@ fn start_dispatcher(
                             }
                             monitor.executor(id, index + 1);
                             monitor.state(id, crate::monitor::State::Running);
-                            let r = dispatch_http(
+                            let r = if background.is_some() {
+                                dispatch(&engine, &mut sessions, &request.target)
+                            } else { dispatch_http(
                                 &engine,
                                 &mut sessions,
                                 request,
                                 authorization.as_deref(),
-                            );
+                            ) };
                             monitor.response_error(id, &r);
+                            if background.is_some() {
+                                finish_scheduled(&monitor, id, &r);
+                                continue;
+                            }
                             if control.cancelled() {
                                 monitor.finish(
                                     id,
@@ -1000,6 +1082,10 @@ fn start_dispatcher(
                         match sessions.due() {
                             Ok(paths) => {
                                 for path in paths {
+                                    if scheduled_exchange::accepts(&path) {
+                                        exchanges.enqueue(path.clone(), sessions.daily_time(&path), &monitor);
+                                        continue;
+                                    }
                                     let id = monitor.start(&path, "At", true);
                                     monitor.executor(id, index + 1);
                                     monitor.state(id, crate::monitor::State::Running);
@@ -1025,6 +1111,7 @@ fn start_dispatcher(
                             }
                             Err(e) => crate::runtime_logs::error("At clock", &e),
                         }
+                        exchanges.flush(&heavy_sender, &queue, &monitor, |path| sessions.daily_time(path));
                         monitor.schedules(sessions.scheduled());
                         tick = std::time::Instant::now();
                     }
@@ -1034,7 +1121,7 @@ fn start_dispatcher(
     Ok(Arc::new(Dispatcher {
         layout,
         workers,
-        queue: Arc::new(tokio::sync::Semaphore::new(settings.queue)),
+        queue,
         ais_paths: engine
             .virtual_dirs
             .iter()
@@ -1075,6 +1162,7 @@ pub async fn run_server(engine: Arc<Db4Engine>, port: u16) -> std::io::Result<()
         settings.active.clone(),
         settings.worker_selection.clone(),
     ));
+    monitor.start_resources();
     let status_checks = Arc::new(tokio::sync::Semaphore::new(4));
     let dispatcher = start_dispatcher(
         engine.clone(),
@@ -1082,6 +1170,11 @@ pub async fn run_server(engine: Arc<Db4Engine>, port: u16) -> std::io::Result<()
         &settings.active,
         settings.worker_selection.workers,
     )?;
+    monitor.bind_admission([
+        dispatcher.queue.clone(),
+        dispatcher.owner_reserve.clone(),
+        dispatcher.interface_reserve.clone(),
+    ]);
     loop {
         let (mut stream, peer) = listener.accept().await?;
         let Ok(permit) = connections.clone().try_acquire_owned() else {
@@ -1412,7 +1505,11 @@ async fn connection_request(
                 break Response {
                     status: "200 OK",
                     mime: "text/html; charset=utf-8",
-                    body: monitor.html().into_bytes(),
+                    body: if crate::monitor::is_status_snapshot(&context.target) {
+                        monitor.snapshot_html()
+                    } else {
+                        monitor.html()
+                    }.into_bytes(),
                     location: None,
                     headers: vec![("Cache-Control".into(), "no-store".into())],
                 };

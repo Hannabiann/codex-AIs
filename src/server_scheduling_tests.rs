@@ -1,5 +1,34 @@
 use super::*;
 
+#[test]
+fn saved_exchange_schedule_starts_without_an_http_request() {
+    let mut dir = crate::db::VirtualDir { path: "/20a/".into(), ..Default::default() };
+    assert!(!exchange_startup_needed(&dir));
+    for name in ["SendDocsAutoStart", "SendDocsAutoGetStart"] {
+        dir.properties.clear();
+        for time in ["", "deletetask", "24:00"] {
+            dir.properties.insert(name.into(), crate::db::ConfigValue::Text(time.into()));
+            assert!(!exchange_startup_needed(&dir));
+        }
+        dir.properties.insert(name.into(), crate::db::ConfigValue::Text("0:45".into()));
+        assert!(exchange_startup_needed(&dir));
+    }
+    dir.path = "/99".into();
+    assert!(!exchange_startup_needed(&dir));
+}
+
+#[test]
+fn court_exchange_keeps_transfers_off_the_word_executor() {
+    for mode in ["1","4","5","14","15"] {
+        let r=RequestContext {method:"POST".into(),form:vec![("mode".into(),mode.into())],..Default::default()};
+        assert_eq!(lane("/20a?senddocs",&r),Lane::Heavy);
+    }
+    let r=RequestContext {method:"GET".into(),..Default::default()};
+    for mode in ["0","3","8","9"] {assert_eq!(lane(&format!("/20a?senddocs&mode={mode}"),&r),Lane::Interface);}
+    let r=RequestContext {method:"POST".into(),form:vec![("mode".into(),"2".into())],..Default::default()};
+    assert_eq!(lane("/20a?senddocs",&r),Lane::Owner);
+}
+
 fn job(id: u64) -> RequestJob {
     RequestJob {
         id,
@@ -7,9 +36,10 @@ fn job(id: u64) -> RequestJob {
         authorization: None,
         reply: tokio::sync::oneshot::channel().0,
         control: Arc::new(Default::default()),
-        queued: Arc::new(tokio::sync::Semaphore::new(1))
+        queued: Some(Arc::new(tokio::sync::Semaphore::new(1))
             .try_acquire_owned()
-            .unwrap(),
+            .unwrap()),
+        background: None,
     }
 }
 
@@ -145,6 +175,61 @@ fn route_classification_keeps_search_and_owner_separate_from_shared_bulk() {
     assert_eq!(lane("/20a?ispravlenieForm", &request), Lane::Interface);
     assert_eq!(lane("/99?signdoc", &request), Lane::Owner);
     assert_eq!(lane("/20a?unknownSave", &request), Lane::Owner);
+}
+
+#[test]
+fn maintenance_scans_leave_word_free_but_user_sync_keeps_its_owner() {
+    let mut request=RequestContext { method: "GET".into(), ..Default::default() };
+    assert_eq!(lane("/20a?mgmt",&request),Lane::Interface);
+    assert_eq!(lane("/20a?mgmt&mode=2",&request),Lane::Heavy);
+    assert_eq!(lane("/20a/mgmt?mode=1",&request),Lane::Heavy);
+    assert_eq!(lane("/99?mgmt&mode=2",&request),Lane::Owner);
+    request.method="POST".into();
+    request.form=vec![("mode".into(),"2".into())];
+    assert_eq!(lane("/20a?mgmt&mode=0",&request),Lane::Heavy);
+    request.form.push(("opid".into(),"{0de4c922-06f5-4504-beb8-24e4703e8a89}".into()));
+    assert_eq!(lane("/20a?mgmt&opid=other",&request),Lane::Owner);
+}
+
+#[test]
+fn judges_workload_uses_bulk_for_get_and_post_and_keeps_word_reserve() {
+    for method in ["GET", "POST"] {
+        let request = RequestContext {
+            method: method.into(),
+            form: if method == "POST" {
+                vec![
+                    ("mode".into(), "3".into()),
+                    ("nm_mounthflag".into(), "2".into()),
+                ]
+            } else {
+                Vec::new()
+            },
+            ..Default::default()
+        };
+        for url in [
+            "/20a?busy_judges&",
+            "/20a/?busy_judges&mode=3",
+            "/20a/busy_judges?mode=1",
+            "/20a?busy%5Fjudges&mode=2",
+        ] {
+            assert_eq!(lane(url, &request), Lane::Heavy, "{method} {url}");
+        }
+        assert_eq!(lane("/99?busy_judges", &request), Lane::Owner);
+        assert_eq!(lane("/20a/busy_judges?unknownSave", &request), Lane::Owner);
+    }
+    // An alternate configured AIS path must get the same routing. Filling its
+    // bulk queue must not consume the reserved admission slot used by Word.
+    for count in [2, 3, 4, 9] {
+        let (d, inboxes) = dispatcher(count, 1);
+        assert!(submit(&d, 1, "/court?busy_judges&mode=3").is_ok());
+        assert!(submit(&d, 2, "/court?busy_judges&mode=1").is_err());
+        assert!(submit(&d, 3, "/99?getfile&nd=1").is_ok());
+        assert_eq!(next_job(&inboxes[0], None, None).unwrap().id, 3);
+        assert_eq!(
+            next_job(&inboxes[d.layout.bulk], None, None).unwrap().id,
+            1
+        );
+    }
 }
 
 #[test]

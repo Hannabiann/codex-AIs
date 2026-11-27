@@ -2,9 +2,11 @@
 //! The lock protects small snapshots only; KS and authentication never hold it.
 use std::{
     collections::{BTreeMap, VecDeque},
-    sync::Mutex,
+    sync::{Arc, Mutex, OnceLock},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
+#[path = "monitor_html.rs"]
+mod html;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
     Headers,
@@ -49,6 +51,7 @@ struct Entry {
     group: &'static str,
     method: String,
     error_logged: bool,
+    monitor_poll: bool,
 }
 #[derive(Default)]
 struct Inner {
@@ -60,8 +63,10 @@ struct Inner {
 }
 pub struct Monitor {
     inner: Mutex<Inner>,
+    resources: crate::resource_monitor::Resources,
     settings: crate::settings::Settings,
     workers: crate::worker_config::Selection,
+    admission: OnceLock<[Arc<tokio::sync::Semaphore>; 3]>,
 }
 impl Default for Monitor {
     fn default() -> Self {
@@ -76,6 +81,12 @@ pub fn escape(s: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+}
+pub fn is_status_snapshot(target: &str) -> bool {
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    matches!(path, "/admin" | "/admin/")
+        && query.split('&').next() == Some("status")
+        && query.split('&').any(|p| p == "snapshot=1")
 }
 /// Only numeric document coordinates survive. Tokens, search terms and forms do not.
 pub fn safe_url(s: &str) -> String {
@@ -124,9 +135,17 @@ impl Monitor {
     ) -> Self {
         Self {
             inner: Mutex::new(Inner::default()),
+            resources: crate::resource_monitor::Resources::default(),
             settings,
             workers,
+            admission: OnceLock::new(),
         }
+    }
+    pub fn start_resources(&self) {
+        self.resources.start();
+    }
+    pub fn bind_admission(&self, queues: [Arc<tokio::sync::Semaphore>; 3]) {
+        let _ = self.admission.set(queues);
     }
     pub fn active_users(&self) -> usize {
         self.inner
@@ -164,6 +183,7 @@ impl Monitor {
                 group: if job { "Владелец" } else { "" },
                 method: if job { "At".into() } else { String::new() },
                 error_logged: false,
+                monitor_poll: !job && is_status_snapshot(url),
             },
         );
         id
@@ -188,6 +208,7 @@ impl Monitor {
     pub fn target(&self, id: u64, url: &str) {
         if let Some(e) = self.inner.lock().unwrap().active.get_mut(&id) {
             e.url = safe_url(url);
+            e.monitor_poll = !e.job && is_status_snapshot(url);
         }
     }
     pub fn method(&self, id: u64, method: &str) {
@@ -239,6 +260,11 @@ impl Monitor {
     pub fn finish(&self, id: u64, result: &str, state: State) {
         let mut m = self.inner.lock().unwrap();
         if let Some(mut e) = m.active.remove(&id) {
+            // Poll failures remain visible; successful monitoring must not
+            // evict real operations from the bounded history or fill access.log.
+            if e.monitor_poll && result.starts_with("200 ") && state == State::Done {
+                return;
+            }
             e.elapsed = Some(e.tick.elapsed().as_millis());
             e.result = result.into();
             e.state = state;
@@ -264,81 +290,7 @@ impl Monitor {
     pub fn schedules(&self, rows: Vec<String>) {
         self.inner.lock().unwrap().scheduled = rows;
     }
-    pub fn html(&self) -> String {
-        let (active, history, scheduled, connections) = {
-            let m = self.inner.lock().unwrap();
-            (
-                m.active.values().cloned().collect::<Vec<_>>(),
-                m.history.clone(),
-                m.scheduled.clone(),
-                m.connections,
-            )
-        };
-        let queued = active
-            .iter()
-            .filter(|e| {
-                e.state == State::Queued || e.state == State::Cancelling && e.executor.is_none()
-            })
-            .count();
-        let running = active
-            .iter()
-            .filter(|e| {
-                e.state == State::Running || e.state == State::Cancelling && e.executor.is_some()
-            })
-            .count();
-        let connection_limit = self.settings.connections;
-        let workers = self.workers.workers;
-        let layout = crate::pool_layout::Layout::new(workers, self.settings.interface_workers).expect("validated pool layout");
-        let queue_limit = self.settings.queue + workers.saturating_sub(1).min(2);
-        let mut out=format!("<!doctype html><html lang=ru><meta charset=utf-8><meta http-equiv=refresh content=3><title>Состояние сервера</title><style>body{{background:#e3ddda;font:14px Arial;margin:20px}}table{{background:white;border-collapse:collapse;width:100%;min-width:1120px;table-layout:auto}}.table-scroll{{max-width:100%;overflow-x:auto}}th,td{{border:1px solid #aaa;padding:7px 10px;text-align:left;vertical-align:top}}th{{color:#00009a;white-space:nowrap}}td{{white-space:nowrap}}td:nth-child(4){{min-width:280px;max-width:640px;white-space:normal;overflow-wrap:anywhere}}td:nth-child(3),td:nth-child(6),td:nth-child(9){{max-width:260px;white-space:normal;overflow-wrap:break-word}}td:nth-child(1),td:nth-child(5),td:nth-child(7),td:nth-child(8){{font-variant-numeric:tabular-nums}}.lost{{color:#a00}}</style><h2>Состояние сервера · Tokio</h2><p>Соединения: {connections}/{connection_limit}. Очередь KS: {queued}/{queue_limit}. Исполнители KS/DB: {running}/{workers}, свободно: {}. Свободные слоты приёма HTTP: {}.</p><p>Сеть обслуживается Tokio. Состояние фоновых очередей и Word принадлежит исполнителю 1. Выделенный интерфейс обслуживает только проверенные формы; поиск и общая очередь отчётов/удалений используют остальные места согласно распределению ниже. Неизвестные KS обслуживает владелец каталога. Монитор и проверка его доступа выполняются вне очереди KS.</p>",workers.saturating_sub(running),connection_limit.saturating_sub(connections));
-        out.push_str(&format!("<p>{}</p>", escape(&self.workers.explanation)));
-        out.push_str(&format!("<div id=ks-pool data-process-id=\"{}\" data-workers=\"{workers}\" data-interface-workers=\"{}\" data-heavy-workers=\"{}\" data-queue=\"{}\"><p>{}</p></div>",std::process::id(),layout.interfaces,workers-layout.bulk,self.settings.queue,escape(&layout.description())));
-        if let Some(address)=crate::listen_config::address() {out.push_str(&format!("<p>HTTP слушатель: {address}. <a href='/admin?advanced'>Настройки интерфейсов и порта</a>.</p>"));}
-        if workers >= 3 {
-            let heavy_running = active
-                .iter()
-                .filter(|e| {
-                    matches!(e.state, State::Running | State::Cancelling)
-                        && e.executor.is_some_and(|index| index > 1 + layout.interfaces)
-                        && e.group != "Интерфейс"
-                })
-                .count();
-            let assisting = active
-                .iter()
-                .filter(|e| {
-                    matches!(e.state, State::Running | State::Cancelling)
-                        && e.executor.is_some_and(|index| index > 1 + layout.interfaces)
-                        && e.group == "Интерфейс"
-                })
-                .count();
-            let shared = workers - 1 - layout.interfaces;
-            out.push_str(&format!("<p>Пул тяжёлых задач и поиска: {shared} исполнителей; заняты {heavy_running}, интерфейсу помогают {assisting}, свободны {}. Владелец и выделенные исполнители интерфейса не берут тяжёлые задачи.</p>", shared.saturating_sub(heavy_running + assisting)));
-            out.push_str(if workers >= 4 {
-                "<p>Выделенный поиск не берёт отчёты или удаления. Тяжёлые исполнители берут запросы из общей FIFO-очереди, затем помогают поиску. Свободные поиск и тяжёлые исполнители помогают интерфейсу, когда все его выделенные места заняты. Уже начатый запрос не переносится и не прерывается ради следующего.</p>"
-            } else {
-                "<p>При трёх исполнителях поиск и тяжёлые задачи разделяют одно место и помогают занятому интерфейсу.</p>"
-            });
-        }
-        out.push_str("<p>Готовые CSS, JavaScript и изображения: общий кэш до 32 МиБ, до 1024 записей; один ресурс до 4 МиБ. Выдача и проверка доступа выполняются вне KS, не более четырёх одновременно. Браузер проверяет ETag при повторном запросе. Ответы KS, HTML-формы и документы не кэшируются.</p>");
-        for (title, rows, job) in [
-            ("Активные HTTP-запросы", active.clone(), false),
-            ("Активные задания At", active.clone(), true),
-            ("История HTTP", history.iter().cloned().collect(), false),
-            ("История At", history.iter().cloned().collect(), true),
-        ] {
-            out.push_str(&format!("<h3>{title}</h3><div class=table-scroll><table><tr><th>ID</th><th>Состояние</th><th>Результат</th><th>URL / действие</th><th>Источник / IP:Port</th><th>Пользователь</th><th>Начало UTC (Unix)</th><th>Мс</th><th>Соединение</th><th>KS/DB</th><th>Группа</th></tr>"));
-            for e in rows.iter().filter(|e| e.job == job) {
-                out.push_str(&format!("<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td{}>{}</td><td>{}</td><td>{}</td></tr>",e.id,e.state.label(),escape(&e.result),escape(&e.url),escape(&e.source),escape(&e.user),e.start,e.elapsed.unwrap_or_else(||e.tick.elapsed().as_millis()),if e.disconnected{" class=lost"}else{""},if e.disconnected {if e.state == State::Cancelling {"отключено; ожидание безопасной остановки"} else {"отключено"}}else if e.job{"—"}else{""},e.executor.map(|v|v.to_string()).unwrap_or_default(),e.group));
-            }
-            out.push_str("</table></div>");
-        }
-        out.push_str("<h3>Зарегистрированные задания At</h3><ul>");
-        for row in scheduled {
-            out.push_str(&format!("<li>{}</li>", escape(&row)));
-        }
-        out.push_str(&format!("</ul><p>История ограничена {} завершениями. При отключении клиента KS и чтение DB отменяются. Начатая атомарная запись DB4 завершается; уже сохранённые изменения не откатываются. Keep-alive не занимает исполнителя между запросами. Значения форм, токены и заголовки авторизации не сохраняются.</p></html>", self.settings.history));
-        out
-    }
+
 }
 pub struct ConnectionGuard {
     pub monitor: std::sync::Arc<Monitor>,
@@ -357,5 +309,78 @@ impl Drop for RequestGuard {
     fn drop(&mut self) {
         self.control.cancel();
         self.monitor.closed(self.id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn monitor(workers: usize, interfaces: usize) -> Monitor {
+        let settings = crate::settings::Settings {
+            workers: crate::worker_config::Mode::Manual(workers),
+            interface_workers: interfaces,
+            queue: 8,
+            ..Default::default()
+        };
+        let selection = settings.workers.resolve(interfaces);
+        Monitor::new(settings, selection)
+    }
+    #[test]
+    fn status_polls_keep_failures_but_do_not_evict_request_history() {
+        let m = monitor(4, 1);
+        for url in ["/admin?status&snapshot=1", "/admin/?status&snapshot=1&x=y"] {
+            let id = m.start("headers", "127.0.0.1:1", false);
+            m.target(id, url);
+            assert!(!m.snapshot_html().contains(&format!("row-active-http-{id}")));
+            m.finish(id, "200 OK", State::Done);
+        }
+        assert!(m.inner.lock().unwrap().history.is_empty());
+        let id = m.start("/admin?status&snapshot=1", "local", false);
+        m.finish(id, "401 Unauthorized", State::Done);
+        for url in ["/admin?status", "/20a?status&snapshot=1", "/admin?advanced&snapshot=1", "/admin?status&snapshot=10"] {
+            assert!(!is_status_snapshot(url));
+            let id = m.start(url, "local", false);
+            m.finish(id, "200 OK", State::Done);
+        }
+        assert_eq!(m.inner.lock().unwrap().history.len(), 5);
+        assert!(m.snapshot_html().contains("401 Unauthorized"));
+    }
+    #[test]
+    fn capacity_counts_executing_workers_and_actual_admission_permits() {
+        let m = monitor(6, 2);
+        let queues = [Arc::new(tokio::sync::Semaphore::new(8)), Arc::new(tokio::sync::Semaphore::new(1)), Arc::new(tokio::sync::Semaphore::new(1))];
+        m.bind_admission(queues.clone());
+        let _common = queues[0].try_acquire_many(3).unwrap();
+        let _reserve = queues[2].try_acquire().unwrap();
+        for (worker, state) in [(1, State::Running), (5, State::Cancelling), (6, State::Writing)] {
+            let id = m.start("/20a?test", "<&'", false);
+            m.executor(id, worker);
+            m.state(id, state);
+        }
+        // A cancelled request still waiting for a worker occupies no executor.
+        let id = m.start("/20a?queued", "local", false);
+        m.state(id, State::Cancelling);
+        let html = m.snapshot_html();
+        assert!(html.contains("id='capacity-ks' data-used='2' data-total='6'"));
+        assert!(html.contains("id='capacity-queue' data-used='4' data-total='10'"));
+        assert!(html.contains("class='worker cancelling' id='worker-5'"));
+        assert!(html.contains("class='worker' id='worker-6'"));
+        assert!(html.contains("&lt;&amp;&#39;"));
+        assert!(html.contains("№3 · Интерфейс"));
+        assert!(html.contains("№4 · Поиск"));
+        assert_eq!(html.matches("<tbody>").count(), 4);
+    }
+    #[test]
+    fn small_pool_roles_and_live_shell_are_consistent() {
+        for (n, roles) in [(1, vec!["Все запросы"]), (2, vec!["Word / интерфейс", "Поиск / тяжёлые"]), (3, vec!["Word / состояние", "Интерфейс", "Поиск / тяжёлые"])] {
+            let m = monitor(n, 1);
+            let html = m.html();
+            for (i, role) in roles.iter().enumerate() {
+                assert!(html.contains(&format!("№{} · {role}", i + 1)));
+            }
+            assert!(!html.contains("http-equiv=refresh"));
+            assert!(html.contains("?status&snapshot=1"));
+            assert!(!m.snapshot_html().contains("<script>"));
+        }
     }
 }

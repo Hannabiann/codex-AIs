@@ -3,10 +3,68 @@ use super::{document_fields, Fault, InputStream, Runtime, Value};
 use crate::db::fields::{Field, FileMetadata, Record, Value as Data};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
+#[cfg(test)]
+mod test_read_tests {
+    use super::*;
+    use crate::ks::database::{DatabaseHost, Volume};
+    struct Reader;
+    #[test]
+    fn exchange_binary_metadata_roundtrips_dos_time_and_filename() {
+        let mut runtime=Runtime::new("/test");runtime.document_write_allowed=true;
+        let record=Record {area:42,flags:0,fields:vec![Field {id:3,wire_type:14,value:Data::Binary {data:vec![1,2],kind:None,file:None}}].into()};
+        let doc=Rc::new(RefCell::new(Draft::new(0,Some(record))));doc.borrow_mut().locked=true;doc.borrow_mut().oid=1;
+        let field=WritableField {doc:doc.clone(),index:0};
+        let date=crate::ks::date::Date::from_parts([2027,11,30,13,42,18,0]).unwrap();
+        runtime.writable_set(field.clone(),"FileDate",Value::Date(Rc::new(RefCell::new(date)))).unwrap();
+        runtime.writable_set(field.clone(),"FileName",Value::String("определение.rtf".into())).unwrap();
+        let restored=runtime.writable_property(field.clone(),"FileDate".into()).unwrap();
+        let Value::Date(restored)=restored else {panic!()};
+        assert_eq!(restored.borrow().parts(),[2027,11,30,13,42,18,0]);
+        assert_eq!(runtime.writable_property(field.clone(),"FileName".into()).unwrap().text(),"определение.rtf");
+        assert_eq!(crate::document::bytes(&field.snapshot().unwrap().record.fields[0]).unwrap(),[1,2]);
+        doc.borrow_mut().locked=false;
+        assert!(runtime.writable_set(field,"FileName",Value::Null).is_err());
+    }
+    impl DatabaseHost for Reader {
+        fn create(&mut self)->Result<u32,String>{unreachable!()}
+        fn open(&mut self,_:u32,_:&str,_:&[bool])->Result<Volume,crate::ks::runtime::OpenError>{unreachable!()}
+        fn remove(&mut self,_:u32,_:u32)->Result<(),String>{unreachable!()}
+        fn volumes(&self,_:u32)->Result<Vec<Volume>,String>{Ok(vec![])}
+        fn schema(&self,_:u32)->Result<crate::db::schema::Schema,String>{unreachable!()}
+        fn attribute(&self,_:u32,_:u32,_:&str)->Result<u16,String>{unreachable!()}
+        fn query(&self,_:u32,_:&str)->Result<Vec<u32>,String>{unreachable!()}
+        fn read(&self,scope:u32,oid:u32)->Result<Option<Record>,String>{
+            assert_eq!(scope,7);
+            match oid {
+                1=>Ok(Some(Record {area:42,flags:0,fields:vec![Field {id:1024,wire_type:5,value:Data::Integer(1)},Field {id:1,wire_type:2,value:Data::String(b"readable".to_vec())}].into()})),
+                2=>Ok(None),
+                _=>Err("damaged field data".into()),
+            }
+        }
+    }
+    #[test]
+    fn test_read_resets_previous_document_and_never_writes_bad_records() {
+        let mut runtime=Runtime::new("/test").with_database_host(Reader);
+        runtime.document_write_allowed=true;
+        let Value::EditDocument(doc)=runtime.new_edit_document_in(7).unwrap() else {panic!()};
+        assert_eq!(runtime.edit_call(doc.clone(),"TestRead",&[Value::Number(1.0)]).unwrap().number().unwrap(),0.0);
+        assert_eq!(runtime.edit_property(doc.clone(),"Name".into()).unwrap().text(),"readable");
+        for id in [2.0,3.0] {
+            assert_eq!(runtime.edit_call(doc.clone(),"TestRead",&[Value::Number(id)]).unwrap().number().unwrap(),-1.0);
+            assert!(matches!(runtime.edit_property(doc.clone(),"Name".into()).unwrap(),Value::Null));
+            assert!(runtime.edit_call(doc.clone(),"Lock",&[]).is_err());
+            assert!(runtime.edit_call(doc.clone(),"Write",&[]).is_err());
+        }
+        assert!(runtime.edit_call(doc.clone(),"TestRead",&[Value::Number(3.0),Value::Bool(true)]).is_err());
+        assert_eq!(runtime.edit_call(doc,"TestRead",&[Value::Number(1.0)]).unwrap().number().unwrap(),0.0);
+    }
+}
+
 pub(super) type Edit = Rc<RefCell<Draft>>;
 #[derive(Debug)]
 pub(super) struct Draft {
     pub imported: bool,
+    test_read_failed: bool,
     pub scope: u32,
     pub oid: u32,
     pub area: u16,
@@ -21,6 +79,7 @@ impl Draft {
     pub(super) fn new(scope: u32, record: Option<Record>) -> Self {
         Self {
             imported: false,
+            test_read_failed: false,
             scope,
             oid: record.as_ref().and_then(|r| r.integer(1024)).unwrap_or(0),
             area: record.as_ref().map_or(0, |r| r.area),
@@ -238,13 +297,17 @@ impl Runtime<'_> {
                 .map(|b| Value::String(crate::db::decode(b)))
                 .unwrap_or(Value::Null),
             "Base" => return self.database_for(d.scope),
+            "Volume" if d.test_read_failed => {
+                self.dbhost.as_ref().ok_or("Document reader missing")?.borrow().volumes(d.scope)?
+                    .into_iter().next().map(|v|Value::Volume(d.scope,v)).unwrap_or(Value::Null)
+            }
             "AreaName" => {
                 let s = self.member(self.database_for(d.scope)?, "Struct".into())?;
                 let a = self.member(s, d.area.to_string())?;
                 return self.member(a, "Name".into());
             }
             "Lock" | "Unlock" | "Write" | "NewField" | "DeleteField" | "Attr" | "Next"
-            | "Compile" | "Execute" => Value::EditMethod(doc.clone(), key),
+            | "Compile" | "Execute" | "TestRead" => Value::EditMethod(doc.clone(), key),
             _ if d.oid != 0 && !d.imported => {
                 return self.member(Value::Document(d.oid, d.scope), key)
             }
@@ -291,6 +354,22 @@ impl Runtime<'_> {
         value: Value,
     ) -> Result<(), Fault> {
         self.allow_document_write()?;
+        if matches!(key,"FileName"|"FileDate") {
+            let mut doc=field.doc.borrow_mut();doc.check_lock()?;
+            let Data::Binary {kind,file,..}=&mut doc.fields[field.index].as_mut().ok_or("field removed")?.value else {return Err("File metadata requires a binary field".into());};
+            let mut metadata=file.clone().unwrap_or(FileMetadata {timestamp:0,source:vec![],name:vec![]});
+            if key=="FileName" {
+                let text=value.text();let (name,_,bad)=encoding_rs::WINDOWS_1251.encode(&text);
+                if bad || name.len()>u16::MAX as usize {return Err("Invalid binary filename".into());}
+                metadata.name=name.into_owned();
+            } else if matches!(value,Value::Null) {metadata.timestamp=0;}
+            else {
+                let Value::Date(date)=value else {return Err("FileDate requires a Date".into());};
+                let p=date.borrow().parts();if !(1980..=2107).contains(&p[0]) {return Err("FileDate outside DOS timestamp range".into());}
+                metadata.timestamp=((p[0]-1980) as u32)<<25 | ((p[1]+1) as u32)<<21 | (p[2] as u32)<<16 | (p[3] as u32)<<11 | (p[4] as u32)<<5 | p[5] as u32/2;
+            }
+            *kind=Some(0);*file=Some(metadata);return Ok(());
+        }
         if !matches!(key, "Value" | "Link") {
             return Err(format!("Unsupported writable field property {key}").into());
         }
@@ -386,7 +465,7 @@ impl Runtime<'_> {
             return Err("FromStream expects a readable text stream".into());
         };
         let rtf = args.get(1).is_some_and(|v| v.text().eq_ignore_ascii_case("RTF"));
-        if args.len()!=1 && !(rtf && args.len()==5) {return Err("Unsupported FromStream format or arguments".into());}
+        if args.len()!=1 && !(rtf && matches!(args.len(),2|5)) {return Err("Unsupported FromStream format or arguments".into());}
         let mut doc = field.doc.borrow_mut();
         doc.check_lock()?;
         if doc.imported || doc.field(field.index)?.wire_type != 4 {
@@ -438,7 +517,39 @@ impl Runtime<'_> {
         if method == "Attr" || method == "Next" {
             return self.edit_attr(doc, method, args);
         }
+        if method == "TestRead" {
+            let [oid] = args else {
+                return Err("TestRead expects OID; partial-record recovery is not supported".into());
+            };
+            let oid = integer(oid, u32::MAX)?;
+            let scope = {
+                let d = doc.borrow();
+                if d.locked || d.imported { return Err("TestRead requires an unlocked document".into()); }
+                d.scope
+            };
+            crate::execution::check()?;
+            let record = self.dbhost.as_ref().ok_or("Document reader missing")?.borrow().read(scope, oid);
+            crate::execution::check()?;
+            return match record {
+                Ok(Some(record)) => {
+                    *doc.borrow_mut() = Draft::new(scope, Some(record));
+                    Ok(Value::Number(0.0))
+                }
+                Ok(None) | Err(_) => {
+                    // Retain the requested identity for the native diagnostic
+                    // table, but never publish an empty/partially decoded record.
+                    let mut d = Draft::new(scope, None);
+                    d.oid = oid;
+                    d.test_read_failed = true;
+                    *doc.borrow_mut() = d;
+                    Ok(Value::Number(-1.0))
+                }
+            };
+        }
         self.allow_document_write()?;
+        if doc.borrow().test_read_failed {
+            return Err("Cannot edit an unreadable document; partial-record recovery is not supported".into());
+        }
         if doc.borrow().imported {
             return Err("Imported snapshots must be saved through the KOD import form".into());
         }
@@ -560,15 +671,15 @@ impl Runtime<'_> {
             return self.execute_code(&source, args.get(1).cloned());
         }
         if method == "NewField" {
-            if !(1..=2).contains(&args.len()) {
-                return Err("NewField expects attribute[, value]".into());
+            if !(1..=3).contains(&args.len()) {
+                return Err("NewField expects attribute[, value[, nativeType]]".into());
             }
             let d = doc.borrow();
             d.check_lock()?;
             if d.fields.len() >= u16::MAX as usize {
                 return Err("Document field limit".into());
             }
-            let (id, kind) = self
+            let (id, mut kind) = self
                 .field_definition(d.scope, d.area, &args[0])?
                 .ok_or_else(|| {
                     Fault::Script(Value::ScriptException(format!(
@@ -580,7 +691,11 @@ impl Runtime<'_> {
             if id == 1024 {
                 return Err("Document identity is immutable".into());
             }
-            let value = if let Some(v) = args.get(1) {
+            if let Some(explicit)=args.get(2).filter(|v|!matches!(v,Value::Null)) {
+                kind=integer(explicit,u16::MAX as u32)? as u16;
+                if !matches!(kind,1|2|3|4|5|8|12|13|14) {return Err("Unsupported explicit NewField type".into());}
+            }
+            let value = if let Some(v) = args.get(1).filter(|v| !matches!(v,Value::Null)) {
                 scalar(kind, v)?
             } else {
                 match kind {

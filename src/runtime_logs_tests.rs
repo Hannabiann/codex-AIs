@@ -73,6 +73,7 @@ fn logs_admin_replaces_only_native_log_controls() {
     assert!(!changed.contains("private/"));
     assert!(changed.contains("name=smtp value='mail'"));
     assert_eq!(admin_html(html.into(), "another"), html);
+    assert_eq!(admin_html("<body>Администрирование</body>".into(), "title"), "<body>Администрирование</body>");
 }
 
 #[test]

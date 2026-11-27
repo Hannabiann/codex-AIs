@@ -311,7 +311,7 @@ pub fn parse(sql_text: &str) -> Result<Option<Join>, String> {
     }
     let mut local = vec![Vec::new(); areas.len()];
     let mut edges = Vec::new();
-    let start = where_at.ok_or("join requires WHERE and a link equality")?;
+    let start = where_at.ok_or("join requires WHERE and an equality")?;
     conditions(
         &t[start + 1..order.unwrap_or(t.len())],
         &areas,
@@ -464,7 +464,7 @@ impl Join {
             };
             let other = ot.area;
             let rows = pairs.into_iter().collect::<Vec<_>>();
-            let mut by_key = BTreeMap::<u32, Vec<usize>>::new();
+            let mut by_key = BTreeMap::<JoinValue, Vec<usize>>::new();
             for (index, pair) in rows.iter().enumerate() {
                 let id = pair[dr.area];
                 for key in links(id, &records[dr.area][&id], dr, areas[dr.area])? {
@@ -475,7 +475,7 @@ impl Join {
                     by_key.entry(key).or_default().push(index);
                 }
             }
-            let keys = by_key.keys().copied().collect::<Vec<_>>();
+            let keys = by_key.keys().cloned().collect::<Vec<_>>();
             let mut others = BTreeSet::new();
             for chunk in keys.chunks(128) {
                 let extra = format!(
@@ -483,7 +483,7 @@ impl Join {
                     quoted(&ot.field),
                     chunk
                         .iter()
-                        .map(u32::to_string)
+                        .map(JoinValue::literal)
                         .collect::<Vec<_>>()
                         .join(",")
                 );
@@ -664,8 +664,19 @@ impl Join {
 fn validate_edge(a: &Ref, b: &Ref, areas: &[&Area]) -> Result<(), String> {
     let aid = a.field.eq_ignore_ascii_case("OID");
     let bid = b.field.eq_ignore_ascii_case("OID");
+    if !aid
+        && !bid
+        && [a, b].iter().all(|r| {
+            areas[r.area]
+                .fields
+                .values()
+                .any(|f| f.name == r.field && f.kind == 2)
+        })
+    {
+        return Ok(());
+    }
     if aid == bid {
-        return Err("join equality requires one OID and one link field".into());
+        return Err("join equality requires OID/link or two string fields".into());
     }
     let r = if aid { b } else { a };
     if !areas[r.area]
@@ -677,24 +688,40 @@ fn validate_edge(a: &Ref, b: &Ref, areas: &[&Area]) -> Result<(), String> {
     }
     Ok(())
 }
-fn links(id: u32, record: &Record, r: &Ref, area: &Area) -> Result<Vec<u32>, String> {
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum JoinValue {
+    Oid(u32),
+    Text(String),
+}
+impl JoinValue {
+    fn literal(&self) -> String {
+        match self {
+            Self::Oid(id) => id.to_string(),
+            Self::Text(text) => format!("'{}'", text.replace('\'', "''")),
+        }
+    }
+}
+fn links(id: u32, record: &Record, r: &Ref, area: &Area) -> Result<Vec<JoinValue>, String> {
     if r.field.eq_ignore_ascii_case("OID") {
-        return Ok(vec![id]);
+        return Ok(vec![JoinValue::Oid(id)]);
     }
     let field = area
         .fields
         .values()
-        .find(|f| f.name == r.field && f.kind == 5)
-        .ok_or("join link absent")?;
+        .find(|f| f.name == r.field && matches!(f.kind, 2 | 5))
+        .ok_or("join field absent or unsupported")?;
     Ok(record
         .fields
         .iter()
-        .filter(|f| f.id == field.id && f.wire_type == 5)
+        .filter(|f| f.id == field.id && f.wire_type == field.kind)
         .filter_map(|f| {
-            if let Value::Integer(id) = f.value {
-                Some(id)
-            } else {
-                None
+            match &f.value {
+                Value::Integer(id) => Some(JoinValue::Oid(*id)),
+                // Match the existing SQL string equality and index collation.
+                Value::String(bytes) => {
+                    Some(JoinValue::Text(crate::db::decode(bytes).to_lowercase()))
+                }
+                _ => None,
             }
         })
         .collect::<BTreeSet<_>>()
@@ -746,5 +773,72 @@ fn cell_bytes(c: &ColumnValues) -> usize {
         ColumnValues::Dates(v) => v.len() * 8,
         ColumnValues::Decimals(v) => v.len() * 34,
         ColumnValues::StreamRef { .. } => 8,
+    }
+}
+
+#[cfg(test)]
+mod string_join_tests {
+    use super::*;
+    #[test]
+    fn string_keys_match_sql_collation_and_escape_candidate_queries() {
+        let field = crate::db::schema::Field {
+            id: 1,
+            kind: 2,
+            flags: 0,
+            reference: 0,
+            name: "Name".into(),
+        };
+        let area = Area {
+            id: 1,
+            flags: 0,
+            name: "Cases".into(),
+            fields: BTreeMap::from([(1, field)]),
+        };
+        let reference = Ref {
+            area: 0,
+            field: "Name".into(),
+        };
+        let record = Record {
+            area: 1,
+            flags: 0,
+            fields: ["АБ'В", "аб'в", "другое"]
+                .into_iter()
+                .map(|s| crate::db::fields::Field {
+                    id: 1,
+                    wire_type: 2,
+                    value: Value::String(encoding_rs::WINDOWS_1251.encode(s).0.into_owned()),
+                })
+                .collect::<Vec<_>>()
+                .into(),
+        };
+        let keys = links(1, &record, &reference, &area).unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].literal(), "'аб''в'");
+        let query = sql::parse(&format!(
+            "SELECT OID FROM Cases WHERE Name IN ({})",
+            keys[0].literal()
+        ))
+        .unwrap();
+        query.predicate.bind(&area).unwrap();
+        let missing = Record {
+            area: 1,
+            flags: 0,
+            fields: vec![].into(),
+        };
+        assert!(links(1, &missing, &reference, &area).unwrap().is_empty());
+        let other = Ref {
+            area: 1,
+            field: "Name".into(),
+        };
+        validate_edge(&reference, &other, &[&area, &area]).unwrap();
+        let oid = Ref {
+            area: 1,
+            field: "OID".into(),
+        };
+        assert!(validate_edge(&reference, &oid, &[&area, &area]).is_err());
+        assert_eq!(
+            links(7, &missing, &oid, &area).unwrap(),
+            vec![JoinValue::Oid(7)]
+        );
     }
 }

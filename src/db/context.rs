@@ -457,23 +457,8 @@ impl<E: Deref<Target = Db4Engine>> Contexts<E> {
         }
         Ok(path)
     }
-}
-impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
-    fn kod_target_path(&self, scope: u32, volume: u32) -> Result<PathBuf, String> {
-        let mount = self.mounts(scope)?.iter().find(|m| m.volume.id == volume).ok_or("KOD target volume is not mounted")?;
-        if !mount.writable { return Err("Выбранный том доступен только для чтения".into()); }
-        let path = super::script_volume_path(&self.root, &mount.key).canonicalize().map_err(|e| e.to_string())?;
-        if !path.starts_with(self.root.canonicalize().map_err(|e| e.to_string())?) { return Err("DB4 write outside data root".into()); }
-        Ok(path)
-    }
-    fn volume_schema(&self, scope: u32, volume: u32) -> Result<Schema, String> {
-        self.mounts(scope)?
-            .iter()
-            .find(|m| m.volume.id == volume)
-            .map(|m| m.schema.clone())
-            .ok_or_else(|| "Volume is detached".into())
-    }
-    fn import_document(&mut self, scope: u32, volume: u32, record: &Record) -> Result<(), String> {
+    fn import_kod_record(&mut self, scope: u32, volume: u32, record: &Record, by_oid: bool) -> Result<(), String> {
+        let catalog = if by_oid { Some(self.shared_schema(scope)?) } else { None };
         let mount = self
             .mounts(scope)?
             .iter()
@@ -492,9 +477,9 @@ impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
             if matches!(field.id, 1024 | 1100) && field.wire_type == 5 {
                 continue;
             }
-            if !area
-                .fields
-                .get(&field.id)
+            if !area.fields.get(&field.id)
+                .or_else(|| catalog.as_ref().and_then(|s| s.areas.get(&record.area))
+                    .and_then(|a| a.fields.get(&field.id)))
                 .is_some_and(|f| f.kind == field.wire_type)
             {
                 return Err(format!(
@@ -511,9 +496,35 @@ impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
         {
             return Err("DB4 write outside data root".into());
         }
-        super::writer::kod::import(&path, record)?;
+        if by_oid {
+            super::writer::kod::import_by_oid(&path, record)?;
+        } else {
+            super::writer::kod::import(&path, record)?;
+        }
         self.refresh_writes();
         Ok(())
+    }
+}
+impl<E: Deref<Target = Db4Engine>> DatabaseHost for Contexts<E> {
+    fn kod_target_path(&self, scope: u32, volume: u32) -> Result<PathBuf, String> {
+        let mount = self.mounts(scope)?.iter().find(|m| m.volume.id == volume).ok_or("KOD target volume is not mounted")?;
+        if !mount.writable { return Err("Выбранный том доступен только для чтения".into()); }
+        let path = super::script_volume_path(&self.root, &mount.key).canonicalize().map_err(|e| e.to_string())?;
+        if !path.starts_with(self.root.canonicalize().map_err(|e| e.to_string())?) { return Err("DB4 write outside data root".into()); }
+        Ok(path)
+    }
+    fn volume_schema(&self, scope: u32, volume: u32) -> Result<Schema, String> {
+        self.mounts(scope)?
+            .iter()
+            .find(|m| m.volume.id == volume)
+            .map(|m| m.schema.clone())
+            .ok_or_else(|| "Volume is detached".into())
+    }
+    fn import_document(&mut self, scope: u32, volume: u32, record: &Record) -> Result<(), String> {
+        self.import_kod_record(scope, volume, record, false)
+    }
+    fn import_case_document(&mut self, scope: u32, volume: u32, record: &Record) -> Result<(), String> {
+        self.import_kod_record(scope, volume, record, true)
     }
     fn volume_writable(&self, scope: u32, volume: u32) -> Result<bool, String> {
         Ok(self

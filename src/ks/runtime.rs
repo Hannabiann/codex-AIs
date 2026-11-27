@@ -28,6 +28,14 @@ pub(crate) mod decimal;
 mod document_fields;
 #[path = "document_kod.rs"]
 mod document_kod;
+#[path = "maintenance.rs"]
+mod maintenance;
+#[path = "archive.rs"]
+mod archive;
+#[path = "exchange.rs"]
+mod exchange;
+#[path = "rtf_bookmarks.rs"]
+mod rtf_bookmarks;
 #[path = "document_write.rs"]
 mod document_write;
 #[path = "file_access.rs"]
@@ -58,6 +66,10 @@ mod web_request;
 mod xls_report;
 #[path = "xml_report.rs"]
 mod xml_report;
+#[path = "xml_ole.rs"]
+mod xml_ole;
+#[path = "bras_export.rs"]
+mod bras_export;
 #[path = "xml_sax.rs"]
 pub(crate) mod xml_sax;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
@@ -170,6 +182,8 @@ impl InputStream {
 }
 #[derive(Clone, Debug)]
 enum Value {
+    Xml(Rc<RefCell<xml_ole::XmlObject>>),
+    XmlMethod(Rc<RefCell<xml_ole::XmlObject>>, String),
     EditDocument(document_write::Edit),
     EditMethod(document_write::Edit, String),
     WritableField(document_write::WritableField),
@@ -277,6 +291,7 @@ impl Value {
             Self::AncestorDirectory(p) => p.to_string_lossy().into_owned(),
             Self::FilePath(s) => s.borrow().clone(),
             Self::Null => "".into(),
+            Self::Xml(_) => "[object OLEobject]".into(),
             Self::Bool(b) => b.to_string(),
             Self::Number(n) => native_number_text(*n),
             Self::Decimal(n) => n.text(),
@@ -290,6 +305,10 @@ impl Value {
                 .get("\0text")
                 .map(Value::text)
                 .unwrap_or_else(|| "[object Object]".into()),
+            // Native Request.PathObject retains its directory properties but
+            // renders as empty text: arxgiveout emits a query-relative URL.
+            Self::Object(o) if matches!(o.borrow().get("\0typename"),
+                Some(Self::String(kind)) if kind == "BaseVirtualDir") => String::new(),
             _ => "[function]".into(),
         }
     }
@@ -374,12 +393,16 @@ pub struct Runtime<'a> {
     document_vars: RefCell<HashMap<(u32, u32), Object>>,
     document_edits: RefCell<HashMap<(u32, u32), document_write::Edit>>,
     document_write_allowed: bool,
+    bras_export_allowed: bool,
     cursor_projections: bool,
     schedule_export_allowed: bool,
     kod_snapshot_loaded: bool,
     scheduled_request: bool,
     registration_write_allowed: bool,
     attachment_write_allowed: bool,
+    maintenance_allowed: bool,
+    archive_access: archive::Access,
+    exchange_access: exchange::Access,
     request_document_scopes: Vec<Object>,
     form_tabs: RefCell<HashMap<(u32, u32, u16), Rc<form_doc::Tab>>>,
     form_fields: RefCell<HashMap<(u32, u32, u16), Value>>,
@@ -454,12 +477,16 @@ impl<'a> Runtime<'a> {
             document_vars: Default::default(),
             document_edits: Default::default(),
             document_write_allowed: false,
+            bras_export_allowed: false,
             cursor_projections: false,
             schedule_export_allowed: false,
             kod_snapshot_loaded: false,
             scheduled_request: false,
             registration_write_allowed: false,
             attachment_write_allowed: false,
+            maintenance_allowed: false,
+            archive_access: archive::Access::default(),
+            exchange_access: exchange::Access::default(),
             request_document_scopes: Vec::new(),
             form_tabs: Default::default(),
             form_fields: Default::default(),
@@ -812,6 +839,9 @@ impl<'a> Runtime<'a> {
         }
     }
     fn assign_member(&mut self, obj: Value, key: String, v: Value) -> Result<(), Fault> {
+        if let Value::Xml(object) = &obj {
+            return xml_ole::set_property(object, &key, v);
+        }
         // K5 accepts property assignment on boxed scalar values without
         // changing the scalar. The participant form submits case as a number,
         // while its KS normalizes case.oid before accepting either form.
@@ -829,7 +859,7 @@ impl<'a> Runtime<'a> {
                 }
             }
         }
-        if let Value::File(file) = &obj {
+        if matches!(&obj, Value::File(_) | Value::LogFile(_)) {
             if key != "CharSet" {
                 return Err("file stream property is read-only".into());
             }
@@ -837,7 +867,11 @@ impl<'a> Runtime<'a> {
             if !matches!(charset.as_str(), "windows-1251" | "utf-8") {
                 return Err("unsupported input stream charset".into());
             }
-            *file.charset.borrow_mut() = charset;
+            match &obj {
+                Value::File(file) => *file.charset.borrow_mut() = charset,
+                Value::LogFile(file) => *file.charset.borrow_mut() = charset,
+                _ => unreachable!(),
+            }
             return Ok(());
         }
         let v = if key == "List" && matches!(&obj, Value::Object(o) if o.borrow().contains_key("SetContextString")) {
@@ -1028,9 +1062,13 @@ impl<'a> Runtime<'a> {
         };
         let source = super::source_compat::document_source(oid, attr, &source);
         let previous_write = self.document_write_allowed;
+        let previous_export = self.bras_export_allowed;
+        self.bras_export_allowed |= self.scheduled_request && self.bras_job_principal();
+        writable_job |= self.bras_export_allowed;
         self.document_write_allowed |= writable_job;
         let result = self.execute_code_named(&source, context, &source_name);
         self.document_write_allowed = previous_write;
+        self.bras_export_allowed = previous_export;
         result.map_err(|e| match e {
             Fault::Host(s) => Fault::Host(format!("Document({oid}).Execute({attr}): {s}")),
             e => e,
@@ -1063,10 +1101,16 @@ impl<'a> Runtime<'a> {
         };
         let is_global =
             matches!(&self.scopes[0].borrow()["this"],Value::Object(o) if Rc::ptr_eq(o,&object));
+        // A queued URL job supplies its Connection object to Document.Execute.
+        // Keep the directory scope live: copying it freezes mp_g_this before
+        // mp_executeMode assigns the job context, so exported functions see
+        // null arguments and can silently skip the entire exchange.
+        let live_directory = matches!(target, Value::Document(..))
+            || self.scheduled_request && !is_global;
         let scope = if is_global {
             self.scopes[0].clone()
         } else {
-            let mut m = if matches!(target, Value::Document(..)) {
+            let mut m = if live_directory {
                 HashMap::new()
             } else {
                 self.scopes[0].borrow().clone()
@@ -1075,8 +1119,8 @@ impl<'a> Runtime<'a> {
             m.insert("this".into(), target.clone());
             Rc::new(RefCell::new(m))
         };
-        let context_scopes = if matches!(target, Value::Document(..)) {
-            if self.request_baseline.is_some() {
+        let context_scopes = if live_directory {
+            if matches!(target, Value::Document(..)) && self.request_baseline.is_some() {
                 self.request_document_scopes.push(scope.clone());
             }
             vec![self.scopes[0].clone(), scope.clone()]
@@ -1231,6 +1275,16 @@ impl<'a> Runtime<'a> {
         }
         // The directory's dynamic properties (e.g. report add-clause values)
         // are visible as globals while lexical locals still take precedence.
+        // Libraries loaded into a queued Execute connection can add members
+        // after its lexical scope was created. Retained functions must see
+        // that same connection, even with a separate method receiver.
+        if self.scheduled_request {
+            for scope in self.scopes.iter().rev().skip(1) {
+                if let Some(Value::Object(context)) = scope.borrow().get("this") {
+                    if let Some(value) = Self::property(context, n)? { return Ok(value); }
+                }
+            }
+        }
         if let Some(Value::Object(directory)) = self.scopes[0].borrow().get("this") {
             if let Some(value) = directory.borrow().get(n) {
                 return Ok(value.clone());
@@ -1261,6 +1315,27 @@ impl<'a> Runtime<'a> {
             | "__codex_LinkFields"
             | "__codex_TextFieldSize"
             | "__codex_ImportKod"
+            | "__codex_MgmtExport"
+            | "__codex_MgmtImport"
+            | "__codex_ArchiveLegacyEntry"
+            | "__codex_ArchiveBeginWrite"
+            | "__codex_ExchangeBeginWrite"
+            | "__codex_ExchangeAutoCourt"
+            | "__codex_ExchangeAutoFinish"
+            | "__codex_ExchangeInit"
+            | "__codex_ExchangeCleanup"
+            | "__codex_ExchangePack"
+            | "__codex_ExchangeUnpack"
+            | "__codex_ExchangeDeliver"
+            | "__codex_ExchangeAutoParse"
+            | "__codex_ExchangeAutoXml"
+            | "__codex_ExchangeMailSend"
+            | "__codex_ExchangeFtpList"
+            | "__codex_ExchangeFtpSend"
+            | "__codex_ExchangeReceive"
+            | "__codex_ExchangeStage"
+            | "__codex_ExchangeAck"
+            | "replaceBkmarkCharsInRTF"
             | "__codex_DistributionJudges"
             | "__codex_PAreaPage"
             | "StopProfile"
@@ -1762,6 +1837,9 @@ impl<'a> Runtime<'a> {
         Ok(keys.into_iter().collect())
     }
     fn member(&self, base: Value, key: String) -> Result<Value, Fault> {
+        if let Value::Xml(object) = &base {
+            return xml_ole::member(object, &key);
+        }
         if let Value::Object(o) = &base {
             if key == "toString" && o.borrow().contains_key("\0packing") {
                 return packing_vars::serialize(&o.borrow()).map(Value::String);
@@ -1839,7 +1917,7 @@ impl<'a> Runtime<'a> {
             }),
             (
                 Value::List(list),
-                "AddCondition" | "Add" | "Find" | "AddEmptyCondition" | "Delete" | "IsInArray" | "CRC",
+                "AddCondition" | "Add" | "Find" | "AddEmptyCondition" | "Delete" | "IsInArray" | "CRC" | "NumDocByOrder",
             ) => Ok(Value::ListMethod(list, key)),
             (Value::List(list), "Size" | "length") => {
                 Ok(Value::Number(self.list_len(&list.borrow())? as f64))
@@ -1893,15 +1971,7 @@ impl<'a> Runtime<'a> {
                 Ok(Value::StoredFieldMethod(f, key))
             }
             (Value::StoredField(f), "Stream") if matches!(f.data().wire_type, 8 | 14) => f.value(),
-            (Value::StoredField(f), "FileName") if matches!(f.data().wire_type, 8 | 14) => {
-                let crate::db::fields::Value::Binary { file, .. } = &f.data().value else {
-                    return Err("invalid binary field".into());
-                };
-                Ok(file
-                    .as_ref()
-                    .map(|m| Value::String(crate::db::decode(&m.name)))
-                    .unwrap_or(Value::Null))
-            }
+            (Value::StoredField(f), "FileName" | "FileDate" | "CharSet" | "Mime") if matches!(f.data().wire_type, 8 | 14) => document_fields::binary_property(f.data(),&key),
             (Value::StoredField(f), "Link") if f.data().wire_type == 5 => f.value(),
             (Value::ReadStream(stream), _) => {
                 let s = stream.borrow();
@@ -1934,6 +2004,7 @@ impl<'a> Runtime<'a> {
                 .get(&key)
                 .cloned()
                 .unwrap_or(Value::Null)),
+            (Value::LogFile(file), "CharSet") => Ok(Value::String(file.charset.borrow().clone())),
             (Value::LogFile(file), _) => Ok(Value::LogMethod(file, key)),
             (Value::Document(_, scope), "Base") => self.database_for(scope),
             (Value::Document(oid, scope), "Volume") => Ok(Value::Volume(
@@ -2424,6 +2495,10 @@ impl<'a> Runtime<'a> {
                     };
                     if let Expr::Name(n) = f.as_ref() {
                         match n.as_str() {
+                            "OLEobject" => {
+                                let values = args.iter().map(|a| self.eval(a)).collect::<Result<Vec<_>, _>>()?;
+                                return xml_ole::construct(&values);
+                            }
                             "File" => {
                                 if args.is_empty() || args.len() > 2 {
                                     return Err("File expects path[, create]".into());
@@ -2647,21 +2722,9 @@ impl<'a> Runtime<'a> {
                                 return self.report_xml_writer(n, values);
                             }
                             "XMLSAXparser" => {
-                                if args.len() != 1 {
-                                    return Err("XMLSAXparser expects a stream".into());
-                                }
-                                let stream = self.eval(&args[0])?;
-                                if !matches!(stream, Value::ReadStream(_)) {
-                                    return Err("XMLSAXparser requires Stream".into());
-                                }
-                                return Ok(Value::Object(Rc::new(RefCell::new(HashMap::from([
-                                    ("\0stream".into(), stream),
-                                    ("Parse".into(), Value::Native("xml.Parse".into())),
-                                    (
-                                        "SetEncoding".into(),
-                                        Value::Native("xml.SetEncoding".into()),
-                                    ),
-                                ])))));
+                                let values = args.iter().map(|a| self.eval(a))
+                                    .collect::<Result<Vec<_>, _>>()?;
+                                return self.xml_sax_parser(&values);
                             }
                             "Document" => {
                                 if args.is_empty() {
@@ -2873,6 +2936,7 @@ impl<'a> Runtime<'a> {
                 }
                 let v = self.eval(e)?;
                 if op == "typeof" {
+                    if matches!(v, Value::Xml(_)) { return Ok(Value::String("OLEobject".into())); }
                     let field = match &v { Value::StoredField(f)=>Some(f.clone()), Value::WritableField(f)=>Some(f.snapshot()?), _=>None };
                     if field.is_some_and(|f|f.data().wire_type==5) {return Ok(Value::String("LinkField".into()));}
                     if matches!(v, Value::Host(super::host::Handle::Rows(_))) {
@@ -3103,6 +3167,7 @@ impl<'a> Runtime<'a> {
             return Ok(f);
         }
         match f {
+            Value::XmlMethod(object, method) => self.xml_ole_call(object, &method, &values),
             Value::EditMethod(doc, method) => self.edit_call(doc, &method, &values),
             Value::StoredFieldMethod(field, method) => {
                 if method == "MarkContext" {
@@ -3140,20 +3205,18 @@ impl<'a> Runtime<'a> {
                 if values.is_empty() || values.len() > 2 {
                     return Err("ToStream expects stream[, format]".into());
                 }
-                if values
-                    .get(1)
-                    .is_some_and(|v| !matches!(v, Value::Null) && v.text() != "text")
-                {
+                let format=values.get(1).map(Value::text).unwrap_or_default();
+                if !format.is_empty() && !format.eq_ignore_ascii_case("text") && !format.eq_ignore_ascii_case("rtf") {
                     return Err("ToStream format not implemented".into());
                 }
                 // A text stream contains characters, not the KText font-run
                 // delimiters. In particular XML attribute names can follow a
                 // formatting delimiter in stored registry definitions.
-                let plain: Vec<u8> = crate::document::bytes(field.data())?
+                let plain: Vec<u8> = if format.eq_ignore_ascii_case("rtf") { crate::rich_text::rtf(field.data(), "")? } else {crate::document::bytes(field.data())?
                     .iter()
                     .copied()
                     .filter(|b| !matches!(b, 0 | 1))
-                    .collect();
+                    .collect()};
                 let bytes = plain.as_slice();
                 match &values[0] {
                     Value::ReadStream(s) => {
@@ -3196,6 +3259,7 @@ impl<'a> Runtime<'a> {
                 use std::io::{Seek, Write};
                 let _guard = file.lock_log()?;
                 let is_log = file.is_log();
+                let utf8 = file.charset.borrow().as_str() == "utf-8";
                 let mut handle = file.file.borrow_mut();
                 if method == "close" && values.is_empty() {
                     if let Some(file) = handle.as_mut() {
@@ -3209,6 +3273,10 @@ impl<'a> Runtime<'a> {
                     file.seek(std::io::SeekFrom::End(0)).map_err(|e|e.to_string())?;
                 }
                 match method.as_str() {
+                    "reset" if values.is_empty() && !is_log => {
+                        file.seek(std::io::SeekFrom::Start(0)).map_err(|e|e.to_string())?;
+                        Ok(Value::Null)
+                    }
                     "writeByte" => {
                         let [value] = values.as_slice() else {
                             return Err("writeByte expects one byte".into());
@@ -3221,6 +3289,11 @@ impl<'a> Runtime<'a> {
                             .map_err(|e| e.to_string())?;
                         Ok(Value::Null)
                     }
+                    "lastModified" if values.is_empty() => {
+                        let modified = file.metadata().and_then(|m| m.modified()).map_err(|e|e.to_string())?;
+                        Ok(Value::Number(modified.duration_since(std::time::UNIX_EPOCH).map_err(|e|e.to_string())?.as_millis() as f64))
+                    }
+                    "isDirectory" if values.is_empty() => Ok(Value::Bool(false)),
                     "length" => {
                         if !values.is_empty() {
                             return Err("length takes no arguments".into());
@@ -3248,10 +3321,13 @@ impl<'a> Runtime<'a> {
                     "Print" | "PrintS" => {
                         for value in &values {
                             let text = value.text();
-                            let (bytes, _, bad) = encoding_rs::WINDOWS_1251.encode(&text);
-                            if bad {
-                                return Err("log encoding error".into());
-                            }
+                            let bytes = if utf8 {
+                                std::borrow::Cow::Borrowed(text.as_bytes())
+                            } else {
+                                let (bytes, _, bad) = encoding_rs::WINDOWS_1251.encode(&text);
+                                if bad { return Err("log encoding error".into()); }
+                                bytes
+                            };
                             if !is_log && file.stream_position().map_err(|e| e.to_string())?
                                 + bytes.len() as u64
                                 > 16 * 1024 * 1024
@@ -3299,6 +3375,9 @@ impl<'a> Runtime<'a> {
                     return Ok(Value::Null);
                 }
                 if method == "SetValue" && self.initialize_startup_export_date(id, &values)? {
+                    return Ok(Value::Null);
+                }
+                if method == "SetValue" && self.bras_export_date(id, &values)? {
                     return Ok(Value::Null);
                 }
                 if self.settings_edit.is_some() && matches!(method.as_str(),"CreateKey"|"SetValue"|"DeleteValue") {
@@ -3451,6 +3530,10 @@ impl<'a> Runtime<'a> {
                 let meta = std::fs::metadata(path)
                     .map_err(|e| Fault::Script(Value::String(e.to_string())))?;
                 match method.as_str() {
+                    "lastModified" if values.is_empty() => {
+                        let modified = meta.modified().map_err(|e|e.to_string())?;
+                        Ok(Value::Number(modified.duration_since(std::time::UNIX_EPOCH).map_err(|e|e.to_string())?.as_millis() as f64))
+                    }
                     "copyTo" | "read" | "readByte" | "readLine" | "reset" | "skip" => {
                         if !meta.is_file() || meta.len() > crate::http_form::MAX_UPLOAD_BODY as u64
                         {
@@ -3635,8 +3718,8 @@ impl<'a> Runtime<'a> {
                 if values.is_empty() || values.len() > 5 {
                     return Err("Base.Open expects a path and up to four Boolean flags".into());
                 }
-                if !matches!(values[0], Value::String(_) | Value::FilePath(_)) {
-                    return Err("Base.Open requires string or FilePath".into());
+                if !matches!(values[0], Value::String(_) | Value::FilePath(_) | Value::Volume(_, _)) {
+                    return Err("Base.Open requires string, FilePath or Volume".into());
                 }
                 let path = values[0].text();
                 let flags = values[1..]
@@ -3839,7 +3922,9 @@ impl<'a> Runtime<'a> {
                         if values.len() > 1 {
                             return Err("join takes at most one separator".into());
                         }
-                        let sep = values.first().map(Value::text).unwrap_or(",".into());
+                        // KS defaults to an empty separator (e.g. the native
+                        // exchange filename joins court-number fragments).
+                        let sep = values.first().map(Value::text).unwrap_or_default();
                         let mut out = String::new();
                         let mut present = map
                             .iter()
@@ -4369,6 +4454,12 @@ impl<'a> Runtime<'a> {
                     return Err("temporary document method arguments".into());
                 }
                 let key = values[0].text();
+                if method == "Attr" {
+                    // A detached/empty document has no field. Attribute lookup
+                    // must never fall through to Execute of a temporary script.
+                    return Ok(d.borrow().fields.get(&key).cloned()
+                        .map(Value::TextField).unwrap_or(Value::Null));
+                }
                 if method == "NewField" {
                     let props = d.borrow().properties.clone();
                     let (base, area) = {
@@ -4703,7 +4794,21 @@ impl<'a> Runtime<'a> {
                     }
                     H::String(v) => Value::String(v),
                     H::Object(oid, scope) => Value::Document(oid, scope),
-                    H::FieldStream(oid, scope, field, kind) => {
+                    H::FieldStreams(oid, scope, field, kind) => {
+                        let record=Rc::new(self.read_document(oid,scope)?);
+                        let mut streams=HashMap::new();
+                        for (index,data) in record.fields.iter().enumerate() {
+                            if data.id==field && data.wire_type==kind {
+                                let value=Value::StoredField(document_fields::Field {
+                                    display:String::new(),oid,scope,record:record.clone(),index,
+                                });
+                                streams.insert(streams.len().to_string(),self.member(value,"Stream".into())?);
+                            }
+                        }
+                        if streams.is_empty() { Value::Null }
+                        else {streams.insert("length".into(),Value::Number(streams.len() as f64));Value::Array(Rc::new(RefCell::new(streams)))}
+                    }
+                    H::FieldStream(oid, scope, field, kind, ascii) => {
                         let value = self.document_attr(
                             oid,
                             scope,
@@ -4714,8 +4819,8 @@ impl<'a> Runtime<'a> {
                             ],
                         )?;
                         if matches!(value, Value::Null) {
-                            InputStream::value(&[])
-                        } else if kind == 4 {
+                            if ascii { InputStream::value(&[]) } else { Value::Null }
+                        } else if kind == 4 && ascii {
                             // JDBC getAsciiStream exposes the text characters,
                             // not the stored KText formatting delimiters.
                             let field = match value {
@@ -4833,6 +4938,16 @@ impl<'a> Runtime<'a> {
                 Ok(Value::Object(object))
             }
             Value::ListMethod(list, method) => {
+                if method == "NumDocByOrder" {
+                    let [index] = values.as_slice() else { return Err("List.NumDocByOrder expects an index".into()); };
+                    let index = index.number()?;
+                    if !index.is_finite() || index < 0.0 || index.fract() != 0.0 {
+                        return Err("List.NumDocByOrder invalid index".into());
+                    }
+                    return self.list_item(&list.borrow(), index as usize)?
+                        .map(|id| Value::Number(id as f64))
+                        .ok_or_else(|| "List.NumDocByOrder index outside list".into());
+                }
                 if method == "CRC" {
                     let [index] = values.as_slice() else {return Err("List.CRC expects an index".into());};
                     let index=index.number()?;
@@ -4858,14 +4973,20 @@ impl<'a> Runtime<'a> {
                     return Ok(Value::Bool(self.list_ids(&list)?.contains(&id)));
                 }
                 if method == "Delete" {
-                    let [Value::List(other)] = values.as_slice() else {
-                        return Err(
-                            "List.Delete expects a List; persistent deletion is unsupported".into(),
-                        );
+                    let removed = match values.as_slice() {
+                        [Value::List(other)] => self.list_ids(&other.borrow())?,
+                        [value] => {
+                            let n = value.number()?;
+                            if !n.is_finite() || n < 0.0 || n > u32::MAX as f64 || n.fract() != 0.0 {
+                                return Err("List.Delete invalid OID".into());
+                            }
+                            vec![n as u32]
+                        }
+                        _ => return Err("List.Delete expects a document id or List".into()),
                     };
-                    let removed = self
-                        .list_ids(&other.borrow())?
-                        .into_iter()
+                    // Removes membership only. Persistent deletion is a
+                    // separate Document/Database operation with its own gate.
+                    let removed = removed.into_iter()
                         .collect::<std::collections::HashSet<_>>();
                     let mut ids = self.list_ids(&list.borrow())?;
                     ids.retain(|id| !removed.contains(id));
@@ -4997,6 +5118,27 @@ impl<'a> Runtime<'a> {
                     Ok(Value::Number(crate::rich_text::attribute_text_size(field.data())? as f64))
                 }
                 "__codex_ImportKod" => self.import_kod_document(&values),
+                "__codex_MgmtExport" => self.maintenance_export(&values),
+                "__codex_MgmtImport" => self.maintenance_import(&values),
+                "__codex_ArchiveLegacyEntry" => Ok(Value::Bool(self.archive_access.legacy_entry)),
+                "__codex_ArchiveBeginWrite" => self.archive_begin_write(),
+                "__codex_ExchangeBeginWrite" => self.exchange_begin_write(),
+                "__codex_ExchangeAutoCourt" => self.exchange_auto_court(&values),
+                "__codex_ExchangeAutoFinish" => self.exchange_auto_finish(),
+                "__codex_ExchangeInit" => self.exchange_init(&values),
+                "__codex_ExchangeCleanup" => self.exchange_cleanup(),
+                "__codex_ExchangePack" => self.exchange_pack(&values),
+                "__codex_ExchangeUnpack" => self.exchange_unpack(&values),
+                "__codex_ExchangeDeliver" => self.exchange_deliver(&values),
+                "__codex_ExchangeAutoParse" => self.exchange_auto_parse(&values),
+                "__codex_ExchangeAutoXml" => self.exchange_auto_xml(&values),
+                "__codex_ExchangeMailSend" => self.exchange_mail_send(&values),
+                "__codex_ExchangeFtpList" => self.exchange_ftp_list(&values),
+                "__codex_ExchangeFtpSend" => self.exchange_ftp_send(&values),
+                "__codex_ExchangeReceive" => self.exchange_network_receive(),
+                "__codex_ExchangeStage" => self.exchange_network_stage(&values),
+                "__codex_ExchangeAck" => self.exchange_network_ack(&values),
+                "replaceBkmarkCharsInRTF" => self.replace_rtf_bookmarks(&values),
                 "attachment.shell" => self.attachment_shell(&values),
                 n if n.starts_with("report.collection.") => self.report_collection_call(n.trim_start_matches("report.collection."),receiver.ok_or("Report receiver missing")?,&values),
                 "report.text.set_fonts" => self.report_set_font_attributes(receiver, &values),
@@ -5019,10 +5161,12 @@ impl<'a> Runtime<'a> {
                     let fonts = o.borrow().get("\0fonts").cloned().unwrap_or(Value::Null);
                     Ok(fonts)
                 }
-                "path.SaveState" => self.save_path_settings(receiver, &values, false),
+                "path.SaveState" => self.save_path_settings(receiver, &values, path_settings::Scope::Distribution),
+                "path.SaveExchange" => self.save_path_settings(receiver, &values, path_settings::Scope::Exchange),
+                "path.SaveInformation" => self.save_path_settings(receiver, &values, path_settings::Scope::Information),
                 "settings.SaveState" => self.save_system_path(receiver,&values),
                 "settings.At" => self.settings_at(receiver,&values),
-                "path.SaveCalendarAccess" => self.save_path_settings(receiver, &values, true),
+                "path.SaveCalendarAccess" => self.save_path_settings(receiver, &values, path_settings::Scope::Calendar),
                 "field.InsertText" => self.writable_insert_text(receiver, &values),
                 "rtf.mapping" => {
                     let Some(Value::Object(map)) = receiver else { return Err("RTF mapping receiver missing".into()); };
@@ -5356,6 +5500,18 @@ impl<'a> Runtime<'a> {
                     if values.len() != 1 {
                         return Err(format!("{n} expects one argument").into());
                     }
+                    if let Value::ReadStream(stream) = &values[0] {
+                        let mut stream=stream.borrow_mut();
+                        if stream.closed { return Err("Base64 input stream is closed".into()); }
+                        let bytes=&stream.data[stream.position..];
+                        let output=if n=="ToBase64" {
+                            base64::encode_bytes(bytes)?.into_bytes()
+                        } else {
+                            base64::decode_bytes(std::str::from_utf8(bytes).map_err(|_|"Invalid Base64 stream encoding")?)?
+                        };
+                        stream.position=stream.data.len();
+                        return Ok(InputStream::value(&output));
+                    }
                     Ok(Value::String(if n == "FromBase64" {
                         base64::decode(&values[0].text())?
                     } else {
@@ -5612,6 +5768,10 @@ impl<'a> Runtime<'a> {
             if result.is_err() { self.diagnostic_native(&_label, &values); }
             return result;
         }
+        if f.name.as_deref() == Some("CXporter__writeXml")
+            || matches!(f.properties.borrow().get("\0name"), Some(Value::String(n)) if n == "CXporter__writeXml") {
+            return self.bras_write_xml(&values);
+        }
         let mut scope = HashMap::new();
         scope.insert("this".into(), receiver.unwrap_or(self.get("this")?));
         for (i, p) in f.params.iter().enumerate() {
@@ -5861,6 +6021,7 @@ fn equal(a: &Value, b: &Value) -> bool {
         (Value::Object(a), Value::Object(b))
         | (Value::Array(a), Value::Array(b))
         | (Value::ReadOnlyObject(a), Value::ReadOnlyObject(b)) => Rc::ptr_eq(a, b),
+        (Value::Xml(a), Value::Xml(b)) => Rc::ptr_eq(a, b),
         _ => false,
     }
 }

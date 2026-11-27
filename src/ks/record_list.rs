@@ -1,4 +1,25 @@
-//! Read-only native List, backed by the same bounded database query path as SQL.
+//! Native List membership, backed by the same database query path as SQL.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deleting_list_members_does_not_require_persistent_write_access() {
+        let mut runtime = Runtime::new("/test");
+        let code = crate::ks::parser::parse(r#"
+            var a = new List(0); a.Add(1); a.Add(2); a.Add(3);
+            a.Delete(2); a.Delete(999);
+            var b = new List(0); b.Add(3); a.Delete(b);
+            if (a.Size != 1 || a[0].NumDoc != 1) throw 'membership';
+            a.Delete(a); if (a.Size != 0) throw 'self';
+            var empty = new Document(0);
+            if (empty.Attr('missing') != null) throw 'empty document attribute';
+        "#).unwrap();
+        runtime.run(&code).unwrap();
+        let invalid = crate::ks::parser::parse("var a = new List(0); a.Delete(-1);").unwrap();
+        assert!(Runtime::new("/test").run(&invalid).unwrap_err().contains("invalid OID"));
+    }
+}
 use super::{Fault, Runtime, Value};
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},

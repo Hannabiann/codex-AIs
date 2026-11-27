@@ -888,7 +888,15 @@ impl Parser {
         Ok(if t.0 == 'n' && !like {
             Predicate::Link {
                 field,
-                oid: t.1.parse().map_err(|_| "SQL OID outside 0..4294967295")?,
+                // DB4 link fields also use signed DWORD sentinels, notably -1
+                // for an unassigned basis in the native maintenance queries.
+                oid: {
+                    let n: i64 = t.1.parse().map_err(|_| "SQL link integer invalid")?;
+                    if !(i32::MIN as i64..=u32::MAX as i64).contains(&n) {
+                        return Err("SQL link integer outside DWORD range".into());
+                    }
+                    n as u32
+                },
             }
         } else if t.0 == '\'' {
             Predicate::Text {
@@ -986,7 +994,7 @@ pub(super) fn tokenize(sql: &str) -> Result<Vec<Token>, String> {
                 s.push(chars.next().unwrap());
             }
             tokens.push(Token('w', s));
-        } else if c.is_ascii_digit() {
+        } else if c.is_ascii_digit() || c == '-' && chars.peek().is_some_and(char::is_ascii_digit) {
             let mut s = c.to_string();
             while chars.peek().is_some_and(|v| v.is_ascii_digit()) {
                 s.push(chars.next().unwrap());
@@ -1018,6 +1026,21 @@ pub fn parse(sql: &str) -> Result<Select, String> {
         ));
     }
     Ok(query)
+}
+
+#[cfg(test)]
+mod signed_literal_tests {
+    use super::*;
+    #[test]
+    fn signed_link_sentinels_keep_dword_identity() {
+        for (literal, expected) in [("-1",u32::MAX),("-2147483648",0x80000000),("4294967295",u32::MAX),("0",0)] {
+            let q=parse(&format!("SELECT OBJECT FROM \"Docs\" WHERE \"Basis\" = {literal}")).unwrap();
+            assert!(matches!(q.predicate, Predicate::Link { oid, .. } if oid==expected));
+        }
+        for literal in ["-2147483649","4294967296","1-2","--1","-"] {
+            assert!(parse(&format!("SELECT OBJECT FROM \"Docs\" WHERE \"Basis\" = {literal}")).is_err());
+        }
+    }
 }
 impl Parser {
     fn select(&mut self) -> Result<Select, String> {

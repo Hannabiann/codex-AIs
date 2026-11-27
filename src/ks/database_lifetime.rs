@@ -89,6 +89,8 @@ impl Reachable {
                 | Value::Signal(_)
                 | Value::SignalMethod(_, _)
                 | Value::HttpOutput
+                | Value::Xml(_)
+                | Value::XmlMethod(_, _)
                 | Value::LogFile(_)
                 | Value::LogMethod(_, _)
                 | Value::Regex(_)

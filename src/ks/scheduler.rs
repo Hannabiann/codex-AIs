@@ -33,6 +33,9 @@ pub fn parse_time(s: &str) -> Option<When> {
     Some(When::Daily(h * 60 + m))
 }
 impl Scheduler {
+    pub fn daily_time(&self, path: &str) -> Option<u16> {
+        self.daily.get(path).map(|d| d.minute)
+    }
     pub fn snapshot(&self) -> Vec<String> {
         self.daily
             .iter()
@@ -160,4 +163,35 @@ pub fn clock() -> Result<(u64, i64, u16), String> {
         y as i64 * 372 + m as i64 * 31 + d as i64,
         (h * 60 + min) as u16,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn daily_exchange_replaces_cancels_and_runs_once_per_local_day() {
+        let mut s = Scheduler::default();
+        let p = "/20a/~sendDocsAuto";
+        s.schedule(p.into(), When::Daily(600), 0, 100, 500).unwrap();
+        s.schedule(p.into(), When::Daily(601), 0, 100, 500).unwrap();
+        assert!(s.due(0, 100, 600).is_empty());
+        assert_eq!(s.due(1, 100, 601), [p]);
+        assert!(s.due(2, 100, 602).is_empty());
+        assert!(s.due(3, 101, 600).is_empty());
+        assert_eq!(s.due(4, 101, 601), [p]);
+        s.schedule(p.into(), When::Delete, 5, 101, 602).unwrap();
+        assert!(s.due(6, 102, 700).is_empty());
+    }
+    #[test]
+    fn restart_before_time_restores_job_without_replaying_a_past_time() {
+        let p = "/20a/~sendDocsAutoGet";
+        let mut s = Scheduler::default();
+        s.schedule(p.into(), parse_time("23:59").unwrap(), 0, 100, 1438).unwrap();
+        assert_eq!(s.due(1, 100, 1439), [p]);
+        let mut restarted = Scheduler::default();
+        restarted.schedule(p.into(), parse_time("23:59").unwrap(), 2, 100, 1439).unwrap();
+        assert!(restarted.due(3, 100, 1439).is_empty());
+        assert!(restarted.due(4, 101, 0).is_empty());
+        assert_eq!(restarted.due(5, 101, 1439), [p]);
+    }
 }

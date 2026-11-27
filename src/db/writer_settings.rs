@@ -46,6 +46,19 @@ pub(crate) struct Update {
     pub value: Option<String>,
     pub kind: String,
 }
+fn valid_value(name: &str, value: &str) -> bool {
+    if value.len() > 255 {
+        return false;
+    }
+    // The stock information-system migration stores its source revision in
+    // this one directory setting. Other settings retain numeric validation.
+    if name == "_infSystemSetup" {
+        return value.strip_prefix("$Revision: ")
+            .and_then(|v| v.strip_suffix(" $"))
+            .is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()));
+    }
+    value.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'.' | b';' | b':'))
+}
 pub(crate) fn save(path: &Path, parent: u32, updates: &[Update]) -> Result<(), String> {
     // Publication generations and snapshot invalidation use canonical paths.
     let canonical = path.canonicalize().map_err(|e| e.to_string())?;
@@ -70,12 +83,7 @@ pub(crate) fn save(path: &Path, parent: u32, updates: &[Update]) -> Result<(), S
                 .name
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_')
-            || u.value.as_ref().is_some_and(|v| {
-                v.len() > 255
-                    || !v
-                        .bytes()
-                        .all(|b| b.is_ascii_digit() || matches!(b, b'.' | b';' | b':'))
-            })
+            || u.value.as_ref().is_some_and(|v| !valid_value(&u.name, v))
             || !matches!(u.kind.as_str(), "REG_SZ" | "REG_DWORD")
         {
             return Err("invalid numeric directory setting".into());

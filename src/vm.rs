@@ -125,6 +125,9 @@ impl Sessions {
             .flat_map(|r| r.scheduler.snapshot())
             .collect()
     }
+    pub fn daily_time(&self, path: &str) -> Option<u16> {
+        self.runtimes.values().find_map(|r| r.scheduler.daily_time(path))
+    }
     pub fn read_named(
         &mut self,
         engine: std::sync::Arc<crate::db::Db4Engine>,

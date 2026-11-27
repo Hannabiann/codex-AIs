@@ -128,5 +128,5 @@ pub fn adapt(html: String, object: &str) -> String {
     if object == "calendar" {
         html = html.replace("window.close();", r#"{ if (window.opener) window.opener.postMessage({kind:'kodeks-calendar-result', value:window.returnValue}, location.origin); window.close(); }"#);
     }
-    html
+    crate::distribution_html::adapt(html, object)
 }

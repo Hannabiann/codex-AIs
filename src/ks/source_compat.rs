@@ -3,6 +3,16 @@
 use std::borrow::Cow;
 #[path = "source_fingerprint.rs"]
 mod fingerprint;
+#[path = "source_mgmt.rs"]
+mod maintenance;
+#[path = "source_archive.rs"]
+mod archive;
+#[path = "source_exchange.rs"]
+mod exchange;
+#[path = "source_information.rs"]
+mod information;
+#[path = "source_sticker.rs"]
+mod sticker;
 
 fn matches_source(source: &str, expected: (usize, [u8; 32])) -> bool {
     source.len() == expected.0 && fingerprint::sha256(source.as_bytes()) == expected.1
@@ -149,6 +159,15 @@ const USERBASE_LOGIN_CHECK: &str = r#"
 "#;
 
 pub fn request_source<'a>(name: &str, source: &'a str) -> Cow<'a, str> {
+    if name.eq_ignore_ascii_case("sticker") { return sticker::adapt(source); }
+    if name.eq_ignore_ascii_case("infSystem") { return information::adapt(source); }
+    if name.eq_ignore_ascii_case("nMovement") { return information::movement(source); }
+    if name.eq_ignore_ascii_case("senddocs") { return exchange::request(source); }
+    if name.eq_ignore_ascii_case("~sendDocsAuto") || name.eq_ignore_ascii_case("~sendDocsAutoGet") {
+        return exchange::automatic(name, source);
+    }
+    if name == "mgmt" { return maintenance::adapt(source); }
+    if name == "arx" { return archive::adapt(source); }
     // These stored navigation scripts use integer division for page offsets.
     // Keep that local semantic without changing KS floating-point arithmetic.
     if name == "navigator" && matches_source(source, (1896, [252,174,107,189,120,154,188,162,21,73,64,19,182,123,26,142,247,117,230,149,181,98,231,81,33,75,222,187,254,36,3,177])) {
@@ -329,6 +348,9 @@ pub fn request_source<'a>(name: &str, source: &'a str) -> Cow<'a, str> {
 }
 
 pub fn document_source(oid: u32, attribute: u16, source: &str) -> Cow<'_, str> {
+    if attribute == 3 {
+        if let Some(source) = exchange::library(source) { return Cow::Owned(source); }
+    }
     // This native registry wrapper stringifies booleans as True/False.
     // Preserve explicit string values and the interpreter's existing HTML/JS
     // formatting; change only the verified registry serialization function.

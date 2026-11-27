@@ -279,3 +279,43 @@ pub(crate) fn import(path: &Path, record: &Record) -> Result<(), String> {
     }
     publish_checked(path, old, bytes, started)
 }
+
+/// The mgmt package loader replaces by OID, unlike the classic single-file
+/// form. Many documents in a case have the same name and must remain distinct.
+pub(crate) fn import_by_oid(path: &Path, record: &Record) -> Result<(), String> {
+    let oid = record.integer(1024).ok_or("KOD identity missing")?;
+    ensure_recovered(path)?;
+    let current = {
+        let _read = open_guard()?;
+        let mut reader = crate::db::mainkey::MainKey::open(path)?;
+        match reader.lookup(oid)? {
+            Some(entry) if entry.block != u32::MAX => Some(reader.record(entry)?),
+            _ => None,
+        }
+    };
+    if current.as_ref() == Some(record) { return Ok(()); }
+    commit(path, record, current.as_ref())
+}
+
+/// Maintenance can use a normal writable overlay when a historical work volume
+/// needs unsupported full-text index rewrites. Never bypass the writer guards.
+pub(crate) fn supports_case_target(path: &Path) -> Result<bool, String> {
+    if std::fs::metadata(path).map_err(|e| e.to_string())?.len() > 256 * 1024 * 1024 {
+        return Ok(false);
+    }
+    ensure_recovered(path)?;
+    let _read = open_guard()?;
+    let index = crate::db::mainkey::MainKey::open(path)?;
+    let (header, directory) = index.writer_parts();
+    if u16at(&header, 5) == 0x612 { return Ok(false); }
+    let schema = crate::db::schema::Schema::read(path)?;
+    for item in directory.chunks_exact(10) {
+        if u32at(item, 2) == 0 { continue; }
+        let (area, attr) = (u16at(item, 6), u16at(item, 8));
+        if (area, attr) == (65535, 2)
+            || schema.areas.get(&area).and_then(|a| a.fields.get(&attr)).is_some_and(|f| f.kind == 4) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}

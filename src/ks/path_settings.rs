@@ -1,11 +1,18 @@
 use super::*;
 
+pub(super) enum Scope {
+    Distribution,
+    Calendar,
+    Exchange,
+    Information,
+}
+
 impl Runtime<'_> {
     pub(super) fn save_path_settings(
         &mut self,
         receiver: Option<Value>,
         values: &[Value],
-        calendar_access: bool,
+        scope: Scope,
     ) -> Result<Value, Fault> {
         if !values.is_empty() || !self.document_write_allowed {
             return Err("SaveState requires authenticated settings POST".into());
@@ -36,14 +43,23 @@ impl Runtime<'_> {
         let path = std::path::Path::new(self.data_root.as_deref().ok_or("data root missing")?)
             .join("config.db4");
         let object = object.borrow();
-        let names = if calendar_access {
-            vec!["AccessByUserForMakeVacation"]
-        } else {
-            crate::vm::distribution::setting_names()
+        let names = match scope {
+            Scope::Information => vec!["_infSystemSetup"],
+            Scope::Calendar => vec!["AccessByUserForMakeVacation"],
+            Scope::Distribution => crate::vm::distribution::setting_names(),
+            Scope::Exchange => vec![
+                "SendDocsAutoGetStart",
+                "SendDocsAutoStart",
+                "twobasedon",
+                "SimpleAppealedActRegistration",
+                "AddContentsFromAct",
+                "obmen",
+                "send_notify_about_exchange",
+            ],
         };
         let current = crate::db::writer::settings::read(&path, parent, &names)?;
         let mut updates = Vec::new();
-        for name in names {
+        for &name in &names {
             let Some(value) = object.get(name) else {
                 continue;
             };
@@ -98,6 +114,15 @@ impl Runtime<'_> {
             });
         }
         crate::db::writer::settings::save(&path, parent, &updates)?;
+        // Stock exchange saves schedule flags and document options separately
+        // in the same request. A later SaveState must see its own prior save.
+        if let Some((_, _, baseline)) = &mut self.request_baseline {
+            for name in names {
+                if let Some(value) = object.get(name) {
+                    baseline.insert(name.into(), value.clone());
+                }
+            }
+        }
         Ok(Value::Null)
     }
 }

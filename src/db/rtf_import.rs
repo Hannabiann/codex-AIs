@@ -11,6 +11,7 @@ struct State {
     star: bool,
     table_depth: usize,
     caps: bool,
+    hidden: bool,
     font: u32,
     font_table: bool,
 }
@@ -53,7 +54,7 @@ fn long(b: &mut Vec<u8>, n: u32) {
 }
 impl Paragraph {
     fn put(&mut self, bytes: &[u8], state: &State) {
-        if bytes.is_empty() {
+        if bytes.is_empty() || state.hidden {
             return;
         }
         if self.active != state.flags {
@@ -79,6 +80,7 @@ impl Paragraph {
         }
     }
     fn put_picture(&mut self, mut picture: Picture, state: &State) {
+        if state.hidden {return;}
         // Images consume their own text marker, outside any active style run.
         // The next text run reopens the surrounding RTF style if necessary.
         if self.active != 0 {
@@ -520,9 +522,11 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
                     "plain" => {
                         state.flags = 0;
                         state.caps = false;
+                        state.hidden = false;
                         state.font = default_font;
                     }
                     "caps" => state.caps = v != 0,
+                    "v" => state.hidden = v != 0,
                     "pard" => {
                         state.align = 0;
                         state.table_depth = 0;
@@ -687,6 +691,7 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value, String> {
     Ok(Value::TextWithMetadata { data, metadata })
 }
 fn put_unicode(p: &mut Paragraph, c: char, state: &State) -> Result<(), String> {
+    if state.hidden { return Ok(()); }
     // Native text has a legacy box-drawing alphabet in the 0x80..0x8f range.
     // Preserve those codes rather than substituting RTF's lossy ANSI fallback.
     let special = match c {
@@ -720,6 +725,7 @@ fn put_unicode(p: &mut Paragraph, c: char, state: &State) -> Result<(), String> 
     Ok(())
 }
 fn put_encoded(p: &mut Paragraph, b: u8, codepage: i32, state: &State) -> Result<(), String> {
+    if state.hidden { return Ok(()); }
     if b < 128 || codepage == 1251 {
         p.put(&[b], state);
         return Ok(());
@@ -738,4 +744,14 @@ fn put_encoded(p: &mut Paragraph, b: u8, codepage: i32, state: &State) -> Result
     }
     p.put(&bytes, state);
     Ok(())
+}
+
+#[cfg(test)]
+mod exchange_tests {
+    #[test]
+    fn hidden_native_exchange_markers_do_not_enter_document_text() {
+        let value=super::parse(br"{\rtf1\ansi A{\v #G0}\v hidden\v0 B{\v secret}C\v hidden\plain D}").unwrap();
+        let super::Value::TextWithMetadata{data,..}=value else {panic!()};
+        assert_eq!(data,b"ABCD");
+    }
 }

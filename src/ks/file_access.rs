@@ -5,6 +5,7 @@ use std::path::{Component, Path, PathBuf};
 #[derive(Debug)]
 pub(super) struct WriteFile {
     pub name: String,
+    pub charset: RefCell<String>,
     pub file: Rc<RefCell<Option<std::fs::File>>>,
     log_path: Option<PathBuf>,
     generation: std::cell::Cell<u64>,
@@ -13,6 +14,30 @@ pub(super) struct WriteFile {
 #[cfg(test)]
 mod log_tests {
     use super::*;
+    #[test]
+    fn xml_writer_can_append_fields_before_the_closing_root() {
+        let path=std::env::temp_dir().join(format!("codex-xml-seek-{}",std::process::id()));
+        let file=std::fs::OpenOptions::new().read(true).write(true).create_new(true).open(&path).unwrap();
+        let mut runtime=Runtime::new("/test");
+        runtime.scopes[0].borrow_mut().insert("f".into(),Value::LogFile(WriteFile::new("exchange.xml",file)));
+        runtime.render(&super::super::parser::parse("f.Print('<root></root>'); f.reset(); f.skip(f.length()-7); var w=new XMLBaseTagWriter(f); w.Element('field',{value:'Суд & файл'}); f.Print('</root>'); f.close();").unwrap()).unwrap();
+        let text=crate::db::decode(&std::fs::read(&path).unwrap());
+        assert_eq!(text,"<root><field value=\"Суд &amp; файл\"></field></root>");
+        super::super::xml_sax::events(&text).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn writable_file_charset_controls_encoded_bytes() {
+        let path=std::env::temp_dir().join(format!("codex-charset-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let file=std::fs::File::create(&path).unwrap();
+        let mut runtime=Runtime::new("/test");
+        runtime.scopes[0].borrow_mut().insert("f".into(),Value::LogFile(WriteFile::new("test.log",file)));
+        runtime.render(&super::super::parser::parse("f.CharSet='windows-1251'; f.PrintS('Тест'); if (f.lastModified() <= 0 || f.isDirectory()) throw 'bad file probe'; f.CharSet='utf-8'; f.Print('Тест'); f.close();").unwrap()).unwrap();
+        let mut expected=encoding_rs::WINDOWS_1251.encode("Тест").0.into_owned();
+        expected.extend_from_slice("Тест".as_bytes());
+        assert_eq!(std::fs::read(&path).unwrap(),expected);
+        std::fs::remove_file(path).unwrap();
+    }
     #[test]
     fn ks_log_handle_reopens_after_daily_rotation() {
         let root=std::env::temp_dir().join(format!("codex-ks-logs-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
@@ -32,10 +57,10 @@ mod log_tests {
 }
 impl WriteFile {
     fn new(name: &str, file: std::fs::File) -> Rc<Self> {
-        Rc::new(Self { name: name.into(), file: Rc::new(RefCell::new(Some(file))), log_path: None, generation: std::cell::Cell::new(0) })
+        Rc::new(Self { name: name.into(), charset: RefCell::new("windows-1251".into()), file: Rc::new(RefCell::new(Some(file))), log_path: None, generation: std::cell::Cell::new(0) })
     }
     fn log(name: &str, path: PathBuf, file: std::fs::File) -> Rc<Self> {
-        Rc::new(Self { name: name.into(), file: Rc::new(RefCell::new(Some(file))), log_path: Some(path), generation: std::cell::Cell::new(crate::runtime_logs::generation()) })
+        Rc::new(Self { name: name.into(), charset: RefCell::new("windows-1251".into()), file: Rc::new(RefCell::new(Some(file))), log_path: Some(path), generation: std::cell::Cell::new(crate::runtime_logs::generation()) })
     }
     pub fn lock_log(&self) -> Result<Option<std::sync::MutexGuard<'static, ()>>, String> {
         let Some(path) = &self.log_path else { return Ok(None) };
@@ -276,6 +301,15 @@ impl Runtime<'_> {
 
     pub(super) fn open_file(&self, name: &str, create: bool) -> Result<Value, Fault> {
         let root = self.file_root()?;
+        if let Some(path) = self.exchange_path(name, create)? {
+            if create {
+                let file=std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true)
+                    .open(&path).map_err(|e|script_io("Exchange",&path,e))?;
+                return Ok(Value::LogFile(WriteFile::new(name,file)));
+            }
+            std::fs::metadata(&path).map_err(|e|script_io("Exchange",&path,e))?;
+            return Ok(Value::File(ReadFile::new(path)));
+        }
         if create {
             if let Some(destination) = self.schedule_destination(&root, name)? {
                 let file = std::fs::OpenOptions::new().read(true).write(true)
@@ -377,6 +411,15 @@ impl Runtime<'_> {
         }
         let name = value.text();
         let root = self.file_root()?;
+        if let Some(path) = self.exchange_path(&name, operation == "Unlink")? {
+            let result=match operation {
+                "MkDir"=>std::fs::create_dir(&path),
+                "Unlink"=>std::fs::remove_file(&path),
+                "RmDir"=>std::fs::remove_dir(&path),
+                _=>unreachable!(),
+            };
+            return Ok(Value::Bool(result.is_ok()));
+        }
         if operation == "Unlink" {
             if let Some(path) = self.schedule_destination(&root, &name)? {
                 return Ok(Value::Bool(std::fs::remove_file(path).is_ok()));

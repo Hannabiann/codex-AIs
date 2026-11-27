@@ -17,6 +17,53 @@ fn render(r: &mut Runtime<'_>, source: &str) -> Result<String, String> {
     r.render(&ast)
 }
 #[test]
+fn queued_execute_sees_live_directory_globals_and_keeps_its_arguments() {
+    let mut r = Runtime::new("/20a");
+    render(&mut r, "var jobContext=null; function enter(context) { jobContext=context; }").unwrap();
+    r.scheduled_request = true;
+    let args = Rc::new(RefCell::new(HashMap::from([
+        ("bfExport".into(), Value::Bool(true)),
+        ("job".into(), Value::String("1".into())),
+    ])));
+    let result = r.execute_code_named(
+        "function exportJob() { return jobContext.bfExport && imported(); } this.imported=function() {return true;}; enter(this); return exportJob();",
+        Some(Value::Object(args.clone())), "queued fixture").unwrap();
+    assert!(matches!(result, Value::Bool(true)));
+    assert_eq!(args.borrow().get("job").unwrap().text(), "1");
+    assert!(!args.borrow().contains_key("jobContext"), "directory bindings must not be copied into job arguments");
+}
+#[test]
+fn path_mount_descriptors_preserve_configured_write_access() {
+    use crate::db::{ConfigValue as C, VirtualDir};
+    let dir = VirtualDir { path:"/bras".into(), properties:std::collections::BTreeMap::from([
+        ("Path".into(),C::Text("/bras".into())),
+        ("Base1".into(),C::Text("archive.db4".into())),
+        ("Base2".into(),C::Text("active.db4".into())),
+        ("Redact2".into(),C::Integer(1)),
+        ("Base3".into(),C::Text("other.db4".into())),
+        ("Redact3".into(),C::Text("1".into())),
+        ("Base4".into(),C::Text("locked.db4".into())),
+        ("Redact4".into(),C::Integer(0)),
+    ]), ..Default::default() };
+    let mut r=Runtime::new("/20a").with_application_config(&Default::default()).with_http_paths(&[dir]);
+    render(&mut r, "var mounts=Application.Paths[0].vol; if(mounts.length!=5 || !mounts[1].vol.readOnly || mounts[2].vol.readOnly || mounts[3].vol.readOnly || !mounts[4].vol.readOnly) throw 'incorrect volume flags';").unwrap();
+    assert!(!r.document_write_allowed);
+}
+#[test]
+fn base64_stream_preserves_binary_bytes_and_returns_a_readable_stream() {
+    let mut r=Runtime::new("/test");
+    let source=InputStream::value(&[0,1,254,255]);
+    let encoded=r.call_host(Value::Native("ToBase64".into()),vec![source.clone()],None,"ToBase64".into()).unwrap();
+    let Value::ReadStream(ref stream)=encoded else { panic!("stream expected") };
+    assert_eq!(stream.borrow().data,b"AAH+/w==");
+    let decoded=r.call_host(Value::Native("FromBase64".into()),vec![encoded.clone()],None,"FromBase64".into()).unwrap();
+    let Value::ReadStream(stream)=decoded else { panic!("stream expected") };
+    assert_eq!(stream.borrow().data,vec![0,1,254,255]);
+    let Value::ReadStream(stream)=source else {unreachable!()};
+    assert_eq!(stream.borrow().position,4);
+    assert_eq!(base64::decode(&base64::encode("Строка").unwrap()).unwrap(),"Строка");
+}
+#[test]
 fn handled_errors_do_not_leak_into_later_failures_or_requests() {
     let mut r = Runtime::new("/20a");
     assert!(render(&mut r, "function oldFail() { throw 'handled'; } try { oldFail(); } catch(e) {} var fine=3;").is_ok());

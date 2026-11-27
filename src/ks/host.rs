@@ -82,7 +82,8 @@ pub enum ResultValue {
     Number(f64),
     Object(u32, u32),
     Annotation(u32, u32),
-    FieldStream(u32, u32, u16, u16),
+    FieldStream(u32, u32, u16, u16, bool),
+    FieldStreams(u32, u32, u16, u16),
     String(String),
     IntArray(Vec<i32>),
     StringArray(Vec<String>),
@@ -222,6 +223,8 @@ impl Handle {
                 | "_getInt"
                 | "getObject"
                 | "getAsciiStream"
+                | "getStream"
+                | "_getStream"
         ) {
             return Ok(());
         }
@@ -437,20 +440,27 @@ impl Handle {
                         r.position = p;
                         Ok(V::Bool(p >= 0 && (p as usize) < r.oids.len()))
                     }
-                    "getAsciiStream" => {
+                    "getAsciiStream" | "getStream" | "_getStream" => {
                         let Some(col) = r.projection.index(args)? else {
                             return Ok(V::Null);
                         };
+                        if r.position < 0 || r.position as usize >= r.oids.len() {
+                            return Ok(V::Null);
+                        }
                         if let Some(ColumnValues::StreamRef { oid, field, kind }) = r.cell(col) {
+                            if method == "_getStream" {
+                                return Ok(V::FieldStreams(*oid, r.connection.borrow().scope, *field, *kind));
+                            }
                             return Ok(V::FieldStream(
                                 *oid,
                                 r.connection.borrow().scope,
                                 *field,
                                 *kind,
+                                method == "getAsciiStream",
                             ));
                         }
-                        if r.projection.0[col] != Column::Annotation {
-                            return Err("getAsciiStream requires ANNOTATION(OBJECT)".into());
+                        if method != "getAsciiStream" || r.projection.0[col] != Column::Annotation {
+                            return Err(format!("{method} requires a stream field column"));
                         }
                         if r.position < 0 {
                             return Ok(V::Null);

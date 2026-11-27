@@ -4,6 +4,25 @@ use super::{Fault, Runtime, Value};
 use crate::db::fields::{Field as DbField, Record, Value as DbValue};
 use std::{cell::RefCell, rc::Rc};
 
+pub(super) fn binary_property(field: &DbField, key: &str) -> Result<Value, Fault> {
+    let DbValue::Binary {file,..}=&field.value else {return Err("invalid binary field".into());};
+    let Some(file)=file else {return Ok(Value::Null);};
+    match key {
+        "FileName" => Ok(Value::String(crate::db::decode(&file.name))),
+        "FileDate" if file.timestamp!=0 => {
+            // Native file metadata uses a packed DOS date/time, not Unix time.
+            let t=file.timestamp;
+            Ok(Value::Date(Rc::new(RefCell::new(crate::ks::date::Date::from_parts([
+                1980+(t>>25) as i64, ((t>>21)&15) as i64-1, ((t>>16)&31) as i64,
+                ((t>>11)&31) as i64, ((t>>5)&63) as i64, (t&31) as i64*2, 0,
+            ])?))))
+        }
+        // The DB4 binary-file descriptor does not carry MIME/charset values.
+        "FileDate" | "CharSet" | "Mime" => Ok(Value::Null),
+        _ => Err("unsupported binary metadata property".into()),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct Field {
     pub display: String,

@@ -1,6 +1,8 @@
 //! Rust settings file; the separate network form writes the native HTTP port.
 #[path = "network_settings.rs"]
 mod network;
+#[path = "settings_html.rs"]
+mod html;
 use std::{
     collections::HashSet,
     io::{Read, Write},
@@ -133,6 +135,12 @@ impl Settings {
             let (key, value) = line.split_once('=').ok_or("Ожидается имя=значение")?;
             pairs.push((key.trim().to_owned(), value.trim().to_owned()));
         }
+        // Accept the retired local 0.30 preview setting, but never write it back.
+        let old_themes: Vec<_> = pairs.iter().filter(|(k,_)|k=="admin_theme").collect();
+        if old_themes.len()>1 || old_themes.iter().any(|(_,v)| !matches!(v.as_str(), "auto"|"light"|"dark")) {
+            return Err("Некорректный прежний параметр admin_theme".into());
+        }
+        pairs.retain(|(k,_)|k!="admin_theme");
         // Old six-key files retain every saved setting and gain new defaults.
         for (key, value) in [
             ("workers", Self::default().workers.to_string()),
@@ -170,6 +178,17 @@ pub struct Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retired_preview_theme_does_not_prevent_startup() {
+        let settings=Settings::default();
+        for theme in ["auto", "light", "dark"] {
+            let read=Settings::parse(&(settings.encode()+&format!("admin_theme={theme}\n"))).unwrap();
+            assert_eq!(read, settings);
+            assert!(!read.encode().contains("admin_theme"));
+        }
+        assert!(Settings::parse(&(settings.encode()+"admin_theme=invalid\n")).is_err());
+        assert!(Settings::parse(&(settings.encode()+"admin_theme=auto\nadmin_theme=dark\n")).is_err());
+    }
     #[test]
     fn old_settings_keep_one_interface_and_roundtrip_new_count() {
         let old="connections=64\nqueue=16\nheader_seconds=10\nbody_seconds=10\nwrite_seconds=15\nhistory=128\nworkers=8\n";
@@ -359,8 +378,7 @@ impl Store {
                 )
             });
             let mut html = String::from_utf8(response.body).unwrap();
-            let at = html.rfind("</html>").unwrap_or(html.len());
-            html.insert_str(at, &form);
+            html = html.replace("<!--native-port-form-->", &form);
             response.body = html.into_bytes();
         }
         response
@@ -415,67 +433,7 @@ impl Store {
             }
         }
         let saved = self.saved.lock().unwrap().clone();
-        let escape = crate::monitor::escape;
-        let mut html = String::from("<!doctype html><html lang=ru><meta charset=utf-8><title>Расширенные настройки · codex-AIs</title><style>body{font:16px Arial;margin:24px;background:#e3ddda;color:#222;max-width:1000px}table{border-collapse:collapse;background:white;width:100%}th,td{padding:12px;border:1px solid #aaa;text-align:left}input,select{width:13em;font:inherit}button{font:inherit;padding:10px 18px;margin-top:16px}.notice{padding:12px;background:#fff4c2}.error{color:#a00}code{overflow-wrap:anywhere}</style><p><a href='/admin/'>Администрирование</a> → Установки → Расширенные настройки</p><h1>Параметры codex-AIs</h1><p>Сохранённые значения применяются после перезапуска сервера. Сеть обслуживает Tokio; KS и доступ к данным выполняют отдельные исполнители. Их число задаётся параметром «Исполнители KS/DB». Число HTTP-соединений и длина очереди настраиваются независимо. Помимо общей очереди предусмотрено по одному резервному месту для владельца и выделенного интерфейса, если они есть.</p>");
-        if let Some(error) = error {
-            html.push_str(&format!("<p class=error>{}</p>", escape(&error)));
-        }
-        html.push_str(&crate::runtime_logs::description());
-        if saved != self.active {
-            html.push_str("<p class=notice>Есть сохранённые изменения. Для их применения перезапустите codex-AIs.</p>");
-        }
-        html.push_str(&format!(
-            "<p>{}</p>",
-            escape(&self.worker_selection.explanation)
-        ));
-        html.push_str(&format!("<p>Файл: <code>{}</code>. Предыдущая версия сохраняется в <code>codex-AIs.settings.bak</code>.</p><form method=post action='/admin?advanced'><input type=hidden name=csrf value='{}'><table><tr><th>Параметр</th><th>Работает сейчас</th><th>После перезапуска</th></tr>", escape(&self.path.display().to_string()), self.token));
-        for ((field, active), value) in FIELDS.iter().zip(self.active.values()).zip(saved.values())
-        {
-            if field.0 == "listen_scope" {
-                html.push_str(&format!(
-                    "<tr><td>Сетевые интерфейсы</td><td>{} ({})</td><td><select name=listen_scope>",
-                    escape(&self.host.value),
-                    self.host.source
-                ));
-                for (option, title) in [
-                    ("all", "Все IPv4-интерфейсы (0.0.0.0)"),
-                    ("localhost", "Только localhost (127.0.0.1)"),
-                ] {
-                    html.push_str(&format!(
-                        "<option value='{option}'{}>{title}</option>",
-                        if value == option { " selected" } else { "" }
-                    ));
-                }
-                html.push_str("</select></td></tr>");
-                continue;
-            }
-            if field.0 == "workers" {
-                let current = match self.active.workers {
-                    crate::worker_config::Mode::Auto => {
-                        format!("auto → {}", self.worker_selection.workers)
-                    }
-                    crate::worker_config::Mode::Manual(n) => format!("{n} (вручную)"),
-                };
-                html.push_str(&format!("<tr><td><label for=workers>Исполнители KS/DB</label></td><td>{current}</td><td><select id=workers name=workers>"));
-                for option in
-                    std::iter::once("auto".to_string()).chain((1..=32).map(|n| n.to_string()))
-                {
-                    let title = if option == "auto" {
-                        "auto — при запуске".into()
-                    } else {
-                        format!("{option} — вручную")
-                    };
-                    html.push_str(&format!(
-                        "<option value='{option}'{}>{title}</option>",
-                        if value == option { " selected" } else { "" }
-                    ));
-                }
-                html.push_str("</select></td></tr>");
-                continue;
-            }
-            html.push_str(&format!("<tr><td><label for='{}'>{}</label> ({}–{})</td><td>{active}</td><td><input required type=number id='{}' name='{}' min='{}' max='{}' value='{value}'></td></tr>", field.0, field.1, field.2, field.3, field.0, field.0, field.2, field.3));
-        }
-        html.push_str("</table><button type=submit>Сохранить настройки Rust</button></form><h2>Параметры оригинального сервера</h2><p>Порт HTTP сохраняется в config.db4 отдельной кнопкой ниже. Остальные параметры этой страницы сохраняются в codex-AIs.settings. Число исполнителей и очередь Rust задаются выше. По умолчанию действует auto: число тяжёлых исполнителей равно доступным физическим ядрам CPU, SMT/HT отдельно не учитываются. Владелец, поиск и сохранённое число интерфейсных мест добавляются к тяжёлым; общий предел — 32. Если топология недоступна, монитор явно показывает оценку. Владелец каталогов/Word/At всегда один. Число выделенных исполнителей интерфейса задаётся отдельно и входит в общее число workers. При четырёх и более исполнителях ещё один выделен поиску, оставшиеся обслуживают общую очередь отчётов и удалений. По умолчанию interface_workers=1; для нескольких нужны workers не меньше interface_workers + 3. При ручном workers увеличение interface_workers уменьшает число тяжёлых мест. При auto интерфейсные места добавляются отдельно, пока не достигнут общий предел 32. Ручное число 1–32 имеет приоритет над auto, включая сохранённые настройки прежних версий. При 1 исполнителе работа последовательная, при 2 интерфейс разделяет владельца. Увеличение числа исполнителей увеличивает потребление памяти кэшами. Публикация DB4 согласована и последовательна; расчёты идут параллельно. Ограничение памяти старого Win32-процесса не применяется к Rust: кэши имеют собственные пределы, это не жёсткий предел всей памяти процесса.</p><p>HTTP/1.1 keep-alive включён по умолчанию, HTTP/1.0 — по запросу клиента. Таймаут выше относится только к ожиданию следующего запроса, в том числе Word /99, и не ограничивает длительность расчёта. Сжатие ответов пока не реализовано. Периодическую очистку нативного хэша заменяют ограниченные кэши Rust. Заголовок X-Real-IP не подменяет адрес клиента. По умолчанию доступны все IPv4-интерфейсы; выше можно выбрать только localhost. Явный KODEKS_HOST имеет приоритет над сохранённым выбором. Порт читается при запуске из config.db4 (SOFTWARE\\Kodeks\\Web, Port); KODEKS_PORT имеет приоритет. Если параметра нет, используется 8070. Для смены порта нужен перезапуск. Таймаут отправки ответа отсчитывается после вычисления результата и не ограничивает длительность отчёта.</p><p><a href='/admin?status'>Состояние сервера и очереди</a></p></html>");
+        let html = self.render(&saved, error.as_deref());
         crate::server::Response {
             status,
             mime: "text/html; charset=utf-8",

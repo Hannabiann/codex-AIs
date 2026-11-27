@@ -1,6 +1,15 @@
 use super::*;
 use std::path::PathBuf;
 
+#[test]
+fn information_revision_setting_is_restricted_to_its_native_format() {
+    assert!(valid_value("_infSystemSetup", "$Revision: 44579 $"));
+    assert!(!valid_value("InfSystem", "$Revision: 44579 $"));
+    assert!(!valid_value("_infSystemSetup", "$Revision: bad $"));
+    assert!(!valid_value("_infSystemSetup", "$Revision:  $"));
+    assert!(valid_value("InfSystem", "0;1;2;3;4;5;6;7;8"));
+}
+
 fn fixture() -> (PathBuf, u32, u32, crate::db::registry::Registry) {
     let base = std::env::var("CODEX_TEST_DATA_ROOT").expect("CODEX_TEST_DATA_ROOT");
     let engine = crate::db::Db4Engine::init_from_config_root(&base).unwrap();

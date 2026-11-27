@@ -1,10 +1,10 @@
 [package]
 name = "codex-ais"
-version = "0.29.2"
+version = "0.30.0"
 edition = "2021"
 license = "GPL-3.0-only"
 description = "Portable Rust compatibility server for Kodeks-based court information systems"
-rust-version = "1.88"
+rust-version = "1.89"
 
 [[bin]]
 name = "codex-AIs"
@@ -16,9 +16,16 @@ regex = "=1.10.6"
 tokio = { version = "=1.43.0", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
 encoding_rs = "=0.8.35"
 stacker = "=0.1.25"
+sysinfo = { version = "=0.37.2", default-features = false, features = ["system"] }
+xmlschema = "=0.0.14"
+oxml = { version = "=0.0.13", default-features = false, features = ["std", "xpath"] }
 
-flate2 = { version = "=1.0.35", default-features = false, features = ["rust_backend"] }
+flate2 = { version = "=1.1.11", default-features = false, features = ["rust_backend"] }
 gif = { version = "=0.14.2", default-features = false, features = ["std"] }
+zip = { version = "=9.8.2", default-features = false, features = ["deflate-flate2"] }
+mailparse = { version = "=0.18.0", default-features = false }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "=1.0.12"
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.191"
