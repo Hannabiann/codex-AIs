@@ -322,8 +322,11 @@ impl Runtime<'_> {
                         stack.push(Cell::Value(value));
                         pc = catch;
                     } else {
-                        self.diagnostic_bytecode(program, pc - 1, entry);
-                        return Err(Fault::Script(value));
+                        let fault = Fault::Script(value);
+                        if self.diagnostic_needed(&fault) {
+                            self.diagnostic_bytecode(program, pc - 1, entry);
+                        }
+                        return Err(fault);
                     }
                 }
             }

@@ -18,6 +18,14 @@ fn matches_source(source: &str, expected: (usize, [u8; 32])) -> bool {
     source.len() == expected.0 && fingerprint::sha256(source.as_bytes()) == expected.1
 }
 
+fn court_totals_percentages(source: &str) -> String {
+    // Both operands are nonnegative case counters. Native KS divides these
+    // integers with truncation, while the source interpreter uses f64.
+    // Apply only to the two percentage cells, not fractional average loads.
+    source.replace("aCount[ 7 ] * 100 / aCount[ 6 ]",
+        "Math.floor(aCount[ 7 ] * 100 / aCount[ 6 ])")
+}
+
 const REPOSITORY_LOOKUP_ID: (usize, [u8; 32]) = (
     283,
     [220, 77, 132, 205, 106, 108, 21, 194, 0, 22, 61, 5, 156, 24, 156, 233,
@@ -159,6 +167,11 @@ const USERBASE_LOGIN_CHECK: &str = r#"
 "#;
 
 pub fn request_source<'a>(name: &str, source: &'a str) -> Cow<'a, str> {
+    if name == "checkStatCard3" && matches_source(source, (235936,
+        [46,153,166,6,161,67,188,145,148,132,220,151,154,14,178,178,
+         125,167,158,247,149,196,176,87,196,109,229,244,129,170,18,0])) {
+        return Cow::Owned(court_totals_percentages(source));
+    }
     if name.eq_ignore_ascii_case("sticker") { return sticker::adapt(source); }
     if name.eq_ignore_ascii_case("infSystem") { return information::adapt(source); }
     if name.eq_ignore_ascii_case("nMovement") { return information::movement(source); }
@@ -345,6 +358,21 @@ pub fn request_source<'a>(name: &str, source: &'a str) -> Cow<'a, str> {
         ));
     }
     Cow::Borrowed(source)
+}
+
+#[cfg(test)]
+mod court_totals_tests {
+    use super::*;
+    #[test]
+    fn percentages_use_integer_division_but_averages_keep_fractions() {
+        let source = "var aCount=[0,0,0,0,0,0,290,123]; var percent=aCount[ 7 ] * 100 / aCount[ 6 ]; var average=123.0/290; if(percent!=42 || average<=0.424 || average>=0.425) throw 'wrong arithmetic';";
+        let fixed = court_totals_percentages(source);
+        let ast = crate::ks::parser::parse(&fixed).unwrap();
+        let mut runtime = crate::ks::runtime::Runtime::new("/test");
+        runtime.render(&ast).unwrap();
+        assert!(matches!(request_source("checkStatCard3", source), Cow::Borrowed(_)),
+            "a changed or unknown source must retain its own arithmetic");
+    }
 }
 
 pub fn document_source(oid: u32, attribute: u16, source: &str) -> Cow<'_, str> {

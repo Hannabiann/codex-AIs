@@ -10,6 +10,11 @@ pub(super) struct State {
     pub frames: Vec<Frame>,
     pub fault: Option<Rc<String>>,
     pub caught: Vec<Option<Rc<String>>>,
+    // The nearest source-level catch decides whether the original exception
+    // can be rethrown. A plain fallback needs no formatted failure snapshot.
+    pub discard_script_fault: Vec<bool>,
+    #[cfg(test)]
+    captures: usize,
 }
 pub(super) struct Frame {
     label: String,
@@ -28,13 +33,37 @@ fn short(s: &str, max: usize) -> String {
     value
 }
 fn atom(s: &str) -> String {
-    short(s, VALUE_LIMIT).chars().flat_map(|c| match c {
-        '\n' => "\\n".chars().collect::<Vec<_>>(),
-        '\r' => "\\r".chars().collect(),
-        '\t' => "\\t".chars().collect(),
-        c if c.is_control() => format!("\\u{{{:x}}}", c as u32).chars().collect(),
-        c => vec![c],
-    }).collect()
+    let mut out = String::with_capacity(s.len().min(VALUE_LIMIT));
+    let mut chars = s.chars();
+    for c in chars.by_ref().take(VALUE_LIMIT) {
+        match c {
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => { let _ = write!(out, "\\u{{{:x}}}", c as u32); }
+            c => out.push(c),
+        }
+    }
+    if chars.next().is_some() { out.push_str(" … [truncated]"); }
+    out
+}
+
+// Only prove very simple handlers. Calls, conditional logic and bare rethrow
+// retain the complete original snapshot, including calls into another script
+// that may execute a bare throw. Host failures are fatal even inside a catch.
+pub(super) fn discards_exception(handler: &Stmt) -> bool {
+    fn scalar(e: &Expr) -> bool {
+        matches!(e, Expr::Name(_) | Expr::String(_) | Expr::Number(_))
+    }
+    match handler.unlocated() {
+        Stmt::Empty | Stmt::Continue | Stmt::Break | Stmt::Return(None) => true,
+        Stmt::Return(Some(e)) => scalar(e),
+        Stmt::Block(statements) => statements.iter().all(discards_exception),
+        Stmt::Var(bindings) => bindings.iter().all(|(_, v)| v.as_ref().is_none_or(scalar)),
+        Stmt::Expression(Expr::Binary(op, target, v)) =>
+            op == "=" && matches!(target.as_ref(), Expr::Name(_)) && scalar(v),
+        _ => false,
+    }
 }
 fn value(v: &Value, name: &str, depth: usize, seen: &mut Vec<usize>) -> (&'static str, String) {
     if secret(name) { return ("redacted", "[hidden]".into()); }
@@ -131,12 +160,18 @@ fn source(out: &mut String, span: &parser::SourceSpan) {
     if span.start >= span.source.text.len() { out.push_str(">>> << end of source >>\n"); }
 }
 impl Runtime<'_> {
+    pub(super) fn diagnostic_needed(&self, fault: &Fault) -> bool {
+        !matches!(fault, Fault::Script(_))
+            || !self.diagnostics.discard_script_fault.last().copied().unwrap_or(false)
+    }
     pub(super) fn diagnostic_enter(&mut self, label: &str, function: &Rc<Function>) {
         self.diagnostics.frames.push(Frame { label: label.into(), function: function.clone(),
             locals: self.scopes.last().unwrap().clone(), callsite: self.diagnostics.location.clone() });
     }
     pub(super) fn diagnostic_capture(&mut self) {
         if self.diagnostics.fault.is_some() { return; }
+        #[cfg(test)]
+        { self.diagnostics.captures += 1; }
         let mut out = String::new();
         if let Some(span) = &self.diagnostics.location { source(&mut out, span); }
         else { out.push_str("\nSource: no source position available (native/compiled operation)\n"); }
@@ -180,7 +215,8 @@ impl Runtime<'_> {
         }
         self.diagnostics.fault = Some(Rc::new(out));
     }
-    pub(super) fn diagnostic_native(&mut self, label: &str, values: &[Value]) {
+    pub(super) fn diagnostic_native(&mut self, label: &str, values: &[Value], fault: &Fault) {
+        if !self.diagnostic_needed(fault) { return; }
         if self.diagnostics.fault.is_some() { return; }
         self.diagnostic_capture();
         if let Some(report) = &mut self.diagnostics.fault {
@@ -194,6 +230,7 @@ impl Runtime<'_> {
         }
     }
     pub(super) fn diagnostic_fault(&mut self, fault: &Fault) {
+        if !self.diagnostic_needed(fault) { return; }
         self.diagnostic_capture();
         if let Some(report) = &mut self.diagnostics.fault {
             let out = Rc::make_mut(report);

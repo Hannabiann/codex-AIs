@@ -164,6 +164,40 @@ fn full_bulk_queue_preserves_owner_and_interface_admission_reserves() {
 }
 
 #[test]
+fn scheduled_exchange_saturation_keeps_word_and_ui_reserves_available() {
+    let (dispatcher, inboxes) = dispatcher(4, 1);
+    let monitor = Arc::new(crate::monitor::Monitor::new(
+        Default::default(), crate::worker_config::Mode::Manual(4).resolve(1),
+    ));
+    let mut scheduled = scheduled_exchange::Pending::default();
+    for path in ["/20a/~sendDocsAuto", "/20a/~sendDocsAutoGet"] {
+        scheduled.enqueue(path.into(), Some(600), &monitor);
+    }
+    scheduled.flush(&dispatcher.workers[3].sender, &dispatcher.queue, &monitor, |_| Some(600));
+    assert_eq!(dispatcher.queue.available_permits(), 0);
+    assert!(submit(&dispatcher, 10, "/court?StatOtchet221").is_err());
+    assert!(submit(&dispatcher, 11, "/court?DeleteObject").is_err());
+    assert!(submit(&dispatcher, 12, "/99?savebin").is_ok());
+    assert!(submit(&dispatcher, 13, "/court?d").is_ok());
+    let word = next_job(&inboxes[0], None, None).unwrap();
+    let ui = next_job(&inboxes[1], None, None).unwrap();
+    assert_eq!((word.id, ui.id), (12, 13));
+    assert!(word.background.is_none());
+    let first = next_job(&inboxes[3], None, None).unwrap();
+    assert_eq!(first.request.target, "/20a/~sendDocsAuto");
+    assert!(first.background.as_ref().unwrap().start());
+    drop(first);
+    scheduled.flush(&dispatcher.workers[3].sender, &dispatcher.queue, &monitor, |_| Some(600));
+    let second = next_job(&inboxes[3], None, None).unwrap();
+    assert_eq!(second.request.target, "/20a/~sendDocsAutoGet");
+    drop(second);
+    drop((word, ui));
+    assert_eq!(dispatcher.queue.available_permits(), 1);
+    assert_eq!(dispatcher.owner_reserve.available_permits(), 1);
+    assert_eq!(dispatcher.interface_reserve.available_permits(), 1);
+}
+
+#[test]
 fn route_classification_keeps_search_and_owner_separate_from_shared_bulk() {
     let request = RequestContext {
         method: "GET".into(),

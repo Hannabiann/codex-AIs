@@ -1,6 +1,57 @@
 use super::*;
 
 #[test]
+fn routine_fallbacks_do_not_format_discarded_exceptions() {
+    let mut r = Runtime::new("/20a");
+    let source = "function absent() { throw 'not present'; } function fallback() { try { absent(); } catch(e) { return null; } } var total=0; for(var i=0;i<200;i++) { fallback(); try { absent(); } catch(e) { total=7; continue; } } if(total!=7) throw 'wrong result';";
+    render(&mut r, source).unwrap();
+    assert_eq!(r.diagnostics.captures, 0);
+    assert!(r.diagnostics.discard_script_fault.is_empty());
+    assert!(r.diagnostics.fault.is_none());
+}
+
+#[test]
+fn fallback_does_not_suppress_fatal_host_diagnostics() {
+    let mut r = Runtime::new("/20a");
+    assert!(render(&mut r, "function fatal(n) { MissingHost(n); } try { fatal(19); } catch(e) { return null; }").is_err());
+    let report = r.take_error_diagnostic();
+    assert!(report.contains("Function: fatal"));
+    assert!(report.contains("n\tnumber\t19"));
+    assert!(r.diagnostics.discard_script_fault.is_empty());
+}
+
+#[test]
+fn nested_rethrow_and_finally_keep_the_original_snapshot() {
+    let mut r = Runtime::new("/20a");
+    let source = "var shared={before:42}; function origin(n) { throw 'original'; } function relay() { throw; } try { try { origin(17); } catch(e) { relay(); } finally { shared.before=99; } } catch(e) { throw; }";
+    assert!(render(&mut r, source).is_err());
+    let report = r.take_error_diagnostic();
+    assert!(report.contains("Function: origin"));
+    assert!(report.contains("n\tnumber\t17"));
+    assert!(report.contains("before=42"));
+    assert!(!report.split("Stack call function").nth(1).unwrap().contains("before=99"));
+    assert!(r.diagnostics.discard_script_fault.is_empty());
+}
+
+#[test]
+fn outer_fallback_does_not_hide_an_inner_fatal_handler() {
+    let mut r = Runtime::new("/20a");
+    assert!(render(&mut r, "try { try { throw 'handled'; } catch(e) { MissingHost(23); } } catch(e) { return null; }").is_err());
+    let report = r.take_error_diagnostic();
+    assert!(report.contains("Failing host function: MissingHost"));
+    assert!(report.contains("0\tnumber\t23"));
+    assert!(!report.contains("KS throw\tString\thandled"));
+}
+
+#[test]
+fn diagnostic_atoms_preserve_unicode_escaping_and_limits() {
+    assert_eq!(atom("Строка\n\r\t\u{7}🙂"), "Строка\\n\\r\\t\\u{7}🙂");
+    let exact = "я".repeat(VALUE_LIMIT);
+    assert_eq!(atom(&exact), exact);
+    assert_eq!(atom(&(exact.clone()+"🙂")), exact+" … [truncated]");
+}
+
+#[test]
 fn source_fault_preserves_locals_arguments_and_origin() {
     let mut r = Runtime::new("/20a");
     let source = "const rate = 7;\nfunction inner(n) { var before = 42; MissingHost(n, before); }\nfunction outer(x) { var caller = 'saved'; inner(x + rate); }\nouter(3);";

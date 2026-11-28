@@ -1571,7 +1571,12 @@ impl<'a> Runtime<'a> {
                     .unwrap_or_else(|| Fault::Host("rethrow outside catch".into())))
             }
             Stmt::Try(body, catch, finally) => {
+                if let Some(handler) = catch {
+                    self.diagnostics.discard_script_fault.push(
+                        error_diagnostics::discards_exception(&handler.body));
+                }
                 let mut result = self.stmt(body);
+                if catch.is_some() { self.diagnostics.discard_script_fault.pop(); }
                 if let Err(Fault::Script(value)) = &result {
                     if let Some(parser::Catch {
                         name,
@@ -5724,7 +5729,7 @@ impl<'a> Runtime<'a> {
             .into()),
         }
         })();
-        if result.is_err() { self.diagnostic_native(&label, &values); }
+        if let Err(error) = &result { self.diagnostic_native(&label, &values, error); }
         result
     }
     fn invoke(
@@ -5760,12 +5765,12 @@ impl<'a> Runtime<'a> {
             || f.name.as_deref() == Some("jc_expandXPathExcelCells")
         {
             let result = self.report_excel(&values);
-            if result.is_err() { self.diagnostic_native(&_label, &values); }
+            if let Err(error) = &result { self.diagnostic_native(&_label, &values, error); }
             return result;
         }
         if _label == "mp_xml_createDocument" || f.name.as_deref() == Some("mp_xml_createDocument") {
             let result = self.report_xml_document(&values);
-            if result.is_err() { self.diagnostic_native(&_label, &values); }
+            if let Err(error) = &result { self.diagnostic_native(&_label, &values, error); }
             return result;
         }
         if f.name.as_deref() == Some("CXporter__writeXml")
@@ -5812,7 +5817,7 @@ impl<'a> Runtime<'a> {
         // overflowing the worker thread's stack. Execution stays on the same
         // thread, including its Rc/RefCell state and database locks.
         let r = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || self.list(&f.body));
-        if r.is_err() { self.diagnostic_capture(); }
+        if let Err(error) = &r { self.diagnostic_fault(error); }
         self.diagnostics.frames.pop();
         if let Some(start) = profile_start {
             let elapsed = start.elapsed().as_micros();
