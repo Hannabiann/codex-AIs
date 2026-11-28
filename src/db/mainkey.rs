@@ -479,9 +479,17 @@ impl MainKey {
         self.record_prefix(entry, false, super::fields::scalar_record_prefix, super::fields::ScalarRecord,
             |r| r.0.integer(1024))
     }
+    pub(super) fn record_text_values(&mut self, entry: Entry, attribute: u16) -> Result<super::fields::TextRecord, String> {
+        self.record_prefix(entry, false, |p| super::fields::text_prefix(p, attribute), |r| {
+            super::fields::TextRecord { area: r.area, oid: r.integer(1024), values: r.fields.iter()
+                .filter(|f| f.id == attribute).filter_map(|f| match &f.value {
+                    super::fields::Value::String(s) => Some(s.clone()), _ => None,
+                }).collect() }
+        }, |r| r.oid)
+    }
     fn record_prefix<T>(
         &mut self, entry: Entry, cache_pages: bool,
-        parse: fn(&[u8]) -> Result<Option<T>, String>,
+        parse: impl Fn(&[u8]) -> Result<Option<T>, String>,
         fallback: impl FnOnce(super::fields::Record) -> T,
         oid: impl Fn(&T) -> Option<u32>,
     ) -> Result<T, String> {

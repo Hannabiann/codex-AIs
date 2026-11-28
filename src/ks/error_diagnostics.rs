@@ -13,6 +13,7 @@ pub(super) struct State {
     // The nearest source-level catch decides whether the original exception
     // can be rethrown. A plain fallback needs no formatted failure snapshot.
     pub discard_script_fault: Vec<bool>,
+    profile: HashMap<String, (u64, u128, u64)>,
     #[cfg(test)]
     captures: usize,
 }
@@ -170,6 +171,7 @@ impl Runtime<'_> {
     }
     pub(super) fn diagnostic_capture(&mut self) {
         if self.diagnostics.fault.is_some() { return; }
+        let started = self.profile_functions.then(std::time::Instant::now);
         #[cfg(test)]
         { self.diagnostics.captures += 1; }
         let mut out = String::new();
@@ -213,7 +215,29 @@ impl Runtime<'_> {
                 }
             }
         }
+        if let Some(started) = started {
+            let elapsed = started.elapsed().as_micros();
+            let function = self.diagnostics.frames.last().map(|f| f.label.as_str()).unwrap_or("<global>");
+            let site = self.diagnostics.location.as_ref().map_or_else(|| function.to_owned(),
+                |span| format!("{}:{} / {function}", span.source.name, span.start));
+            let key = if self.diagnostics.profile.len() < 64 || self.diagnostics.profile.contains_key(&site) {
+                site
+            } else { "<other sites>".into() };
+            let row = self.diagnostics.profile.entry(key).or_default();
+            row.0 += 1; row.1 += elapsed; row.2 += out.len() as u64;
+        }
         self.diagnostics.fault = Some(Rc::new(out));
+    }
+    pub(super) fn finish_diagnostic_profile(&mut self) {
+        let mut rows = std::mem::take(&mut self.diagnostics.profile).into_iter().collect::<Vec<_>>();
+        rows.sort_by_key(|(_, (_, us, _))| std::cmp::Reverse(*us));
+        let (count, us, bytes) = rows.iter().fold((0u64, 0u128, 0u64), |sum, (_, row)|
+            (sum.0 + row.0, sum.1 + row.1, sum.2 + row.2));
+        let thread = std::thread::current().id();
+        eprintln!("KS diagnostic profile: thread={thread:?}, snapshots={count}, total_us={us}, bytes={bytes}");
+        for (site, (count, us, bytes)) in rows.into_iter().take(12) {
+            eprintln!("KS diagnostic site: thread={thread:?}, source={}, snapshots={count}, total_us={us}, bytes={bytes}", atom(&site));
+        }
     }
     pub(super) fn diagnostic_native(&mut self, label: &str, values: &[Value], fault: &Fault) {
         if !self.diagnostic_needed(fault) { return; }

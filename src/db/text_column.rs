@@ -1,7 +1,6 @@
 //! Reuse decoded, unindexed strings across predicates on the same candidate
 //! set. This is a bounded query snapshot, not a replacement DB4 index.
 use super::{
-    fields::Value,
     shared_query::{path_key, BuildKey},
     Db4Engine,
 };
@@ -207,32 +206,47 @@ impl Db4Engine {
         candidates: &[u32],
     ) -> Result<Option<Column>, String> {
         let mut column = Column::new(candidates);
-        for batch in candidates.chunks(1024) {
-            let admitted = self.with_reader(v, |tree| {
-                for entry in tree.lookup_many(batch)? {
-                    if entry.block == u32::MAX {
-                        continue;
-                    }
-                    let record = tree.record_attributes(entry)?.0;
-                    if record.area != area {
-                        continue;
-                    }
-                    for field in record.fields.iter() {
-                        if field.id == attribute {
-                            if let Value::String(value) = &field.value {
-                                if !column.add(entry.oid, super::decode(value)) {
-                                    return Ok(false);
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(true)
-            })?;
-            if !admitted {
-                return Ok(None);
+        // Pin one snapshot and read in physical record order. OID order can
+        // jump between distant blocks in edited archive volumes.
+        let admitted = self.with_reader(v, |tree| {
+            let mut entries = Vec::with_capacity(candidates.len());
+            for batch in candidates.chunks(1024) {
+                crate::execution::check()?;
+                entries.extend(tree.lookup_many(batch)?);
             }
-        }
+            entries.sort_unstable_by_key(|entry| (entry.block, entry.oid));
+            for entry in entries {
+                if entry.block == u32::MAX { continue; }
+                let record = tree.record_text_values(entry, attribute)?;
+                if record.area != area { continue; }
+                for value in record.values {
+                    if !column.add(entry.oid, super::decode(&value)) { return Ok(false); }
+                }
+            }
+            Ok(true)
+        })?;
+        if !admitted { return Ok(None); }
         Ok(Some(column))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn physical_order_keeps_sorted_unique_matches_and_exact_coverage() {
+        let mut column = Column::new(&[3, 9, 20]);
+        for (oid, value) in [(20, ""), (9, "yes"), (3, "yes"), (3, "yes")] {
+            assert!(column.add(oid, value.into()));
+        }
+        assert_eq!(column.matches(&crate::ks::sql::matcher("yes", false).unwrap()).unwrap(), vec![3, 9]);
+        assert_eq!(column.matches(&crate::ks::sql::matcher("", false).unwrap()).unwrap(), vec![20]);
+        let mut cache = TextColumns::default();
+        let key = (PathBuf::from("synthetic.db4"), 1, 7, 27, 12);
+        cache.insert(key.clone(), Arc::new(column));
+        assert!(cache.get(&key, &[3, 9, 20]).is_some());
+        assert!(cache.get(&key, &[3, 9]).is_none());
+        let mut revised = key; revised.1 += 1;
+        assert!(cache.get(&revised, &[3, 9, 20]).is_none());
     }
 }

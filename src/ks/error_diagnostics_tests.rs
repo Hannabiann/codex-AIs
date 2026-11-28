@@ -1,6 +1,41 @@
 use super::*;
 
 #[test]
+fn profiling_counts_snapshots_once_and_resets_between_requests() {
+    let mut r = Runtime::new("/20a");
+    r.profile_functions = true;
+    assert!(render(&mut r, "function fail(x) { MissingHost(x); } fail(7);").is_err());
+    assert_eq!(r.diagnostics.profile.values().map(|v| v.0).sum::<u64>(), 1);
+    assert!(r.diagnostics.profile.values().map(|v| v.2).sum::<u64>() > 0);
+    let report = r.take_error_diagnostic();
+    assert!(report.contains("x\tnumber\t7"));
+    assert_eq!(r.diagnostics.profile.values().map(|v| v.0).sum::<u64>(), 1);
+    r.finish_function_profile();
+    assert!(r.diagnostics.profile.is_empty());
+    render(&mut r, "try { throw 'optional'; } catch(e) { return null; }").unwrap();
+    assert!(r.diagnostics.profile.is_empty());
+}
+
+#[test]
+fn diagnostic_profiling_is_opt_in_and_site_storage_is_bounded() {
+    let mut r = Runtime::new("/20a");
+    r.profile_functions = false;
+    assert!(render(&mut r, "MissingHost();").is_err());
+    assert!(r.diagnostics.profile.is_empty());
+    r.profile_functions = true;
+    for i in 0..100 {
+        let ast = r.parse_cached_named("MissingHost();", &format!("site-{i}.ks")).unwrap();
+        assert!(r.render(&ast).is_err());
+    }
+    assert_eq!(r.diagnostics.profile.len(), 65);
+    assert_eq!(r.diagnostics.profile.values().map(|v| v.0).sum::<u64>(), 100);
+    let ast = r.parse_cached_named("MissingHost();", "site-0.ks").unwrap();
+    assert!(r.render(&ast).is_err());
+    let first = r.diagnostics.profile.iter().find(|(key, _)| key.starts_with("site-0.ks:")).unwrap().1;
+    assert_eq!(first.0, 2, "an existing site must stay distinct after the bound");
+}
+
+#[test]
 fn routine_fallbacks_do_not_format_discarded_exceptions() {
     let mut r = Runtime::new("/20a");
     let source = "function absent() { throw 'not present'; } function fallback() { try { absent(); } catch(e) { return null; } } var total=0; for(var i=0;i<200;i++) { fallback(); try { absent(); } catch(e) { total=7; continue; } } if(total!=7) throw 'wrong result';";

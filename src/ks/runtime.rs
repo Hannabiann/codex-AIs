@@ -1172,6 +1172,7 @@ impl<'a> Runtime<'a> {
         if !self.profile_functions {
             return;
         }
+        self.finish_diagnostic_profile();
         eprintln!(
             "KS instruction profile: executed={}, limit={}",
             self.steps,

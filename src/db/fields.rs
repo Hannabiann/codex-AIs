@@ -440,9 +440,38 @@ pub fn parse_record(payload: &[u8]) -> Result<Record> {
 /// Native records group scalar fields before streams; header.flags gives the
 /// scalar count. Return None if a longer prefix is needed. Noncanonical old
 /// layouts use the full decoder, never a guessed scan through stream bytes.
-pub(super) fn scalar_prefix(
-    payload: &[u8],
-) -> std::result::Result<Option<(RecordMetadata, Vec<(u16, u32)>)>, String> {
+pub(super) fn scalar_prefix(payload: &[u8]) -> std::result::Result<Option<(RecordMetadata, Vec<(u16, u32)>)>, String> {
+    let mut links = Vec::new();
+    let mut name = None;
+    Ok(visit_scalar_prefix(payload, |kind, id, bytes| {
+        if kind == 5 { links.push((id, u32::from_le_bytes(bytes.try_into().unwrap()))); }
+        if matches!(kind, 2 | 3) && id == 1 && name.is_none() { name = Some(bytes.to_vec()); }
+    })?.map(|area| (RecordMetadata { area, name }, links)))
+}
+
+pub(super) struct TextRecord {
+    pub area: u16,
+    pub oid: Option<u32>,
+    pub values: Vec<Vec<u8>>,
+}
+/// Decode only the requested strings, while validating the same scalar layout
+/// as record_attributes. Missing fields stay missing; repeated/empty values stay.
+pub(super) fn text_prefix(payload: &[u8], attribute: u16) -> std::result::Result<Option<TextRecord>, String> {
+    let mut oid = None;
+    let mut values = Vec::new();
+    let mut decoded = 0usize;
+    let area = visit_scalar_prefix(payload, |kind, id, bytes| {
+        decoded = decoded.saturating_add(bytes.len());
+        if kind == 5 && id == 1024 && oid.is_none() { oid = Some(u32::from_le_bytes(bytes.try_into().unwrap())); }
+        if matches!(kind, 2 | 3) && id == attribute && decoded <= MAX_FIELD { values.push(bytes.to_vec()); }
+    })?;
+    if decoded > MAX_FIELD { return Err("total decoded record size limit exceeded".into()); }
+    Ok(area.map(|area| TextRecord { area, oid, values }))
+}
+
+fn visit_scalar_prefix(
+    payload: &[u8], mut visit: impl FnMut(u16, u16, &[u8]),
+) -> std::result::Result<Option<u16>, String> {
     if payload.len() < 6 {
         return Ok(None);
     }
@@ -454,8 +483,6 @@ pub(super) fn scalar_prefix(
         return Err("noncanonical scalar header".into());
     }
     let mut pos = 6;
-    let mut links = Vec::new();
-    let mut name = None;
     for _ in 0..scalars {
         if pos + 4 > payload.len() {
             return Ok(None);
@@ -480,15 +507,7 @@ pub(super) fn scalar_prefix(
         if pos + length > payload.len() {
             return Ok(None);
         }
-        if kind == 5 {
-            links.push((
-                id,
-                u32::from_le_bytes(payload[pos..pos + 4].try_into().unwrap()),
-            ));
-        }
-        if matches!(kind, 2 | 3) && id == 1 && name.is_none() {
-            name = Some(payload[pos..pos + length].to_vec());
-        }
+        visit(kind, id, &payload[pos..pos + length]);
         pos += length;
     }
     if scalars < count {
@@ -499,7 +518,7 @@ pub(super) fn scalar_prefix(
             return Err("noncanonical stream boundary".into());
         }
     }
-    Ok(Some((RecordMetadata { area, name }, links)))
+    Ok(Some(area))
 }
 
 pub(super) fn scalar_record_prefix(payload: &[u8]) -> std::result::Result<Option<ScalarRecord>, String> {
@@ -520,4 +539,53 @@ pub(super) fn scalar_record_prefix(payload: &[u8]) -> std::result::Result<Option
     let mut prefix = payload[..c.pos].to_vec();
     prefix[2..4].copy_from_slice(&count.to_le_bytes());
     parse_record(&prefix).map(|r| Some(ScalarRecord(r))).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod selective_text_tests {
+    use super::*;
+    fn sample() -> Vec<u8> {
+        let fields = [(5u16, 1024u16, 42u32.to_le_bytes().to_vec()),
+            (2, 1, vec![3, 0, b'a', b'b', b'c']),
+            (2, 27, vec![0, 0]), (3, 27, vec![1, 0, 0xe0]),
+            (5, 27, 99u32.to_le_bytes().to_vec()),
+            (1, 3, vec![1, 2, 3, 4]), (12, 4, vec![0; 8]), (13, 5, vec![0; 34]),
+            (2, 27, vec![1, 0, 0xe0])];
+        let mut b = Vec::new();
+        for n in [7u16, fields.len() as u16, fields.len() as u16] { b.extend(n.to_le_bytes()); }
+        for (kind, id, bytes) in fields { b.extend(kind.to_le_bytes()); b.extend(id.to_le_bytes()); b.extend(bytes); }
+        b
+    }
+    #[test]
+    fn selected_strings_match_full_decoder_including_empty_repeated_and_missing() {
+        let bytes = sample();
+        let full = parse_record(&bytes).unwrap();
+        for attribute in [1, 27, 1024, 300] {
+            let selected = text_prefix(&bytes, attribute).unwrap().unwrap();
+            let expected: Vec<_> = full.fields.iter().filter(|f| f.id == attribute)
+                .filter_map(|f| match &f.value { Value::String(s) => Some(s.clone()), _ => None }).collect();
+            assert_eq!(selected.area, full.area);
+            assert_eq!(selected.oid, full.integer(1024));
+            assert_eq!(selected.values, expected);
+        }
+        let (metadata, links) = scalar_prefix(&bytes).unwrap().unwrap();
+        assert_eq!(metadata.name.as_deref(), full.string(1));
+        assert_eq!(links, vec![(1024, 42), (27, 99)]);
+    }
+    #[test]
+    fn selected_prefix_requires_complete_scalars_and_valid_stream_boundary() {
+        let bytes = sample();
+        for end in 0..bytes.len() { assert!(text_prefix(&bytes[..end], 27).unwrap().is_none()); }
+        let mut stream = bytes.clone();
+        stream[2..4].copy_from_slice(&10u16.to_le_bytes());
+        assert!(text_prefix(&stream, 27).unwrap().is_none());
+        stream.extend([4, 0, 3, 0]); // Stream contents need not be read.
+        assert_eq!(text_prefix(&stream, 27).unwrap().unwrap().values.len(), 3);
+        stream[bytes.len()] = 5;
+        assert!(text_prefix(&stream, 27).is_err());
+        let mut broken = bytes.clone(); broken[4..6].copy_from_slice(&10u16.to_le_bytes());
+        assert!(text_prefix(&broken, 27).is_err());
+        broken = bytes; broken[6] = 4;
+        assert!(text_prefix(&broken, 27).is_err());
+    }
 }
